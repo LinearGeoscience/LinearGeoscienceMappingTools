@@ -7,8 +7,8 @@ Version 3.2 | [GitHub](https://github.com/LinearGeoscience/LinearGeoscienceMappi
 ## Features
 
 - **Setup Mapping** - load the LGS mapping template and configure CRS, snapping, and scales
-- **Data Management** - import field data with UUID-based duplicate detection, merge and reproject GeoPackages, update tables and domain codes
-- **Stereonet Analysis** - interactive plotting of structural data (poles, great circles, density contours, rose diagrams), with export to Stereonet 11 and Leapfrog formats
+- **Data Management** - import and append field data into the mappign template, merge and reproject GeoPackages, export mapping for distribution. 
+- **Stereonet Analysis** - interactive plotting of structural data, with export to Stereonet 11 and Leapfrog formats
 - **Field Photos** - georeference, browse, and export field photos
 - **Declination Tools** - calculate magnetic declination per point (WMM2025) and batch-adjust structural measurements
 - **Map Production** - generate mapsheets and print layouts
