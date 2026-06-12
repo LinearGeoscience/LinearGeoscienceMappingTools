@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 12 12">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+        stroke: #1a237e;
+        stroke-miterlimit: 10;
+        stroke-width: .5px;
+      }
+      .cls-2 {
+        fill: #1a237e;
+      }
+    </style>
+  </defs>
+  <g>
+    <g id="Layer_1">
+      <!-- Outer circle -->
+      <circle class="cls-1" cx="6" cy="6" r="5.6"/>
+
+      <!-- Simple window/panel icon with grid (like a settings/tools panel) -->
+      <rect class="cls-1" x="3.5" y="3.5" width="5" height="5"/>
+
+      <!-- Grid lines dividing the panel into sections (4 quadrants) -->
+      <line class="cls-1" x1="6" y1="3.5" x2="6" y2="8.5"/>
+      <line class="cls-1" x1="3.5" y1="6" x2="8.5" y2="6"/>
+    </g>
+  </g>
+</svg>

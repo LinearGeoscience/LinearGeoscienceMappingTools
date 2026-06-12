@@ -1,0 +1,47 @@
+[general]
+name=Linear Geoscience Mapping Tools
+email=harry@lineargeoscience.au
+author=Harry West
+qgisMinimumVersion=3.0
+description=A comprehensive geological mapping toolbox for the Linear Geoscience QField mapping template.
+about=Combines multiple geoscience mapping scripts and a stereonet dock panel
+    into a single plugin for professional geological mapping workflows.
+    Features include:
+    - Setup geopackage for QField mapping (scale, snapping, etc.)
+    - Interactive stereonet analysis with export to Stereonet 11
+    - Georeference and manage field photos
+    - Merge and append mapping geopackages
+    - Reproject template CRS
+    - Structural domain classification
+    - Magnetic declination calculation and adjustment
+    - Mapsheet generation and print layouts
+    - Recode and restyle symbology workflows
+    - Map cleaning tools: spline reshape and digitising, polygon clipping,
+      smart clip, overlap/sliver finders, geometry fixer, and
+      lines/polygons-to-splines Processing algorithms
+    Bundled libraries: mplstereonet v0.6.3 (stereonet plotting by Joe Kington),
+    geomag v0.9.2015 (magnetic declination by Christopher Weiss), fuzzywuzzy
+    (fuzzy string matching), and WMM2025 magnetic model data (NOAA/NGA).
+    All dependencies are MIT-licensed or public domain and bundled with the plugin.
+    Map cleaning tools are based on the Spline Plugin by Radim Blazek and
+    Polygon Clipper by Giuseppe De Marco (GPL).
+    See THIRD_PARTY_LICENSES files for complete attribution and license details.
+version=3.2
+tracker=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/issues
+repository=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
+homepage=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
+tags=geology,mapping,stereonet,qfield,geoscience,structural
+category=Vector
+license=GPLv3
+icon=icons/icon_main.svg
+experimental=False
+deprecated=False
+hasProcessingProvider=yes
+server=False
+plugin_dependencies=
+changelog=3.2: Integrated Map Cleaning toolkit (spline tools, clipping panel,
+    geometry fixer, splines Processing algorithms) (June 2026)
+    3.1: UI refinements and version update (April 2026)
+    2.0: Complete rewrite with modern UI, enhanced functionality, and improved stability
+    1.0: Initial release
+

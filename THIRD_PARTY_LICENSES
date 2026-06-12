@@ -1,0 +1,84 @@
+Third-Party Software Licenses
+==================================
+
+This plugin includes the following third-party software:
+
+mplstereonet v0.6.3
+-------------------
+Copyright (c) 2012 Joe Kington
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Source: https://github.com/joferkington/mplstereonet
+Updated: January 2025 (version 0.6.3)
+Note: HW Fixed bug in EqualAreaAxesSubplot creation (line 835) and updated for
+      better matplotlib compatibility.
+
+
+geomag v0.9.2015
+-------------------
+Copyright (c) Christopher Weiss
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Source: https://pypi.org/project/geomag/
+Updated: October 2025 (version 0.9.2015)
+Note: Used for calculating magnetic declination values using the World Magnetic Model.
+
+
+World Magnetic Model (WMM2025) Coefficients
+-------------------------------------------
+Released: December 17, 2024
+Model Date: November 13, 2024
+Valid Period: 2025.0 - 2030.0
+
+The World Magnetic Model (WMM) is developed jointly by the U.S. National
+Geospatial-Intelligence Agency (NGA) and the United Kingdom Defence Geographic
+Centre (DGC). The model, associated software, and documentation are distributed
+freely (no license required) and are not subject to copyright protection.
+
+WMM2025 provides magnetic field declination, inclination, and intensity values
+for use in navigation, orientation, and geophysical applications.
+
+Model Support:
+*  National Centers for Environmental Information (NCEI)
+*  NOAA E/NE42 325 Broadway, Boulder, CO 80305 USA
+*  Attn: Manoj Nair or Arnaud Chulliat
+*  Phone: (303) 497-4642 or -6522
+*  Email: geomag.models@noaa.gov
+
+Source: https://www.ngdc.noaa.gov/geomag/WMM/
+Updated: October 2025 (WMM2025 coefficients)
+Note: COF files updated from WMM2020 to WMM2025. Model valid through 2030.

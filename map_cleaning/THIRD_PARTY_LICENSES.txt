@@ -1,0 +1,175 @@
+================================================================================
+                        THIRD-PARTY SOFTWARE LICENSES
+                           Map Cleaning Toolkit v1.0.0
+================================================================================
+
+This plugin combines code from multiple open-source QGIS plugins. All source
+code is properly attributed below and remains under the GNU GPL v2 or later.
+
+================================================================================
+1. POLYGON CLIPPER
+================================================================================
+
+Original Author: Giuseppe De Marco
+Email: demarco.giuseppe@gmail.com
+Repository: https://github.com/demarcog/Clipper
+Version Used: 2.0 (2025-10-25)
+License: GNU General Public License v2 or later
+
+Description:
+Predictable polygon clipping with side-panel interface and automatic snapping.
+Provides clip all intersecting, clip isolated, and smart clip modes.
+
+Files Derived From Polygon Clipper:
+- clipping/clipper_core.py
+- clipping/clipper_selection.py
+- clipping/clipper_preview.py
+- clipping/clipper_dockwidget.py (modified with additional Spline Settings tab)
+
+Modifications Made:
+- Integrated into Map Cleaning Toolkit with unified plugin structure
+- Added Spline Settings tab to dock widget
+- Updated naming and branding to Map Cleaning Toolkit
+- Maintained all core functionality and bug fixes from v2.0
+
+Original Copyright:
+Copyright (C) 2021 by Giuseppe De Marco
+Copyright (C) 2025 for v2.0 enhancements
+
+================================================================================
+2. SPLINE PLUGIN (V2)
+================================================================================
+
+Original Author: Radim Blazek
+Email: radim.blazek@gmail.com
+Contributors: Radek Pasiok (V2 bug fixes)
+Repository: https://github.com/erpas/spline/
+Version Used: 2.0.0
+License: GNU General Public License v2 or later
+
+Description:
+Modified cubic Hermite spline interpolator for digitizing smooth curves.
+Includes Processing algorithms for batch operations and critical bug fixes.
+
+Files Derived From Spline V2:
+- core/spline_interp.py
+- tools/spline_tool.py
+- ui/settingsdialog.py
+- ui/ui_settingsdialog.ui
+- ui/smooth_polygon_dock.py
+- ui/ui_smooth_polygon_dock.ui
+- processing_provider/provider.py
+- processing_provider/processing_alg.py
+- processing_provider/polygons_to_splines_alg.py
+
+Modifications Made:
+- Updated default parameters: Tolerance changed from 1.0 to 0.1,
+  Max Segments changed from 50 to 200 (per user specifications)
+- Integrated into unified Map Cleaning Toolkit structure
+- Updated imports to use shared core/utils.py
+- Changed settings namespace to "MapCleaningToolkit"
+
+Original Copyright:
+Copyright (C) 2014 by Radim Blazek
+
+Acknowledgments:
+- Based on CircularArcDigitizer by Stefan Ziegler
+- Based on Generalizer plugin by Piotr Pociask
+- V2 bug fixes by AI Assistant (edit command cleanup, memory leaks, etc.)
+
+================================================================================
+3. RESHAPE POLYGONS WITH SPLINE
+================================================================================
+
+Developer: Linear Geoscience
+Based On: Spline Plugin by Radim Blazek
+Version Used: 1.0.0 (2025-10-25)
+License: GNU General Public License v2 or later
+
+Description:
+Reshape polygon and line features using smooth spline curves instead of
+straight lines. Perfect for geological mapping and lithology polygon editing.
+
+Files Derived From Reshape Polygons:
+- tools/reshape_spline_tool.py
+
+Modifications Made:
+- Integrated into Map Cleaning Toolkit structure
+- Updated imports to use shared core/spline_interp.py
+- Uses unified spline settings from Map Cleaning Toolkit
+
+Original Copyright:
+Copyright (C) 2025 Linear Geoscience
+Based on Spline Plugin Copyright (C) 2014 by Radim Blazek
+
+================================================================================
+UNIFIED COMPONENTS (Map Cleaning Toolkit)
+================================================================================
+
+The following components were created specifically for Map Cleaning Toolkit
+to unify the three source plugins:
+
+New Files Created:
+- map_cleaning_toolkit.py (main plugin class)
+- core/utils.py (unified utilities and default settings)
+- core/geometry_fixer_engine.py (geometry validation and repair engine)
+- core/geometry_issues_dialog.py (geometry issues preview dialog)
+- __init__.py (plugin initialization)
+- metadata.txt (plugin metadata)
+- README.md (comprehensive documentation)
+
+Changes to Unified Settings:
+- Single QSettings namespace: "MapCleaningToolkit"
+- Unified spline defaults:
+  * Tightness/Tension: 0.5 (unchanged)
+  * Tolerance: 0.1 (changed from 1.0)
+  * Max Segments: 200 (changed from 50)
+
+Toolbar Buttons Created:
+1. Reshape with Spline (from Reshape Polygons)
+2. Add Feature with Spline (from Spline V2)
+3. Smart Clip Features (from Polygon Clipper)
+4. Clipping Panel (from Polygon Clipper, with Spline Settings tab added)
+5. Geometry Fixer (new - detect and fix invalid geometries)
+
+Copyright:
+Copyright (C) 2025 Linear Geoscience
+
+================================================================================
+LICENSE INFORMATION
+================================================================================
+
+All components of Map Cleaning Toolkit are licensed under:
+
+GNU GENERAL PUBLIC LICENSE
+Version 2, June 1991
+(or any later version)
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the GNU General Public License for more details:
+https://www.gnu.org/licenses/gpl-2.0.html
+
+================================================================================
+ACKNOWLEDGMENTS
+================================================================================
+
+Special thanks to:
+- Giuseppe De Marco for the excellent Polygon Clipper plugin
+- Radim Blazek for the groundbreaking Spline interpolation implementation
+- Radek Pasiok for critical V2 bug fixes to the Spline plugin
+- Stefan Ziegler for CircularArcDigitizer inspiration
+- Piotr Pociask for Generalizer plugin concepts
+- Andreas Wicht for paste intersection suggestions
+- Domenico Scinetti for clip selection suggestions
+
+================================================================================
+End of Third-Party Licenses
+================================================================================

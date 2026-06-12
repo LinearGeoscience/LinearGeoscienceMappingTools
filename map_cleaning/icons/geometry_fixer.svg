@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 12 12">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+        stroke: #1a237e;
+        stroke-miterlimit: 10;
+        stroke-width: .5px;
+      }
+      .cls-2 {
+        fill: #1a237e;
+      }
+    </style>
+  </defs>
+  <g>
+    <g id="Layer_1">
+      <!-- Outer circle -->
+      <circle class="cls-1" cx="6" cy="6" r="5.6"/>
+
+      <!-- Broken polygon (dashed) - representing invalid geometry -->
+      <path class="cls-1" d="M2,4 L4,3 L6,3.5 L6.5,5.5 L5,6.5 L3,6.5 L2,5 Z"
+            stroke-dasharray="0.8,0.6"/>
+
+      <!-- Gear/cog symbol for "fix" -->
+      <!-- Outer gear teeth -->
+      <circle class="cls-1" cx="8.5" cy="8.5" r="1.5"/>
+      <circle class="cls-2" cx="8.5" cy="8.5" r="0.8"/>
+      <!-- Gear teeth (simplified - 4 rectangles) -->
+      <rect class="cls-2" x="8.2" y="6.8" width="0.6" height="0.5"/>
+      <rect class="cls-2" x="8.2" y="10.2" width="0.6" height="0.5"/>
+      <rect class="cls-2" x="6.8" y="8.2" width="0.5" height="0.6"/>
+      <rect class="cls-2" x="10.2" y="8.2" width="0.5" height="0.6"/>
+
+      <!-- Center hole in gear -->
+      <circle class="cls-1" cx="8.5" cy="8.5" r="0.4" fill="#ffffff"/>
+    </g>
+  </g>
+</svg>
