@@ -58,7 +58,12 @@ changelog=3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
     code columns (Mineral, Texture, SubType...) are discovered, grouped
     into families, matched to their lookup tables by name and used without
     manual setup; an Auto-detect review dialog adds extras (e.g. columns
-    without code tables), and the field picker hides empty columns (June 2026)
+    without code tables), and the field picker hides empty columns. Code
+    descriptions are read from each field's editor widget (Value Relation /
+    Value Map dropdowns) so QField projects resolve them without naming
+    conventions; case-variant codes (CY/Cy/cy) merge with the lookup's
+    canonical casing; the code list renders as a configurable multi-column
+    "Code - Description" block below the legend (June 2026)
     3.3: QGIS plugin repository compliance release: graceful handling of
     missing matplotlib/pandas, documented external dependencies, accurate
     minimum QGIS version (3.40 LTR), vendored libraries now imported without

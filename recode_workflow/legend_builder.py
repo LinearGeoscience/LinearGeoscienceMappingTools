@@ -266,6 +266,131 @@ def load_lookup_map(table_layer, key_column, value_column):
     return lookup
 
 
+# QGIS sentinel used by ValueMap widgets for NULL entries
+_VALUE_MAP_NULL = '{2839923C-8B7D-419E-B84B-CA2FE9B80EC7}'
+
+
+def widget_lookup_config(project, layer, field_idx):
+    """Read a field's editor widget setup as a section-ready lookup dict.
+
+    QField/QGIS dropdowns store the authoritative code→description
+    mapping on the field itself:
+      - ValueRelation → {'table': {id,name}, 'key_column', 'value_column'}
+      - ValueMap → {'map': {code: description}}
+    Returns None when the field has neither.
+    """
+    try:
+        setup = layer.editorWidgetSetup(field_idx)
+    except Exception:
+        return None
+    wtype = setup.type()
+    config = setup.config() or {}
+
+    if wtype == 'ValueRelation':
+        table = project.mapLayer(config.get('Layer', ''))
+        if table is None:
+            name = config.get('LayerName', '')
+            matches = project.mapLayersByName(name) if name else []
+            table = matches[0] if matches else None
+        key = config.get('Key', '')
+        value = config.get('Value', '')
+        if table is None or not key:
+            return None
+        return {
+            'table': {'id': table.id(), 'name': table.name()},
+            'key_column': key,
+            'value_column': value or key,
+        }
+
+    if wtype == 'ValueMap':
+        raw = config.get('map')
+        # Both forms occur: {description: code} dict, or a list of
+        # single-entry {description: code} dicts.
+        if isinstance(raw, dict):
+            items = list(raw.items())
+        elif isinstance(raw, list):
+            items = []
+            for entry in raw:
+                if isinstance(entry, dict):
+                    items.extend(entry.items())
+        else:
+            return None
+        mapping = {}
+        for desc, code in items:
+            if code is None or str(code) == _VALUE_MAP_NULL:
+                continue
+            code_s = str(code)
+            if code_s:
+                mapping.setdefault(code_s, str(desc))
+        return {'map': mapping} if mapping else None
+
+    return None
+
+
+def lookup_from_widget(project, layer, field_idx):
+    """{code: description} from a field's editor widget, or None."""
+    config = widget_lookup_config(project, layer, field_idx)
+    if config is None:
+        return None
+    if 'map' in config:
+        return config['map']
+    table = resolve_layer_ref(project, config['table'])
+    if table is None:
+        return None
+    return load_lookup_map(
+        table, config['key_column'], config['value_column']) or None
+
+
+def resolve_section_targets(project, section):
+    """Resolve a section to its scan targets: [(layer, [field_names])].
+
+    Explicit-layer sections target that layer; project-wide sections
+    (layer=None) target every spatial vector layer holding any of the
+    fields; project-wide sections with a lookup but no fields auto-detect
+    fields from the lookup table's name pattern.
+    """
+    fields = list(section.get('fields', []))
+    layer_ref = section.get('layer')
+
+    if layer_ref:
+        layer = resolve_layer_ref(project, layer_ref)
+        return [(layer, fields)] if layer is not None else []
+
+    lookup = section.get('lookup')
+    if not fields and lookup and lookup.get('table'):
+        table_name = lookup['table'].get('name', '')
+        by_layer = {}
+        for lyr, fname in find_fields_for_table(project, table_name):
+            by_layer.setdefault(lyr.id(), (lyr, []))[1].append(fname)
+        return list(by_layer.values())
+
+    targets = []
+    for lyr in project.mapLayers().values():
+        if (lyr.type() != QgsMapLayerType.VectorLayer
+                or not lyr.isSpatial()):
+            continue
+        present = [f for f in fields if lyr.fields().indexOf(f) >= 0]
+        if present:
+            targets.append((lyr, present))
+    return targets
+
+
+def collect_widget_lookups(project, section):
+    """Merge {code: description} from editor widgets across a section's
+    target fields.  First definition of a code wins."""
+    merged = {}
+    for layer, field_names in resolve_section_targets(project, section):
+        for fname in field_names:
+            idx = layer.fields().indexOf(fname)
+            if idx < 0:
+                continue
+            mapping = lookup_from_widget(project, layer, idx)
+            if mapping:
+                for code, desc in mapping.items():
+                    merged.setdefault(code, desc)
+    return merged
+
+
 # ── Auto-detection of legend sections ─────────────────────────────────
 
 def field_has_data(layer, field_idx):
@@ -337,8 +462,11 @@ def discover_section_candidates(project):
             'layers': sorted(keep_layers),
         })
 
-    # Pass 2: remaining populated string fields, grouped into families
-    remaining = {}  # field name → set of layer names
+    # Pass 2: remaining populated string fields, grouped into families.
+    # A family whose fields carry a ValueRelation/ValueMap editor widget
+    # (QField dropdowns) gets that lookup attached and counts as matched
+    # — the widget config is the authoritative code→description source.
+    remaining = {}  # field name → [layer objects]
     for lyr in spatial_layers:
         for field in lyr.fields():
             fname = field.name()
@@ -350,18 +478,23 @@ def discover_section_candidates(project):
                 continue
             idx = lyr.fields().indexOf(fname)
             if field_has_data(lyr, idx):
-                remaining.setdefault(fname, set()).add(lyr.name())
+                remaining.setdefault(fname, []).append(lyr)
 
     for family, members in group_fields_into_families(
             sorted(remaining)).items():
         layers = set()
+        lookup = None
         for member in members:
-            layers.update(remaining[member])
+            for lyr in remaining[member]:
+                layers.add(lyr.name())
+                if lookup is None:
+                    idx = lyr.fields().indexOf(member)
+                    lookup = widget_lookup_config(project, lyr, idx)
         candidates.append({
             'title': family,
             'fields': members,
-            'lookup': None,
-            'matched': False,
+            'lookup': lookup,
+            'matched': lookup is not None,
             'layers': sorted(layers),
         })
 
@@ -559,41 +692,22 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
 
     for section in sections:
         sid = section['id']
-        fields = list(section.get('fields', []))
-        layer_ref = section.get('layer')
-
-        if layer_ref:
-            layer = resolve_layer_ref(project, layer_ref)
-            if layer is None:
+        targets = resolve_section_targets(project, section)
+        if not targets:
+            if section.get('layer'):
                 QgsMessageLog.logMessage(
                     f"Legend section '{section.get('title')}': layer "
-                    f"'{layer_ref.get('name')}' not found — skipped.",
+                    f"'{section['layer'].get('name')}' not found — skipped.",
                     LOG_TAG, Qgis.Warning)
-                continue
-            if section.get('subdivide_by'):
-                entry = work.setdefault(layer.id(), (layer, set(), []))
-                entry[2].append((sid, fields, section['subdivide_by']))
-            else:
-                _add_flat(layer, sid, fields)
+            continue
+
+        if section.get('layer') and section.get('subdivide_by'):
+            layer, fields = targets[0]
+            entry = work.setdefault(layer.id(), (layer, set(), []))
+            entry[2].append((sid, fields, section['subdivide_by']))
         else:
-            # Project-wide: scan across all spatial vector layers.
-            if not fields and section.get('lookup'):
-                table_name = section['lookup']['table'].get('name', '')
-                detected = find_fields_for_table(project, table_name)
-                by_layer = {}
-                for lyr, fname in detected:
-                    by_layer.setdefault(lyr.id(), (lyr, []))[1].append(fname)
-                for lyr, fnames in by_layer.values():
-                    _add_flat(lyr, sid, fnames)
-            else:
-                for lyr in project.mapLayers().values():
-                    if (lyr.type() != QgsMapLayerType.VectorLayer
-                            or not lyr.isSpatial()):
-                        continue
-                    present = [f for f in fields
-                               if lyr.fields().indexOf(f) >= 0]
-                    if present:
-                        _add_flat(lyr, sid, present)
+            for lyr, fnames in targets:
+                _add_flat(lyr, sid, fnames)
 
     # Scan each layer once.
     layer_field_values = {}  # {layer_id: {fname: set}}

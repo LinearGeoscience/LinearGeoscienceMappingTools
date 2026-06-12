@@ -111,6 +111,10 @@ def normalize_section(section):
             'key_column': lookup.get('key_column', ''),
             'value_column': lookup.get('value_column', ''),
         }
+    elif lookup and lookup.get('map'):
+        # Inline code→description map (e.g. from a ValueMap field widget)
+        lookup = {'map': {str(k): str(v)
+                          for k, v in dict(lookup['map']).items()}}
     else:
         lookup = None
 
@@ -141,8 +145,16 @@ def normalize_config(config):
             'per_sheet_scan': bool(options.get('per_sheet_scan', True)),
             'filter_legend_by_map': bool(
                 options.get('filter_legend_by_map', True)),
+            'text_columns': _clamp_columns(options.get('text_columns', 2)),
         },
     }
+
+
+def _clamp_columns(value):
+    try:
+        return min(4, max(1, int(value)))
+    except (TypeError, ValueError):
+        return 2
 
 
 def migrate_legacy_config(field_configs=None, vr_sections=None,
@@ -230,35 +242,59 @@ def deserialize_config(raw):
 
 # ── Text block formatting ─────────────────────────────────────────────
 
-def format_entries(values, lookup_map=None):
-    """Format a list of values as 'code — Description, code2, ...'."""
+def format_entry_list(values, lookup_map=None):
+    """Format values as a sorted list of 'Code — Description' entries.
+
+    Case-variant codes (CY / Cy / cy) are merged: lookup keys are matched
+    case-insensitively and the lookup's canonical casing is displayed;
+    codes with no lookup entry are shown lowercase (matching how the
+    codes are labelled on the map).
+    """
     lookup_map = lookup_map or {}
+    canonical = {}
+    for code, desc in lookup_map.items():
+        canonical.setdefault(str(code).lower(), (str(code), str(desc)))
+
+    seen = set()
     entries = []
-    for code in sorted(values):
-        desc = lookup_map.get(code, '')
-        if desc and desc != code:
-            entries.append(f"{code} {EM_DASH} {desc}")
+    for value in values:
+        key = str(value).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in canonical:
+            code, desc = canonical[key]
+            if desc and desc != code:
+                entries.append(f"{code} {EM_DASH} {desc}")
+            else:
+                entries.append(code)
         else:
-            entries.append(code)
-    return ", ".join(entries)
+            entries.append(key)
+    return sorted(entries, key=str.lower)
 
 
-def format_text_sections(sections, scan_results, lookup_maps=None,
-                         extra_unmatched=None):
-    """Build the plain-text legend block for text-mode sections.
+def format_entries(values, lookup_map=None):
+    """Comma-joined form of format_entry_list (compact, single line)."""
+    return ", ".join(format_entry_list(values, lookup_map))
+
+
+def build_text_section_lines(sections, scan_results, lookup_maps=None,
+                             extra_unmatched=None):
+    """Build the structured text block: ordered [(title, [lines])].
 
     sections: normalised section dicts, in display order.
     scan_results: {section_id: [values]} or {section_id: {sub: [values]}}.
     lookup_maps: {section_id: {code: description}}.
-    extra_unmatched: {section_id: [values]} — auto-mode overflow (values
-        with no renderer symbol) appended under the section's heading.
+    extra_unmatched: {section_id: values} — auto-mode overflow (values
+        with no renderer symbol) listed under the section's heading.
 
-    Returns the formatted text ('' if nothing to show).  Headings are
-    uppercased; the label item renders ModeFont so no rich text is used.
+    One 'Code — Description' entry per line; subdivided sections list a
+    'Sub:' line followed by indented entries.  Headings are uppercased;
+    layout labels render ModeFont so no rich text is used.
     """
     lookup_maps = lookup_maps or {}
     extra_unmatched = extra_unmatched or {}
-    blocks = []
+    result = []
 
     for section in sections:
         sid = section['id']
@@ -275,18 +311,74 @@ def format_text_sections(sections, scan_results, lookup_maps=None,
         if not data:
             continue
 
-        lines = [section.get('title', '').upper() or 'LEGEND']
+        title = section.get('title', '').upper() or 'LEGEND'
+        lines = []
         if isinstance(data, dict):
             for sub_value in sorted(data):
                 values = data[sub_value]
                 if not values:
                     continue
-                lines.append(f"{sub_value}: {format_entries(values, lookup)}")
-            if len(lines) == 1:
-                continue
+                lines.append(f"{sub_value}:")
+                lines.extend(f"  {entry}"
+                             for entry in format_entry_list(values, lookup))
         else:
-            lines.append(format_entries(data, lookup))
+            lines.extend(format_entry_list(data, lookup))
 
-        blocks.append("\n".join(lines))
+        if lines:
+            result.append((title, lines))
 
+    return result
+
+
+def format_text_sections(sections, scan_results, lookup_maps=None,
+                         extra_unmatched=None):
+    """Plain-text form of build_text_section_lines.
+
+    Heading, then one entry per line; blank line between sections.
+    Used for the panel preview box and the manual-override comparison.
+    """
+    blocks = []
+    for title, lines in build_text_section_lines(
+            sections, scan_results, lookup_maps, extra_unmatched):
+        blocks.append("\n".join([title] + lines))
     return "\n\n".join(blocks)
+
+
+def flow_lines_into_columns(section_lines, ncols):
+    """Flow [(title, [lines])] into ncols newspaper-style columns.
+
+    Returns a list of column text strings (may be fewer than ncols for
+    short content).  Balanced by line count; a heading is never left as
+    the last line of a column.
+    """
+    flat = []  # (text, is_heading)
+    for title, lines in section_lines:
+        if flat:
+            flat.append(('', False))
+        flat.append((title, True))
+        flat.extend((line, False) for line in lines)
+    if not flat:
+        return []
+
+    ncols = _clamp_columns(ncols)
+    columns = []
+    i = 0
+    for col in range(ncols):
+        remaining = len(flat) - i
+        if remaining <= 0:
+            break
+        take = -(-remaining // (ncols - col))  # ceil division
+        end = i + take
+        # Don't orphan a heading at the bottom of a column
+        if i < end - 1 and end < len(flat) and flat[end - 1][1]:
+            end -= 1
+        chunk = flat[i:end]
+        i = end
+        # Trim blank separator lines at column boundaries
+        while chunk and not chunk[0][0]:
+            chunk.pop(0)
+        while chunk and not chunk[-1][0]:
+            chunk.pop()
+        if chunk:
+            columns.append("\n".join(text for text, _ in chunk))
+    return columns

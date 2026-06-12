@@ -30,10 +30,12 @@ try:
         detect_lookup_columns, scan_sections_for_sheet,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
+        collect_widget_lookups,
     )
     from .recode_workflow.legend_config import (
         normalize_section, normalize_config,
         serialize_config, deserialize_config, format_text_sections,
+        build_text_section_lines, flow_lines_into_columns,
     )
 except ImportError:
     from recode_workflow.legend_builder import (
@@ -41,10 +43,12 @@ except ImportError:
         detect_lookup_columns, scan_sections_for_sheet,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
+        collect_widget_lookups,
     )
     from recode_workflow.legend_config import (
         normalize_section, normalize_config,
         serialize_config, deserialize_config, format_text_sections,
+        build_text_section_lines, flow_lines_into_columns,
     )
 
 try:
@@ -1077,6 +1081,21 @@ class MapLayoutGeneratorPanel(QDockWidget):
             lambda _checked: self._save_legend_state())
         layout.addWidget(self.filterByMapCheckbox)
 
+        # Column count for the code/description text block
+        colLayout = QHBoxLayout()
+        colLayout.addWidget(QLabel("Text columns:"))
+        self.textColumnsSpin = QSpinBox()
+        self.textColumnsSpin.setRange(1, 4)
+        self.textColumnsSpin.setValue(2)
+        self.textColumnsSpin.setToolTip(
+            "Number of columns the 'Code — Description' list flows into "
+            "below the legend.")
+        self.textColumnsSpin.valueChanged.connect(
+            lambda _value: self._save_legend_state())
+        colLayout.addWidget(self.textColumnsSpin)
+        colLayout.addStretch()
+        layout.addLayout(colLayout)
+
         # Additional manual legend text (appended after generated sections).
         # Text sections themselves are regenerated per sheet at generate time.
         codeTableLabel = QLabel(
@@ -1275,6 +1294,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             'options': {
                 'per_sheet_scan': self.perSheetCheckbox.isChecked(),
                 'filter_legend_by_map': self.filterByMapCheckbox.isChecked(),
+                'text_columns': self.textColumnsSpin.value(),
             },
         })
 
@@ -1315,6 +1335,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 config['options']['per_sheet_scan'])
             self.filterByMapCheckbox.setChecked(
                 config['options']['filter_legend_by_map'])
+            self.textColumnsSpin.setValue(
+                config['options']['text_columns'])
             manual = config['code_table_text_manual']
             if manual:
                 self.codeTableText.setPlainText(manual)
@@ -1370,6 +1392,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         self.codeTableText.setEnabled(checked)
         self.perSheetCheckbox.setEnabled(checked)
         self.filterByMapCheckbox.setEnabled(checked)
+        self.textColumnsSpin.setEnabled(checked)
 
     def openLegendTextEditor(self):
         """Open the legend text editor dialog."""
@@ -1633,6 +1656,96 @@ class MapLayoutGeneratorPanel(QDockWidget):
         QgsMessageLog.logMessage(
             "Legend text block created below legend.", LOG_TAG, Qgis.Info)
 
+    def _place_text_columns(self, layout, section_lines, ncols):
+        """Place the legend text block as side-by-side column labels.
+
+        A template 'code_table' label, when present, defines the block
+        envelope: it becomes column 1 (resized to a column width) and
+        siblings 'code_table_col2'... are created beside it, inheriting
+        its text format.  Otherwise columns are positioned below the
+        finalised legend like _place_text_block.
+        """
+        from qgis.core import QgsLayoutPoint, QgsLayoutSize
+        from qgis.PyQt.QtGui import QFont
+
+        columns = flow_lines_into_columns(section_lines, ncols)
+        if not columns:
+            return
+
+        template_item = None
+        for item in layout.items():
+            if (isinstance(item, QgsLayoutItemLabel)
+                    and item.id() == 'code_table'):
+                template_item = item
+                break
+
+        page = layout.pageCollection().page(0)
+        page_size = (layout.convertToLayoutUnits(page.pageSize())
+                     if page else None)
+
+        if template_item is not None:
+            pos = layout.convertToLayoutUnits(
+                template_item.positionWithUnits())
+            size = layout.convertToLayoutUnits(template_item.sizeWithUnits())
+            x, y = pos.x(), pos.y()
+            total_width = size.width()
+            height = size.height()
+        else:
+            legends = [i for i in layout.items()
+                       if isinstance(i, QgsLayoutItemLegend)]
+            if legends:
+                legend = legends[0]
+                lpos = layout.convertToLayoutUnits(
+                    legend.positionWithUnits())
+                lsize = layout.convertToLayoutUnits(legend.sizeWithUnits())
+                x = lpos.x()
+                y = lpos.y() + lsize.height() + 3
+                total_width = max(lsize.width(), 80)
+            elif page_size is not None:
+                x = 10
+                y = page_size.height() * 0.6
+                total_width = max(page_size.width() * 0.25, 80)
+            else:
+                x, y, total_width = 10, 250, 120
+            # ~2.8mm per line at 8pt plus margin
+            max_lines = max(c.count('\n') + 1 for c in columns)
+            height = max_lines * 3.2 + 4
+
+        col_width = total_width / len(columns)
+
+        for ci, text in enumerate(columns):
+            if ci == 0 and template_item is not None:
+                label = template_item
+            else:
+                label = QgsLayoutItemLabel(layout)
+                label.setId('code_table' if ci == 0
+                            else f'code_table_col{ci + 1}')
+                if template_item is not None:
+                    try:
+                        label.setTextFormat(template_item.textFormat())
+                    except AttributeError:
+                        label.setFont(QFont("MS Shell Dlg 2", 8))
+                else:
+                    label.setFont(QFont("MS Shell Dlg 2", 8))
+            label.setMode(QgsLayoutItemLabel.ModeFont)
+            label.setText(text)
+            label.attemptMove(QgsLayoutPoint(
+                x + ci * col_width, y, layout.units()))
+            label.attemptResize(QgsLayoutSize(
+                col_width, height, layout.units()))
+            if label is not template_item:
+                layout.addLayoutItem(label)
+
+        if page_size is not None and y + height > page_size.height():
+            QgsMessageLog.logMessage(
+                "Legend text columns overflow the page. Add a 'code_table' "
+                "label item to the template to control placement, or "
+                "increase the column count.", LOG_TAG, Qgis.Warning)
+
+        QgsMessageLog.logMessage(
+            f"Legend text placed in {len(columns)} column(s).",
+            LOG_TAG, Qgis.Info)
+
     # ── Legend automation ─────────────────────────────────────────────
 
     def _configure_legend(self, layout, excluded_layer_ids, text_mappings=None,
@@ -1886,20 +1999,35 @@ class MapLayoutGeneratorPanel(QDockWidget):
         return unmatched_by_section
 
     def _load_lookup_maps(self, sections):
-        """Load {section_id: {code: description}} for sections with lookups."""
+        """Load {section_id: {code: description}} for each section.
+
+        Sources, in increasing precedence: the section's configured lookup
+        (named table or inline map), then code→description mappings read
+        from the fields' editor widgets (ValueRelation/ValueMap dropdowns)
+        — the widget config is what the data was entered against.
+        """
+        project = QgsProject.instance()
         maps = {}
         for section in sections:
+            base = {}
             lookup = section.get('lookup')
-            if not lookup:
-                continue
-            table = resolve_layer_ref(QgsProject.instance(), lookup['table'])
-            if table is None:
-                QgsMessageLog.logMessage(
-                    f"Lookup table '{lookup['table'].get('name')}' not found "
-                    f"for section '{section['title']}'.", LOG_TAG, Qgis.Warning)
-                continue
-            maps[section['id']] = load_lookup_map(
-                table, lookup['key_column'], lookup['value_column'])
+            if lookup and lookup.get('map'):
+                base = dict(lookup['map'])
+            elif lookup:
+                table = resolve_layer_ref(project, lookup['table'])
+                if table is None:
+                    QgsMessageLog.logMessage(
+                        f"Lookup table '{lookup['table'].get('name')}' not "
+                        f"found for section '{section['title']}'.",
+                        LOG_TAG, Qgis.Warning)
+                else:
+                    base = load_lookup_map(
+                        table, lookup['key_column'], lookup['value_column'])
+
+            merged = dict(base)
+            merged.update(collect_widget_lookups(project, section))
+            if merged:
+                maps[section['id']] = merged
         return maps
 
     def _scan_code_table_text(self):
@@ -2406,14 +2534,17 @@ class MapLayoutGeneratorPanel(QDockWidget):
                                 layout, sections, scan_results)
 
                     # Build and place the legend text block.  An edited text
-                    # box overrides the generated text verbatim.
+                    # box overrides the generated text verbatim (single
+                    # label); otherwise entries flow into columns.
                     if manual_text:
-                        text_block = manual_text
+                        self._place_text_block(layout, manual_text)
                     else:
-                        text_block = format_text_sections(
+                        section_lines = build_text_section_lines(
                             sections, scan_results, lookup_maps, unmatched)
-                    if text_block:
-                        self._place_text_block(layout, text_block)
+                        if section_lines:
+                            self._place_text_columns(
+                                layout, section_lines,
+                                self.textColumnsSpin.value())
 
                     # Add layout to project
                     QgsProject.instance().layoutManager().addLayout(layout)

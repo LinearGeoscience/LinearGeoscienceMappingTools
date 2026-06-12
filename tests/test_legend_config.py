@@ -26,7 +26,10 @@ migrate_legacy_config = legend_config.migrate_legacy_config
 serialize_config = legend_config.serialize_config
 deserialize_config = legend_config.deserialize_config
 format_entries = legend_config.format_entries
+format_entry_list = legend_config.format_entry_list
 format_text_sections = legend_config.format_text_sections
+build_text_section_lines = legend_config.build_text_section_lines
+flow_lines_into_columns = legend_config.flow_lines_into_columns
 strip_table_suffix = legend_config.strip_table_suffix
 strip_family_suffix = legend_config.strip_family_suffix
 group_fields_into_families = legend_config.group_fields_into_families
@@ -93,6 +96,23 @@ class TestNormalizeSection(unittest.TestCase):
     def test_lookup_without_table_dropped(self):
         s = normalize_section({'lookup': {'key_column': 'Code'}})
         self.assertIsNone(s['lookup'])
+
+    def test_inline_map_lookup(self):
+        s = normalize_section({'lookup': {'map': {'si': 'Silica', 0: 1}}})
+        self.assertEqual(s['lookup'], {'map': {'si': 'Silica', '0': '1'}})
+
+    def test_text_columns_clamped(self):
+        self.assertEqual(
+            normalize_config({'options': {'text_columns': 9}})
+            ['options']['text_columns'], 4)
+        self.assertEqual(
+            normalize_config({'options': {'text_columns': 0}})
+            ['options']['text_columns'], 1)
+        self.assertEqual(
+            normalize_config({'options': {'text_columns': 'x'}})
+            ['options']['text_columns'], 2)
+        self.assertEqual(
+            normalize_config({})['options']['text_columns'], 2)
 
 
 class TestMigration(unittest.TestCase):
@@ -177,10 +197,20 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(text, f"Qz {EM_DASH} Quartz, Ser {EM_DASH} Sericite")
 
     def test_entries_bare_codes_and_zero(self):
-        self.assertEqual(format_entries(['0', 'B']), "0, B")
+        # Unmatched codes display lowercase (matching the map labels)
+        self.assertEqual(format_entries(['0', 'B']), "0, b")
 
     def test_entry_desc_equal_to_code_collapses(self):
         self.assertEqual(format_entries(['Qz'], {'Qz': 'Qz'}), "Qz")
+
+    def test_case_variants_merged_lookup_casing_wins(self):
+        entries = format_entry_list(
+            ['CY', 'cy', 'Cy', 'si', 'SI'], {'Cy': 'Chalcopyrite'})
+        self.assertEqual(entries, [f"Cy {EM_DASH} Chalcopyrite", "si"])
+
+    def test_lookup_matched_case_insensitively(self):
+        entries = format_entry_list(['SI'], {'si': 'Silica'})
+        self.assertEqual(entries, [f"si {EM_DASH} Silica"])
 
     def _sections(self):
         return [
@@ -200,7 +230,8 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(
             out,
             "MINERALS / ALTERATION\n"
-            f"Qz {EM_DASH} Quartz, Ser {EM_DASH} Sericite")
+            f"Qz {EM_DASH} Quartz\n"
+            f"Ser {EM_DASH} Sericite")
 
     def test_auto_overflow_appended_under_heading(self):
         out = format_text_sections(
@@ -224,15 +255,59 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(
             out,
             "MINERALS / ALTERATION\n"
-            "Basalt: Ol\n"
-            f"Granite: Kf, Qz {EM_DASH} Quartz")
+            "Basalt:\n"
+            "  ol\n"
+            "Granite:\n"
+            "  kf\n"
+            f"  Qz {EM_DASH} Quartz")
 
     def test_multiple_sections_blank_line_separated(self):
         out = format_text_sections(
             self._sections(),
             {'s1': ['Qz']},
             extra_unmatched={'s2': ['x']})
-        self.assertEqual(out, "MINERALS / ALTERATION\nQz\n\nGEOLOGY\nx")
+        self.assertEqual(out, "MINERALS / ALTERATION\nqz\n\nGEOLOGY\nx")
+
+    def test_section_lines_structure(self):
+        lines = build_text_section_lines(
+            self._sections(),
+            {'s1': ['si', 'cy']},
+            {'s1': {'Si': 'Silica', 'Cy': 'Chalcopyrite'}})
+        self.assertEqual(lines, [
+            ('MINERALS / ALTERATION',
+             [f"Cy {EM_DASH} Chalcopyrite", f"Si {EM_DASH} Silica"]),
+        ])
+
+
+class TestColumnFlow(unittest.TestCase):
+
+    def test_empty(self):
+        self.assertEqual(flow_lines_into_columns([], 2), [])
+
+    def test_single_column(self):
+        cols = flow_lines_into_columns(
+            [('MINERALS', ['a', 'b'])], 1)
+        self.assertEqual(cols, ["MINERALS\na\nb"])
+
+    def test_two_columns_balanced(self):
+        cols = flow_lines_into_columns(
+            [('MINERALS', ['a', 'b', 'c', 'd', 'e'])], 2)
+        self.assertEqual(len(cols), 2)
+        self.assertEqual(cols[0], "MINERALS\na\nb")
+        self.assertEqual(cols[1], "c\nd\ne")
+
+    def test_heading_not_orphaned_at_column_bottom(self):
+        # 6 lines over 2 columns = 3 per column; the second heading would
+        # land at the bottom of column 1 → pushed to column 2.
+        cols = flow_lines_into_columns(
+            [('ONE', ['a']), ('TWO', ['b', 'c'])], 2)
+        self.assertEqual(cols[0], "ONE\na")
+        self.assertEqual(cols[1], "TWO\nb\nc")
+
+    def test_more_columns_than_lines(self):
+        cols = flow_lines_into_columns([('T', ['a'])], 4)
+        self.assertTrue(all(c for c in cols))
+        self.assertEqual("\n".join(cols).count('T'), 1)
 
 
 class TestFamilyGrouping(unittest.TestCase):
