@@ -8,18 +8,11 @@ a mplstereonet axes, reproducing the legend labels, markers and
 annotations of the original inline implementation.
 """
 
-import os
-import sys
 from collections import namedtuple
 
-# Add vendor directory to path for mplstereonet (core.py normally does this
-# first, but keep this module importable on its own)
-vendor_dir = os.path.join(os.path.dirname(__file__), '..', 'vendor')
-if vendor_dir not in sys.path:
-    sys.path.insert(0, vendor_dir)
-
 import numpy as np
-import mplstereonet
+
+from ..vendor import mplstereonet
 
 
 # scope:    'combined' | 'per_dataset' | 'per_code'

@@ -19,12 +19,8 @@ except ImportError:
         from .vendor.fuzzywuzzy import fuzz
         HAS_FUZZY = True
     except Exception:
-        try:
-            from vendor.fuzzywuzzy import fuzz
-            HAS_FUZZY = True
-        except Exception:
-            fuzz = None
-            HAS_FUZZY = False
+        fuzz = None
+        HAS_FUZZY = False
 
 
 def layer_display_name(layer, max_tail_chars=50):

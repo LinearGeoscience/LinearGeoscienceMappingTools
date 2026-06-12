@@ -18,9 +18,9 @@ import os
 from datetime import datetime
 import datetime as dt
 
-# Try to import geomag library for WMM calculations
+# geomag (WMM calculations) is bundled in the vendor directory
 try:
-    import geomag
+    from .vendor import geomag
     GEOMAG_AVAILABLE = True
 except ImportError:
     GEOMAG_AVAILABLE = False
@@ -52,9 +52,9 @@ class CalculateDeclinationDialog(QDialog):
 
         # Check if geomag is available
         if not GEOMAG_AVAILABLE:
-            warning_label = QLabel("⚠️ WARNING: 'geomag' library not installed!\n"
-                                  "Install with: pip install geomag\n"
-                                  "The script will not work without this library.")
+            warning_label = QLabel("⚠️ WARNING: the bundled 'geomag' library could not be loaded.\n"
+                                  "Try reinstalling the plugin, or report the issue on the plugin tracker.\n"
+                                  "Declination calculation will not work without it.")
             warning_label.setStyleSheet("color: red; font-weight: bold; padding: 10px; background-color: #ffeeee;")
             layout.addWidget(warning_label)
 
@@ -464,8 +464,9 @@ class CalculateDeclinationDialog(QDialog):
 
         if not GEOMAG_AVAILABLE:
             QMessageBox.warning(self, "Error",
-                              "geomag library not installed!\n\n"
-                              "Install with: pip install geomag")
+                              "The bundled geomag library could not be loaded.\n\n"
+                              "Try reinstalling the plugin, or report the issue "
+                              "on the plugin tracker.")
             return
 
         if self.layer_combo.currentIndex() < 0:
@@ -569,8 +570,6 @@ class CalculateDeclinationDialog(QDialog):
                     error_msg += f"   {self.last_error_coords}\n"
             error_msg += f"\nSuggestions:\n"
             if calculation_errors > 0:
-                error_msg += f"  • Install geomag library: pip install geomag\n"
-                error_msg += f"  • Restart QGIS after installing geomag\n"
                 error_msg += f"  • Check if coordinates are within valid range\n"
             if geometry_errors > 0:
                 error_msg += f"  • Check that layer has valid point geometry\n"
@@ -583,8 +582,9 @@ class CalculateDeclinationDialog(QDialog):
         """Calculate and apply declination to all filtered features"""
         if not GEOMAG_AVAILABLE:
             QMessageBox.warning(self, "Error",
-                              "geomag library not installed!\n\n"
-                              "Install with: pip install geomag")
+                              "The bundled geomag library could not be loaded.\n\n"
+                              "Try reinstalling the plugin, or report the issue "
+                              "on the plugin tracker.")
             return
 
         if self.layer is None:

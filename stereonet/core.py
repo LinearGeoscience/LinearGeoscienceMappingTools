@@ -9,7 +9,6 @@ import os
 import io
 import re
 import csv
-import sys
 import json
 from functools import partial
 from types import SimpleNamespace
@@ -27,12 +26,7 @@ try:
 except ImportError:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 
-# Add vendor directory to path for mplstereonet
-vendor_dir = os.path.join(os.path.dirname(__file__), '..', 'vendor')
-if vendor_dir not in sys.path:
-    sys.path.insert(0, vendor_dir)
-
-import mplstereonet
+from ..vendor import mplstereonet
 import pandas as pd
 import numpy as np
 

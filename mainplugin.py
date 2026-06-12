@@ -16,11 +16,26 @@ from .ui_scaling import get_scale_manager
 # Import centralized theme
 from . import plugin_theme as theme
 
-# Import StereonetPluginCore and the photo panel function
-from .stereonet import StereonetPluginCore
+# The stereonet and recode workflow modules require matplotlib/pandas, which
+# are not bundled with every QGIS install (notably some Linux packages). Guard
+# their imports so the plugin still loads and the remaining tools stay usable;
+# the affected features show an installation hint instead.
+try:
+    from .stereonet import StereonetPluginCore
+    STEREONET_IMPORT_ERROR = None
+except ImportError as e:
+    StereonetPluginCore = None
+    STEREONET_IMPORT_ERROR = str(e)
+
+try:
+    from .recode_workflow import run_recode_workflow
+    RECODE_IMPORT_ERROR = None
+except ImportError as e:
+    run_recode_workflow = None
+    RECODE_IMPORT_ERROR = str(e)
+
 from .photo_panel import run_photo_panel
 from .map_cleaning import MapCleaningToolkit
-from .recode_workflow import run_recode_workflow
 from .script_declination_adjuster import DeclinationAdjusterDialog
 from .script_declination_calculator import CalculateDeclinationDialog
 from . import feature_info
@@ -272,8 +287,9 @@ class LinearGeosciencePluginMain:
         # Add to Plugins menu (required for QGIS plugin repository)
         self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_main_button)
 
-        self.stereonet_core = StereonetPluginCore(self.iface)
-        self.stereonet_core.initGui()
+        if StereonetPluginCore is not None:
+            self.stereonet_core = StereonetPluginCore(self.iface)
+            self.stereonet_core.initGui()
 
         # Map cleaning toolkit: adds its actions to the plugin toolbar
         self.map_cleaning = MapCleaningToolkit(self.iface)
@@ -326,7 +342,21 @@ class LinearGeosciencePluginMain:
     # ------------------------------------------------------------------
     # Panel toggles
     # ------------------------------------------------------------------
+    def _show_missing_dependency(self, feature_name, import_error):
+        QMessageBox.warning(
+            self.iface.mainWindow(),
+            f"{feature_name} unavailable",
+            f"{feature_name} could not be loaded because a required Python "
+            f"package is missing:\n\n{import_error}\n\n"
+            "Install the missing package into the QGIS Python environment "
+            "(e.g. python3-matplotlib / python3-pandas via your package "
+            "manager, or 'pip install matplotlib pandas'), then restart QGIS."
+        )
+
     def toggle_stereonet_panel(self):
+        if self.stereonet_core is None and STEREONET_IMPORT_ERROR:
+            self._show_missing_dependency("Stereonet Analysis", STEREONET_IMPORT_ERROR)
+            return
         if not self.stereonet_core or not self.stereonet_core.dock:
             return
         dock = self.stereonet_core.dock
@@ -532,7 +562,7 @@ class LinearGeosciencePluginMain:
         ver_sep.setStyleSheet(theme.separator_style())
         lay.addWidget(ver_sep)
 
-        version_info = QLabel("Linear Geoscience Mapping Tools V3.2\nAuthor: Harry West\nJune 2026")
+        version_info = QLabel("Linear Geoscience Mapping Tools V3.3\nAuthor: Harry West\nJune 2026")
         version_info.setAlignment(Qt.AlignLeft)
         version_info.setStyleSheet(theme.version_label_style())
         lay.addWidget(version_info)
@@ -752,6 +782,9 @@ class LinearGeosciencePluginMain:
         run(self.iface)
 
     def run_recode_workflow(self):
+        if run_recode_workflow is None:
+            self._show_missing_dependency("Recode & Restyle Wizard", RECODE_IMPORT_ERROR)
+            return
         run_recode_workflow(self.iface)
 
     def run_reprojectgeopackage(self):

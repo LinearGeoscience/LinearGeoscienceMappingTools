@@ -11,9 +11,9 @@ from datetime import datetime, date, time
 from qgis.PyQt.QtCore import QVariant, QDateTime, QDate, QTime
 from qgis.core import QgsFeatureRequest
 
-# Try to import fuzzywuzzy for better UUID field detection
+# Bundled fuzzywuzzy for better UUID field detection
 try:
-    from fuzzywuzzy import fuzz
+    from ..vendor.fuzzywuzzy import fuzz
     FUZZY_MATCHING_AVAILABLE = True
 except ImportError:
     FUZZY_MATCHING_AVAILABLE = False

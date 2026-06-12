@@ -2,7 +2,7 @@
 name=Linear Geoscience Mapping Tools
 email=harry@lineargeoscience.au
 author=Harry West
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.40
 description=A comprehensive geological mapping toolbox for the Linear Geoscience QField mapping template.
 about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     into a single plugin for professional geological mapping workflows.
@@ -19,6 +19,13 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     - Map cleaning tools: spline reshape and digitising, polygon clipping,
       smart clip, overlap/sliver finders, geometry fixer, and
       lines/polygons-to-splines Processing algorithms
+    External dependencies: requires the Python packages numpy, matplotlib and
+    pandas. These are included in standard QGIS installations on Windows and
+    macOS; on Linux they may need to be installed separately (e.g.
+    python3-matplotlib and python3-pandas via your package manager, or pip in
+    the QGIS Python environment). If matplotlib or pandas is missing, the
+    plugin still loads and the stereonet and symbology tools show an
+    installation hint instead.
     Bundled libraries: mplstereonet v0.6.3 (stereonet plotting by Joe Kington),
     geomag v0.9.2015 (magnetic declination by Christopher Weiss), fuzzywuzzy
     (fuzzy string matching), and WMM2025 magnetic model data (NOAA/NGA).
@@ -26,7 +33,7 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     Map cleaning tools are based on the Spline Plugin by Radim Blazek and
     Polygon Clipper by Giuseppe De Marco (GPL).
     See THIRD_PARTY_LICENSES files for complete attribution and license details.
-version=3.2
+version=3.3
 tracker=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/issues
 repository=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
 homepage=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
@@ -39,7 +46,11 @@ deprecated=False
 hasProcessingProvider=yes
 server=False
 plugin_dependencies=
-changelog=3.2: Integrated Map Cleaning toolkit (spline tools, clipping panel,
+changelog=3.3: QGIS plugin repository compliance release: graceful handling of
+    missing matplotlib/pandas, documented external dependencies, accurate
+    minimum QGIS version (3.40 LTR), vendored libraries now imported without
+    modifying sys.path, full GPLv3 license text included (June 2026)
+    3.2: Integrated Map Cleaning toolkit (spline tools, clipping panel,
     geometry fixer, splines Processing algorithms) (June 2026)
     3.1: UI refinements and version update (April 2026)
     2.0: Complete rewrite with modern UI, enhanced functionality, and improved stability
