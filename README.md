@@ -8,9 +8,9 @@ Version 3.2 | [GitHub](https://github.com/LinearGeoscience/LinearGeoscienceMappi
 
 - **Setup Mapping** - load the LGS mapping template and configure CRS, snapping, and scales
 - **Data Management** - import field data with UUID-based duplicate detection, merge and reproject GeoPackages, update tables and domain codes
-- **Stereonet Analysis** - interactive plotting of structural data (poles, great circles, density contours, rose diagrams), with export to Stereonet 11
+- **Stereonet Analysis** - interactive plotting of structural data (poles, great circles, density contours, rose diagrams), with export to Stereonet 11 and Leapfrog formats
 - **Field Photos** - georeference, browse, and export field photos
-- **Declination Tools** - calculate magnetic declination (WMM2025) and batch-adjust structural measurements
+- **Declination Tools** - calculate magnetic declination per point (WMM2025) and batch-adjust structural measurements
 - **Map Production** - generate mapsheets and print layouts
 - **Map Cleaning** - spline reshape and digitising tools, polygon clipping, overlap/sliver finders, geometry fixer, and Lines/Polygons to Splines Processing algorithms
 
@@ -18,7 +18,7 @@ Version 3.2 | [GitHub](https://github.com/LinearGeoscience/LinearGeoscienceMappi
 
 **From the QGIS Plugin Repository:** Plugins → Manage and Install Plugins → search "Linear Geoscience Mapping Tools" → Install.
 
-**Manual:** download from [GitHub Releases](https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/releases), extract, and copy the `LinearGeoscienceMappingTools` folder to your QGIS plugins directory (e.g. `%AppData%\QGIS\QGIS3\profiles\default\python\plugins\` on Windows), then restart QGIS and enable the plugin.
+**Manual:** download from [GitHub Releases](https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/releases), and in QGIS install from ZIP, selecting the zipped plugin. 
 
 ## Requirements
 
