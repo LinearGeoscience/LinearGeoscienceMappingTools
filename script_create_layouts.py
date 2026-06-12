@@ -26,29 +26,31 @@ except ImportError:
 
 try:
     from .recode_workflow.legend_builder import (
-        resolve_layer_ref, find_fields_for_table, load_lookup_map,
-        detect_lookup_columns, scan_sections_for_sheet,
+        resolve_layer_ref, find_fields_for_table,
+        load_lookup_table, detect_lookup_columns, scan_sections_for_sheet,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
-        collect_widget_lookups,
+        collect_widget_lookups, collect_paired_lookups, paired_base_field,
     )
     from .recode_workflow.legend_config import (
         normalize_section, normalize_config,
         serialize_config, deserialize_config, format_text_sections,
         build_text_section_lines, flow_lines_into_columns,
+        group_values_by_lookup,
     )
 except ImportError:
     from recode_workflow.legend_builder import (
-        resolve_layer_ref, find_fields_for_table, load_lookup_map,
-        detect_lookup_columns, scan_sections_for_sheet,
+        resolve_layer_ref, find_fields_for_table,
+        load_lookup_table, detect_lookup_columns, scan_sections_for_sheet,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
-        collect_widget_lookups,
+        collect_widget_lookups, collect_paired_lookups, paired_base_field,
     )
     from recode_workflow.legend_config import (
         normalize_section, normalize_config,
         serialize_config, deserialize_config, format_text_sections,
         build_text_section_lines, flow_lines_into_columns,
+        group_values_by_lookup,
     )
 
 try:
@@ -731,20 +733,65 @@ class LegendFieldConfigDialog(QDialog):
         val_combo = QComboBox()
         form.addWidget(val_combo)
 
+        form.addWidget(QLabel("Group by column (optional, e.g. Type):"))
+        group_combo = QComboBox()
+        form.addWidget(group_combo)
+
         form.addWidget(QLabel("Section Name:"))
         name_edit = QLineEdit()
         form.addWidget(name_edit)
 
-        form.addWidget(QLabel("Fields to scan (comma-separated):"))
-        fields_edit = QLineEdit()
-        fields_edit.setPlaceholderText(
-            "e.g. SubType1, SubType2, SubType3")
-        form.addWidget(fields_edit)
+        form.addWidget(QLabel("Fields to scan (check the data columns):"))
+        fields_list = QListWidget()
+        fields_list.setMaximumHeight(150)
+
+        # Candidate fields: populated string columns across spatial layers
+        # (paired '*Description' columns are description sources, hidden).
+        field_layers = {}  # field name → [layer names]
+        for lyr in QgsProject.instance().mapLayers().values():
+            if (lyr.type() != QgsMapLayerType.VectorLayer
+                    or not lyr.isSpatial()):
+                continue
+            for i, field in enumerate(lyr.fields()):
+                fname = field.name()
+                if fname in field_layers:
+                    field_layers[fname].append(lyr.name())
+                    continue
+                try:
+                    from qgis.PyQt.QtCore import QVariant
+                    if field.type() != QVariant.String:
+                        continue
+                    if paired_base_field(lyr, fname):
+                        continue
+                    if field_has_data(lyr, i):
+                        field_layers[fname] = [lyr.name()]
+                except Exception:
+                    continue
+        for fname in sorted(field_layers, key=str.lower):
+            item = QListWidgetItem(fname)
+            item.setToolTip("Layers: " + ", ".join(field_layers[fname]))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            fields_list.addItem(item)
+        form.addWidget(fields_list)
 
         info_label = QLabel("")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #5F6368; font-size: 10px;")
         form.addWidget(info_label)
+
+        def set_checked_fields(names):
+            wanted = {n.lower() for n in names}
+            for i in range(fields_list.count()):
+                item = fields_list.item(i)
+                item.setCheckState(
+                    Qt.Checked if item.text().lower() in wanted
+                    else Qt.Unchecked)
+
+        def checked_fields():
+            return [fields_list.item(i).text()
+                    for i in range(fields_list.count())
+                    if fields_list.item(i).checkState() == Qt.Checked]
 
         def on_table_changed():
             tid = table_combo.currentData()
@@ -753,9 +800,12 @@ class LegendFieldConfigDialog(QDialog):
                 return
             key_combo.clear()
             val_combo.clear()
+            group_combo.clear()
+            group_combo.addItem("(None)", None)
             for f in tbl.fields():
                 key_combo.addItem(f.name())
                 val_combo.addItem(f.name())
+                group_combo.addItem(f.name(), f.name())
             auto_key, auto_val = detect_lookup_columns(tbl)
             ki = key_combo.findText(auto_key)
             if ki >= 0:
@@ -763,6 +813,13 @@ class LegendFieldConfigDialog(QDialog):
             vi = val_combo.findText(auto_val)
             if vi >= 0:
                 val_combo.setCurrentIndex(vi)
+            # A column named 'Type' is the usual discriminator
+            for f in tbl.fields():
+                if f.name().lower() == 'type':
+                    gi = group_combo.findData(f.name())
+                    if gi >= 0:
+                        group_combo.setCurrentIndex(gi)
+                    break
             tname = tbl.name()
             # Auto-generate section name: strip "Codes" suffix
             sname = tname
@@ -776,16 +833,16 @@ class LegendFieldConfigDialog(QDialog):
             # Auto-detect fields by name pattern
             matched = find_fields_for_table(QgsProject.instance(), tname)
             field_names = sorted(set(fn for _, fn in matched))
-            fields_edit.setText(", ".join(field_names))
+            set_checked_fields(field_names)
             if field_names:
                 n_layers = len(set(l.id() for l, _ in matched))
                 info_label.setText(
                     f"Auto-detected {len(matched)} field(s) across "
-                    f"{n_layers} layer(s). Edit the list above if needed.")
+                    f"{n_layers} layer(s). Adjust the checkboxes if needed.")
             else:
                 info_label.setText(
-                    "No fields auto-detected. Enter the field names "
-                    "to scan (e.g. SubType1, SubType2).")
+                    "No fields auto-detected from the table name. "
+                    "Check the data columns to scan above.")
 
         table_combo.currentIndexChanged.connect(lambda: on_table_changed())
         on_table_changed()
@@ -798,19 +855,16 @@ class LegendFieldConfigDialog(QDialog):
         if dlg.exec() == QDialog.Accepted:
             tbl = QgsProject.instance().mapLayer(table_combo.currentData())
             if tbl:
-                # Parse comma-separated field names
-                raw_fields = fields_edit.text()
-                scan_fields = [f.strip() for f in raw_fields.split(',')
-                               if f.strip()]
                 self._sections.append(normalize_section({
                     'title': name_edit.text() or tbl.name(),
                     'layer': None,
-                    'fields': scan_fields,
+                    'fields': checked_fields(),
                     'display': 'text',
                     'lookup': {
                         'table': {'id': tbl.id(), 'name': tbl.name()},
                         'key_column': key_combo.currentText(),
                         'value_column': val_combo.currentText(),
+                        'group_column': group_combo.currentData(),
                     },
                 }))
                 self._refresh_vr_list()
@@ -1999,21 +2053,26 @@ class MapLayoutGeneratorPanel(QDockWidget):
         return unmatched_by_section
 
     def _load_lookup_maps(self, sections):
-        """Load {section_id: {code: description}} for each section.
+        """Load lookups for each section: (desc_maps, group_maps).
 
-        Sources, in increasing precedence: the section's configured lookup
-        (named table or inline map), then code→description mappings read
-        from the fields' editor widgets (ValueRelation/ValueMap dropdowns)
-        — the widget config is what the data was entered against.
+        desc_maps: {section_id: {code: description}}.  Sources in
+        increasing precedence: the section's configured lookup (named
+        table / inline map), code→description mappings from the fields'
+        editor widgets (ValueRelation/ValueMap dropdowns), then paired
+        '<Field>Description' columns on the data layers themselves.
+        group_maps: {section_id: {code: group}} from the lookup table's
+        discriminator column (e.g. 'Type'), when configured.
         """
         project = QgsProject.instance()
-        maps = {}
+        desc_maps = {}
+        group_maps = {}
         for section in sections:
             base = {}
+            groups = {}
             lookup = section.get('lookup')
             if lookup and lookup.get('map'):
                 base = dict(lookup['map'])
-            elif lookup:
+            elif lookup and lookup.get('table'):
                 table = resolve_layer_ref(project, lookup['table'])
                 if table is None:
                     QgsMessageLog.logMessage(
@@ -2021,14 +2080,34 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         f"found for section '{section['title']}'.",
                         LOG_TAG, Qgis.Warning)
                 else:
-                    base = load_lookup_map(
-                        table, lookup['key_column'], lookup['value_column'])
+                    base, groups = load_lookup_table(
+                        table, lookup['key_column'], lookup['value_column'],
+                        lookup.get('group_column'))
 
             merged = dict(base)
             merged.update(collect_widget_lookups(project, section))
+            merged.update(collect_paired_lookups(project, section))
             if merged:
-                maps[section['id']] = merged
-        return maps
+                desc_maps[section['id']] = merged
+            if groups:
+                group_maps[section['id']] = groups
+        return desc_maps, group_maps
+
+    @staticmethod
+    def _apply_lookup_grouping(sections, scan_results, group_maps):
+        """Split flat scan results into {group: [values]} for sections
+        whose lookup has a discriminator column.  The dict form renders
+        with per-group sub-headers (e.g. Alteration: / Weathering:)."""
+        if not group_maps:
+            return scan_results
+        grouped_results = dict(scan_results)
+        for section in sections:
+            sid = section['id']
+            groups = group_maps.get(sid)
+            data = grouped_results.get(sid)
+            if groups and isinstance(data, list) and data:
+                grouped_results[sid] = group_values_by_lookup(data, groups)
+        return grouped_results
 
     def _scan_code_table_text(self):
         """Project-wide preview of the legend text sections.
@@ -2056,7 +2135,9 @@ class MapLayoutGeneratorPanel(QDockWidget):
             return
 
         scan_results = scan_sections_for_sheet(QgsProject.instance(), sections)
-        lookup_maps = self._load_lookup_maps(sections)
+        lookup_maps, group_maps = self._load_lookup_maps(sections)
+        scan_results = self._apply_lookup_grouping(
+            sections, scan_results, group_maps)
 
         # For 'auto' sections the preview shows what would overflow to text
         # (values with no renderer symbol).
@@ -2329,8 +2410,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         f"{len(sections)} auto-detected section(s): "
                         f"{', '.join(s['title'] for s in sections)}.",
                         LOG_TAG, Qgis.Info)
-            lookup_maps = (self._load_lookup_maps(sections)
-                           if sections else {})
+            lookup_maps, group_maps = (self._load_lookup_maps(sections)
+                                       if sections else ({}, {}))
             per_sheet = self.perSheetCheckbox.isChecked()
             filter_by_map = self.filterByMapCheckbox.isChecked()
             sheet_crs = polygon_layer.crs()
@@ -2518,6 +2599,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
                                 sheet_geom=geom, sheet_crs=sheet_crs)
                         else:
                             scan_results = project_wide_results or {}
+                        scan_results = self._apply_lookup_grouping(
+                            sections, scan_results, group_maps)
 
                     # Automate legend
                     unmatched = {}

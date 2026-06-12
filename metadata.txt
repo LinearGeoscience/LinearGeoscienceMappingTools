@@ -63,7 +63,13 @@ changelog=3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
     Value Map dropdowns) so QField projects resolve them without naming
     conventions; case-variant codes (CY/Cy/cy) merge with the lookup's
     canonical casing; the code list renders as a configurable multi-column
-    "Code - Description" block below the legend (June 2026)
+    "Code - Description" block below the legend. Lookup sections can be
+    split by a discriminator column (e.g. Type) with per-group sub-headers;
+    scan fields are picked via checkboxes instead of typed; descriptions
+    can come straight from paired layer columns (SubType1 ↔
+    SubType1Description) or from description-valued fields in client
+    deliverables; lookup column detection no longer falls back to fid
+    (June 2026)
     3.3: QGIS plugin repository compliance release: graceful handling of
     missing matplotlib/pandas, documented external dependencies, accurate
     minimum QGIS version (3.40 LTR), vendored libraries now imported without

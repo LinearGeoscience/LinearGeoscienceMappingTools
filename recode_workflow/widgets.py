@@ -731,10 +731,13 @@ class FieldGroupManager(QWidget):
         if not table:
             return
         key_col, val_col = detect_lookup_columns(table)
+        group_col = next((f.name() for f in table.fields()
+                          if f.name().lower() == 'type'), None)
         self._groups[index]['lookup'] = {
             'table': {'id': table.id(), 'name': table.name()},
             'key_column': key_col,
             'value_column': val_col,
+            'group_column': group_col,
         }
         self.groups_changed.emit()
 
@@ -743,7 +746,7 @@ class FieldGroupManager(QWidget):
         if not (0 <= index < len(self._groups)):
             return
         lookup = self._groups[index]['lookup']
-        if not lookup:
+        if not lookup or not lookup.get('table'):
             return
         from qgis.core import QgsProject
         table = QgsProject.instance().mapLayer(lookup['table'].get('id', ''))
@@ -763,15 +766,24 @@ class FieldGroupManager(QWidget):
         lay.addWidget(QLabel("Value (description) column:"))
         val_combo = QComboBox()
         lay.addWidget(val_combo)
+        lay.addWidget(QLabel("Group by column (optional, e.g. Type):"))
+        grp_combo = QComboBox()
+        grp_combo.addItem("(None)", None)
+        lay.addWidget(grp_combo)
         for f in table.fields():
             key_combo.addItem(f.name())
             val_combo.addItem(f.name())
+            grp_combo.addItem(f.name(), f.name())
         ki = key_combo.findText(lookup.get('key_column', ''))
         if ki >= 0:
             key_combo.setCurrentIndex(ki)
         vi = val_combo.findText(lookup.get('value_column', ''))
         if vi >= 0:
             val_combo.setCurrentIndex(vi)
+        if lookup.get('group_column'):
+            gi = grp_combo.findData(lookup['group_column'])
+            if gi >= 0:
+                grp_combo.setCurrentIndex(gi)
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
@@ -780,6 +792,7 @@ class FieldGroupManager(QWidget):
         if dlg.exec() == QDialog.Accepted:
             lookup['key_column'] = key_combo.currentText()
             lookup['value_column'] = val_combo.currentText()
+            lookup['group_column'] = grp_combo.currentData()
             self.groups_changed.emit()
 
     def _rebuild_group_widgets(self):

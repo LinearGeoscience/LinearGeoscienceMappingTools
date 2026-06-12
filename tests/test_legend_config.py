@@ -27,6 +27,7 @@ serialize_config = legend_config.serialize_config
 deserialize_config = legend_config.deserialize_config
 format_entries = legend_config.format_entries
 format_entry_list = legend_config.format_entry_list
+group_values_by_lookup = legend_config.group_values_by_lookup
 format_text_sections = legend_config.format_text_sections
 build_text_section_lines = legend_config.build_text_section_lines
 flow_lines_into_columns = legend_config.flow_lines_into_columns
@@ -100,6 +101,24 @@ class TestNormalizeSection(unittest.TestCase):
     def test_inline_map_lookup(self):
         s = normalize_section({'lookup': {'map': {'si': 'Silica', 0: 1}}})
         self.assertEqual(s['lookup'], {'map': {'si': 'Silica', '0': '1'}})
+
+    def test_table_lookup_group_column(self):
+        s = normalize_section({'lookup': {
+            'table': {'id': 't', 'name': 'BasemapCategories'},
+            'key_column': 'Code', 'value_column': 'Description',
+            'group_column': 'Type'}})
+        self.assertEqual(s['lookup']['group_column'], 'Type')
+        # Absent/empty group column normalises to None
+        s2 = normalize_section({'lookup': {
+            'table': {'id': 't', 'name': 'T'},
+            'key_column': 'Code', 'value_column': 'Description'}})
+        self.assertIsNone(s2['lookup']['group_column'])
+
+    def test_pairs_lookup(self):
+        s = normalize_section({'lookup': {'pairs': {}}})
+        self.assertEqual(s['lookup'], {'pairs': {'suffix': 'Description'}})
+        s2 = normalize_section({'lookup': {'pairs': {'suffix': '_Desc'}}})
+        self.assertEqual(s2['lookup']['pairs']['suffix'], '_Desc')
 
     def test_text_columns_clamped(self):
         self.assertEqual(
@@ -211,6 +230,46 @@ class TestFormatting(unittest.TestCase):
     def test_lookup_matched_case_insensitively(self):
         entries = format_entry_list(['SI'], {'si': 'Silica'})
         self.assertEqual(entries, [f"si {EM_DASH} Silica"])
+
+    def test_description_embedding_code_not_doubled(self):
+        # Description already starts with the code → show it alone
+        entries = format_entry_list(['chl'], {'Chl': 'Chl - Chlorite'})
+        self.assertEqual(entries, ["Chl - Chlorite"])
+
+    def test_unmatched_multiword_value_keeps_casing(self):
+        # Client deliverables: the value IS the description
+        entries = format_entry_list(['Hem - Hematite', 'CY'])
+        self.assertEqual(entries, ["cy", "Hem - Hematite"])
+
+    def test_multiword_case_variants_merge_first_seen(self):
+        entries = format_entry_list(['Breccia Zone - Major',
+                                     'BRECCIA ZONE - MAJOR'])
+        self.assertEqual(entries, ["Breccia Zone - Major"])
+
+
+class TestGroupValuesByLookup(unittest.TestCase):
+
+    GROUPS = {'Ab': 'Alteration', 'Fresh': 'Weathering',
+              'Bt': 'Alteration'}
+
+    def test_groups_split_and_sorted(self):
+        result = group_values_by_lookup(['Fresh', 'ab', 'bt'], self.GROUPS)
+        self.assertEqual(result, {
+            'Alteration': ['ab', 'bt'],
+            'Weathering': ['Fresh'],
+        })
+
+    def test_ungrouped_under_other(self):
+        result = group_values_by_lookup(['ab', 'xx'], self.GROUPS)
+        self.assertEqual(result, {'Alteration': ['ab'], 'Other': ['xx']})
+
+    def test_no_other_when_all_grouped(self):
+        result = group_values_by_lookup(['ab'], self.GROUPS)
+        self.assertNotIn('Other', result)
+
+    def test_empty_group_map(self):
+        result = group_values_by_lookup(['a'], {})
+        self.assertEqual(result, {'Other': ['a']})
 
     def _sections(self):
         return [

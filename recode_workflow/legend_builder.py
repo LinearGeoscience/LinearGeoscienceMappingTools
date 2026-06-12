@@ -232,38 +232,67 @@ def find_fields_for_table(project, table_name):
 
 
 def detect_lookup_columns(table_layer):
-    """Guess key and value columns from a lookup table by common names."""
+    """Guess key and value columns from a lookup table.
+
+    Tries common column names first; falls back to the table's string
+    columns, skipping id/system fields — never fid or other integer
+    bookkeeping columns.
+    """
     fields = table_layer.fields()
-    key_names = ['Code', 'code', 'KEY', 'Key', 'ID', 'id']
+    key_names = ['Code', 'code', 'KEY', 'Key']
     val_names = ['Description', 'Desciption', 'description',
                  'Name', 'name', 'Label', 'Value', 'value']
+
+    eligible = [f.name() for f in fields
+                if _is_string_field(f)
+                and f.name().lower() not in DEFAULT_EXCLUDED_FIELDS]
+
     key_col = next((k for k in key_names if fields.indexOf(k) >= 0),
-                   fields[0].name() if fields.count() > 0 else '')
-    val_col = next((v for v in val_names if fields.indexOf(v) >= 0),
-                   fields[1].name() if fields.count() > 1 else key_col)
+                   eligible[0] if eligible
+                   else (fields[0].name() if fields.count() > 0 else ''))
+    val_col = next((v for v in val_names if fields.indexOf(v) >= 0), '')
+    if not val_col:
+        after_key = [name for name in eligible if name != key_col]
+        val_col = after_key[0] if after_key else key_col
     return key_col, val_col
 
 
-def load_lookup_map(table_layer, key_column, value_column):
-    """Build {code: description} from a lookup table.
+def load_lookup_table(table_layer, key_column, value_column,
+                      group_column=None):
+    """Build ({code: description}, {code: group}) from a lookup table.
 
     NULL-safe: keys/descriptions go through is_valid_value, so a code of
-    0 or '0' survives (truthiness checks would drop it).
+    0 or '0' survives (truthiness checks would drop it).  The group map
+    is empty unless group_column is given (the table's discriminator,
+    e.g. a 'Type' column splitting Alteration from Weathering codes).
     """
     key_idx = table_layer.fields().indexOf(key_column)
     val_idx = table_layer.fields().indexOf(value_column)
+    grp_idx = (table_layer.fields().indexOf(group_column)
+               if group_column else -1)
     if key_idx < 0:
-        return {}
+        return {}, {}
 
     request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
     lookup = {}
+    groups = {}
     for feat in table_layer.getFeatures(request):
         key = feat[key_idx]
         if not _is_valid_value(key):
             continue
+        key_s = str(key)
         desc = feat[val_idx] if val_idx >= 0 else None
-        lookup[str(key)] = str(desc) if _is_valid_value(desc) else ''
-    return lookup
+        lookup[key_s] = str(desc) if _is_valid_value(desc) else ''
+        if grp_idx >= 0:
+            group = feat[grp_idx]
+            if _is_valid_value(group):
+                groups[key_s] = str(group)
+    return lookup, groups
+
+
+def load_lookup_map(table_layer, key_column, value_column):
+    """{code: description} from a lookup table (no grouping)."""
+    return load_lookup_table(table_layer, key_column, value_column)[0]
 
 
 # QGIS sentinel used by ValueMap widgets for NULL entries
@@ -391,6 +420,75 @@ def collect_widget_lookups(project, section):
     return merged
 
 
+def _squash(name):
+    """Lowercase a field name and drop '_'/' ' separators for matching."""
+    return name.lower().replace('_', '').replace(' ', '')
+
+
+def find_paired_description_field(layer, field_name):
+    """Find the sibling description column for a code field.
+
+    Matches '<field>description' case-insensitively, tolerating '_' and
+    ' ' separators: Subtype1 ↔ SubType1Description / SubType1_Description.
+    Returns the column name or None.
+    """
+    target = _squash(field_name) + 'description'
+    for field in layer.fields():
+        if field.name() != field_name and _squash(field.name()) == target:
+            return field.name()
+    return None
+
+
+def paired_base_field(layer, field_name):
+    """Inverse of find_paired_description_field: the code column that a
+    '*Description' field describes, or None."""
+    squashed = _squash(field_name)
+    if not squashed.endswith('description'):
+        return None
+    base = squashed[:-len('description')]
+    if not base:
+        return None
+    for field in layer.fields():
+        if field.name() != field_name and _squash(field.name()) == base:
+            return field.name()
+    return None
+
+
+def collect_paired_lookups(project, section):
+    """{code: description} built from paired columns on the data layers.
+
+    For each scan target field F with a sibling description column
+    (Subtype1 ↔ SubType1Description), one feature pass per layer collects
+    code→description pairs.  First definition of a code wins.
+    """
+    merged = {}
+    for layer, field_names in resolve_section_targets(project, section):
+        pairs = []
+        for fname in field_names:
+            code_idx = layer.fields().indexOf(fname)
+            if code_idx < 0:
+                continue
+            desc_name = find_paired_description_field(layer, fname)
+            if not desc_name:
+                continue
+            desc_idx = layer.fields().indexOf(desc_name)
+            if desc_idx >= 0:
+                pairs.append((code_idx, desc_idx))
+        if not pairs:
+            continue
+
+        needed = sorted({idx for pair in pairs for idx in pair})
+        request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+        request.setSubsetOfAttributes(needed)
+        for feat in layer.getFeatures(request):
+            for code_idx, desc_idx in pairs:
+                code = feat[code_idx]
+                desc = feat[desc_idx]
+                if _is_valid_value(code) and _is_valid_value(desc):
+                    merged.setdefault(str(code), str(desc))
+    return merged
+
+
 # ── Auto-detection of legend sections ─────────────────────────────────
 
 def field_has_data(layer, field_idx):
@@ -476,6 +574,10 @@ def discover_section_candidates(project):
                 continue
             if not _is_string_field(field):
                 continue
+            # '*Description' columns paired with a code field are
+            # description sources, not code families of their own.
+            if paired_base_field(lyr, fname):
+                continue
             idx = lyr.fields().indexOf(fname)
             if field_has_data(lyr, idx):
                 remaining.setdefault(fname, []).append(lyr)
@@ -484,12 +586,18 @@ def discover_section_candidates(project):
             sorted(remaining)).items():
         layers = set()
         lookup = None
+        has_pairs = False
         for member in members:
             for lyr in remaining[member]:
                 layers.add(lyr.name())
                 if lookup is None:
                     idx = lyr.fields().indexOf(member)
                     lookup = widget_lookup_config(project, lyr, idx)
+                if not has_pairs and find_paired_description_field(
+                        lyr, member):
+                    has_pairs = True
+        if lookup is None and has_pairs:
+            lookup = {'pairs': {'suffix': 'Description'}}
         candidates.append({
             'title': family,
             'fields': members,

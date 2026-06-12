@@ -110,11 +110,18 @@ def normalize_section(section):
             'table': _layer_ref(lookup['table']),
             'key_column': lookup.get('key_column', ''),
             'value_column': lookup.get('value_column', ''),
+            'group_column': lookup.get('group_column') or None,
         }
     elif lookup and lookup.get('map'):
         # Inline code→description map (e.g. from a ValueMap field widget)
         lookup = {'map': {str(k): str(v)
                           for k, v in dict(lookup['map']).items()}}
+    elif lookup and 'pairs' in lookup:
+        # Paired columns on the data layer itself: field F holds the code,
+        # sibling column F+suffix holds the description.
+        pairs = lookup.get('pairs') or {}
+        lookup = {'pairs': {
+            'suffix': str(pairs.get('suffix') or 'Description')}}
     else:
         lookup = None
 
@@ -242,13 +249,25 @@ def deserialize_config(raw):
 
 # ── Text block formatting ─────────────────────────────────────────────
 
+def _desc_embeds_code(desc, code):
+    """True when the description already leads with the code as a word
+    ('Chl - Chlorite' embeds 'Chl'; 'Sericite' does NOT embed 'Ser')."""
+    dl, cl = desc.lower(), code.lower()
+    if not cl or not dl.startswith(cl):
+        return False
+    return len(dl) == len(cl) or not dl[len(cl)].isalnum()
+
+
 def format_entry_list(values, lookup_map=None):
     """Format values as a sorted list of 'Code — Description' entries.
 
     Case-variant codes (CY / Cy / cy) are merged: lookup keys are matched
-    case-insensitively and the lookup's canonical casing is displayed;
-    codes with no lookup entry are shown lowercase (matching how the
-    codes are labelled on the map).
+    case-insensitively and the lookup's canonical casing is displayed.
+    A description that already embeds its code ('Chl - Chlorite') is
+    shown alone rather than doubled ('Chl — Chl - Chlorite').  Unmatched
+    single-token codes are shown lowercase (matching the map labels);
+    unmatched multi-word values are descriptions in their own right
+    ('Hem - Hematite' in client deliverables) and keep their casing.
     """
     lookup_map = lookup_map or {}
     canonical = {}
@@ -258,16 +277,21 @@ def format_entry_list(values, lookup_map=None):
     seen = set()
     entries = []
     for value in values:
-        key = str(value).lower()
+        value_s = str(value)
+        key = value_s.lower()
         if key in seen:
             continue
         seen.add(key)
         if key in canonical:
             code, desc = canonical[key]
-            if desc and desc != code:
+            if desc and _desc_embeds_code(desc, code):
+                entries.append(desc)
+            elif desc and desc != code:
                 entries.append(f"{code} {EM_DASH} {desc}")
             else:
                 entries.append(code)
+        elif ' ' in value_s.strip():
+            entries.append(value_s.strip())
         else:
             entries.append(key)
     return sorted(entries, key=str.lower)
@@ -276,6 +300,31 @@ def format_entry_list(values, lookup_map=None):
 def format_entries(values, lookup_map=None):
     """Comma-joined form of format_entry_list (compact, single line)."""
     return ", ".join(format_entry_list(values, lookup_map))
+
+
+def group_values_by_lookup(values, group_map, other_label='Other'):
+    """Split values into {group: [values]} via a code→group map.
+
+    Codes are matched case-insensitively.  Values whose code has no
+    group land under other_label (omitted when empty).  The result
+    feeds the subdivided section rendering (sub-header + indented
+    entries), giving lookup-table 'Type' discrimination.
+    """
+    groups_ci = {str(code).lower(): str(group)
+                 for code, group in (group_map or {}).items()
+                 if is_valid_value(group)}
+    grouped = {}
+    ungrouped = []
+    for value in values:
+        group = groups_ci.get(str(value).lower())
+        if group:
+            grouped.setdefault(group, []).append(value)
+        else:
+            ungrouped.append(value)
+    result = {group: grouped[group] for group in sorted(grouped)}
+    if ungrouped:
+        result[other_label] = ungrouped
+    return result
 
 
 def build_text_section_lines(sections, scan_results, lookup_maps=None,
