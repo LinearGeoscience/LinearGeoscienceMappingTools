@@ -8,9 +8,9 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     into a single plugin for professional geological mapping workflows.
     Features include:
     - Setup geopackage for QField mapping (scale, snapping, etc.)
-    - Interactive stereonet analysis with export to Stereonet 11
+    - Interactive stereonet analysis
     - Georeference and manage field photos
-    - Merge and append mapping geopackages
+    - Merge and append mapping geopackages and external mapping data
     - Reproject template CRS
     - Structural domain classification
     - Magnetic declination calculation and adjustment
