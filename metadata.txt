@@ -33,7 +33,7 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     Map cleaning tools are based on the Spline Plugin by Radim Blazek and
     Polygon Clipper by Giuseppe De Marco (GPL).
     See THIRD_PARTY_LICENSES files for complete attribution and license details.
-version=3.3
+version=3.4
 tracker=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/issues
 repository=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
 homepage=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
@@ -46,7 +46,20 @@ deprecated=False
 hasProcessingProvider=yes
 server=False
 plugin_dependencies=
-changelog=3.3: QGIS plugin repository compliance release: graceful handling of
+changelog=3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
+    filtered by map content, field/code scans restricted to each sheet's
+    polygon), text-only legend sections for non-symbolised fields (minerals,
+    textures, intensity etc. grouped under custom headings with lookup-table
+    descriptions), legend config auto-saved in the QGIS project, fixed legend
+    layer exclusion for grouped layer trees, template 'code_table' label now
+    honoured, sturdier export reporting. Layout manager names are now
+    single-line ("Project - Sheet"); pre-3.4 layouts are still replaced on
+    regeneration. Legend sections are auto-detected by default: populated
+    code columns (Mineral, Texture, SubType...) are discovered, grouped
+    into families, matched to their lookup tables by name and used without
+    manual setup; an Auto-detect review dialog adds extras (e.g. columns
+    without code tables), and the field picker hides empty columns (June 2026)
+    3.3: QGIS plugin repository compliance release: graceful handling of
     missing matplotlib/pandas, documented external dependencies, accurate
     minimum QGIS version (3.40 LTR), vendored libraries now imported without
     modifying sys.path, full GPLv3 license text included (June 2026)
