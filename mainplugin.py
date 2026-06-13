@@ -339,6 +339,19 @@ class LinearGeosciencePluginMain:
             self.photo_panel.deleteLater()
             self.photo_panel = None
 
+        # The Map Layout Generator panel is a singleton stored on iface;
+        # remove it on unload so a plugin reload builds a fresh panel
+        # from the new code instead of re-raising the stale dock.
+        layout_panel = getattr(self.iface, '_layout_panel', None)
+        if layout_panel is not None:
+            try:
+                self.iface.removeDockWidget(layout_panel)
+                layout_panel.close()
+                layout_panel.deleteLater()
+            except Exception:
+                pass  # panel may already be deleted
+            self.iface._layout_panel = None
+
     # ------------------------------------------------------------------
     # Panel toggles
     # ------------------------------------------------------------------

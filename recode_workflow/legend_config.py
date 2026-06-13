@@ -125,11 +125,30 @@ def normalize_section(section):
     else:
         lookup = None
 
+    # Layer-explicit scan targets: [{'layer': {id,name}, 'fields': [...]}].
+    # When present they are authoritative; 'fields' is the display union.
+    field_targets = []
+    for target in section.get('field_targets') or []:
+        ref = _layer_ref(target.get('layer'))
+        fields = [str(f) for f in target.get('fields', []) if str(f).strip()]
+        if ref and fields:
+            field_targets.append({'layer': ref, 'fields': fields})
+
+    fields = [str(f) for f in section.get('fields', []) if str(f).strip()]
+    if field_targets and not fields:
+        seen = set()
+        for target in field_targets:
+            for f in target['fields']:
+                if f.lower() not in seen:
+                    seen.add(f.lower())
+                    fields.append(f)
+
     return {
         'id': section.get('id') or str(uuid.uuid4()),
         'title': section.get('title', ''),
         'layer': _layer_ref(section.get('layer')),
-        'fields': [str(f) for f in section.get('fields', []) if str(f).strip()],
+        'fields': fields,
+        'field_targets': field_targets or None,
         'subdivide_by': section.get('subdivide_by') or None,
         'display': display,
         'lookup': lookup,
@@ -148,6 +167,7 @@ def normalize_config(config):
             _layer_ref(r) for r in config.get('legend_unchecked_layers', [])
             if _layer_ref(r)],
         'code_table_text_manual': config.get('code_table_text_manual', ''),
+        'code_table_preview': config.get('code_table_preview', ''),
         'options': {
             'per_sheet_scan': bool(options.get('per_sheet_scan', True)),
             'filter_legend_by_map': bool(
@@ -379,55 +399,151 @@ def build_text_section_lines(sections, scan_results, lookup_maps=None,
     return result
 
 
+def text_from_section_lines(section_lines):
+    """Plain text form of [(title, [lines])]: heading then one entry per
+    line, blank line between sections.  Untitled sections emit lines only."""
+    blocks = []
+    for title, lines in section_lines:
+        block_lines = ([title] if title else []) + list(lines)
+        if block_lines:
+            blocks.append("\n".join(block_lines))
+    return "\n\n".join(blocks)
+
+
 def format_text_sections(sections, scan_results, lookup_maps=None,
                          extra_unmatched=None):
     """Plain-text form of build_text_section_lines.
 
-    Heading, then one entry per line; blank line between sections.
-    Used for the panel preview box and the manual-override comparison.
+    Used for the panel preview box and the edit-override comparison.
     """
-    blocks = []
-    for title, lines in build_text_section_lines(
-            sections, scan_results, lookup_maps, extra_unmatched):
-        blocks.append("\n".join([title] + lines))
-    return "\n\n".join(blocks)
+    return text_from_section_lines(build_text_section_lines(
+        sections, scan_results, lookup_maps, extra_unmatched))
 
 
-def flow_lines_into_columns(section_lines, ncols):
-    """Flow [(title, [lines])] into ncols newspaper-style columns.
+# ── Pre-generation text edits (per-entry overrides) ──────────────────
 
-    Returns a list of column text strings (may be fewer than ncols for
-    short content).  Balanced by line count; a heading is never left as
-    the last line of a column.
+def _entry_key(line):
+    """Pairing key for an entry line: the code before the em-dash."""
+    s = line.strip()
+    if EM_DASH in s:
+        return s.split(EM_DASH, 1)[0].strip().lower()
+    return s.lower()
+
+
+def _looks_like_heading(line):
+    return (line == line.upper() and EM_DASH not in line
+            and not line.endswith(':') and len(line) > 1)
+
+
+def derive_text_overrides(base_text, edited_text, headings=None):
+    """Read the user's edits to the generated preview as corrections.
+
+    Compares stripped lines of the generated text (base) against the
+    edited box.  Deleted lines exclude that entry on every sheet; a
+    deleted+added pair sharing a code key is a rewording; remaining
+    additions are appended under the nearest preceding heading (or at
+    the end when above all headings).  Deleting a heading suppresses
+    the whole section.
+
+    headings: known section titles (uppercase).  Heuristic detection
+    (all-caps, no em-dash) backs it up for stale snapshots.
+
+    Returns {} when the texts match (no overrides).
     """
-    flat = []  # (text, is_heading)
+    base_text = (base_text or '').strip()
+    edited_text = (edited_text or '').strip()
+    if edited_text == base_text:
+        return {}
+    if not base_text:
+        # Never previewed: treat the typed text as appended manual lines
+        lines = [l.strip() for l in edited_text.splitlines() if l.strip()]
+        if not lines:
+            return {}
+        return {'removed': [], 'removed_headings': [], 'replaced': {},
+                'added': {}, 'added_top': lines}
+
+    base_lines = [l.strip() for l in base_text.splitlines() if l.strip()]
+    edited_lines = [l.strip() for l in edited_text.splitlines() if l.strip()]
+    base_set = set(base_lines)
+    edited_set = set(edited_lines)
+
+    heading_set = {h for h in (headings or []) if h}
+    heading_set.update(l for l in base_lines if _looks_like_heading(l))
+
+    removed_raw = [l for l in base_lines if l not in edited_set]
+    added_raw = [l for l in edited_lines if l not in base_set]
+
+    added_by_key = {}
+    for line in added_raw:
+        added_by_key.setdefault(_entry_key(line), line)
+
+    removed = []
+    removed_headings = []
+    replaced = {}
+    consumed_additions = set()
+    for line in removed_raw:
+        key = _entry_key(line)
+        pair = added_by_key.get(key)
+        if pair is not None and pair not in consumed_additions:
+            replaced[line] = pair
+            consumed_additions.add(pair)
+        elif line in heading_set:
+            removed_headings.append(line)
+        else:
+            removed.append(line)
+
+    added = {}
+    added_top = []
+    current_heading = None
+    for line in edited_lines:
+        if line in heading_set:
+            current_heading = line
+            continue
+        if line in added_raw and line not in consumed_additions:
+            if current_heading:
+                added.setdefault(current_heading, []).append(line)
+            else:
+                added_top.append(line)
+
+    if not (removed or removed_headings or replaced or added or added_top):
+        return {}
+    return {
+        'removed': removed,
+        'removed_headings': removed_headings,
+        'replaced': replaced,
+        'added': added,
+        'added_top': added_top,
+    }
+
+
+def apply_text_overrides(section_lines, overrides):
+    """Apply derive_text_overrides corrections to [(title, [lines])]."""
+    if not overrides:
+        return section_lines
+    removed = set(overrides.get('removed', []))
+    removed_headings = set(overrides.get('removed_headings', []))
+    replaced = overrides.get('replaced', {})
+    added = overrides.get('added', {})
+
+    result = []
     for title, lines in section_lines:
-        if flat:
-            flat.append(('', False))
-        flat.append((title, True))
-        flat.extend((line, False) for line in lines)
-    if not flat:
-        return []
+        if title in removed_headings:
+            continue
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped in removed:
+                continue
+            if stripped in replaced:
+                indent = line[:len(line) - len(line.lstrip())]
+                new_lines.append(indent + replaced[stripped])
+            else:
+                new_lines.append(line)
+        new_lines.extend(added.get(title, []))
+        if new_lines:
+            result.append((title, new_lines))
 
-    ncols = _clamp_columns(ncols)
-    columns = []
-    i = 0
-    for col in range(ncols):
-        remaining = len(flat) - i
-        if remaining <= 0:
-            break
-        take = -(-remaining // (ncols - col))  # ceil division
-        end = i + take
-        # Don't orphan a heading at the bottom of a column
-        if i < end - 1 and end < len(flat) and flat[end - 1][1]:
-            end -= 1
-        chunk = flat[i:end]
-        i = end
-        # Trim blank separator lines at column boundaries
-        while chunk and not chunk[0][0]:
-            chunk.pop(0)
-        while chunk and not chunk[-1][0]:
-            chunk.pop()
-        if chunk:
-            columns.append("\n".join(text for text, _ in chunk))
-    return columns
+    added_top = overrides.get('added_top', [])
+    if added_top:
+        result.append(('', list(added_top)))
+    return result

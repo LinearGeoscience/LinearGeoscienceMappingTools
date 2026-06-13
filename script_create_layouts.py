@@ -31,12 +31,14 @@ try:
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
         collect_widget_lookups, collect_paired_lookups, paired_base_field,
+        find_paired_description_field,
     )
     from .recode_workflow.legend_config import (
         normalize_section, normalize_config,
-        serialize_config, deserialize_config, format_text_sections,
-        build_text_section_lines, flow_lines_into_columns,
-        group_values_by_lookup,
+        serialize_config, deserialize_config,
+        build_text_section_lines,
+        group_values_by_lookup, text_from_section_lines,
+        derive_text_overrides, apply_text_overrides,
     )
 except ImportError:
     from recode_workflow.legend_builder import (
@@ -45,12 +47,14 @@ except ImportError:
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
         collect_widget_lookups, collect_paired_lookups, paired_base_field,
+        find_paired_description_field,
     )
     from recode_workflow.legend_config import (
         normalize_section, normalize_config,
-        serialize_config, deserialize_config, format_text_sections,
-        build_text_section_lines, flow_lines_into_columns,
-        group_values_by_lookup,
+        serialize_config, deserialize_config,
+        build_text_section_lines,
+        group_values_by_lookup, text_from_section_lines,
+        derive_text_overrides, apply_text_overrides,
     )
 
 try:
@@ -59,6 +63,23 @@ except ImportError:
     from layer_select import layer_display_name, find_best_match
 
 LOG_TAG = 'Linear Geoscience'
+
+
+def parse_scale_text(value):
+    """Parse a scale attribute ('1:10,000', '10000', 10000.0) into an
+    integer denominator, or None when empty/invalid."""
+    if value is None:
+        return None
+    s = str(value).strip().replace(',', '').replace(' ', '')
+    if not s or s.upper() == 'NULL':
+        return None
+    if ':' in s:
+        s = s.split(':', 1)[1]
+    try:
+        denominator = int(float(s))
+    except ValueError:
+        return None
+    return denominator if denominator > 0 else None
 
 
 class LegendTextEditorDialog(QDialog):
@@ -320,14 +341,15 @@ class LegendFieldConfigDialog(QDialog):
         self._preview_label.setMaximumHeight(200)
         layout.addWidget(self._preview_label)
 
-        # ── Project-wide Text Sections ──
-        vr_group = QGroupBox("Project-wide Text Sections")
+        # ── Text Sections ──
+        vr_group = QGroupBox("Text Sections")
         vr_layout = QVBoxLayout(vr_group)
         vr_info = QLabel(
-            "Text-only legend sections scanned across ALL spatial layers "
-            "(e.g. codes used by several layers). Optionally backed by a "
-            "lookup table for code descriptions; fields auto-detected from "
-            "the table name if left blank."
+            "Text-only legend sections. 'Add Lookup Section' scans chosen "
+            "data columns and describes codes via a lookup table. "
+            "'Add Layer Section' builds a code table straight from a "
+            "layer's own columns (code + paired Description columns), "
+            "optionally split by a Type field. Double-click to edit."
         )
         vr_info.setWordWrap(True)
         vr_info.setStyleSheet("color: #5F6368; font-size: 10px; font-style: italic;")
@@ -335,12 +357,20 @@ class LegendFieldConfigDialog(QDialog):
 
         self._vr_list = QListWidget()
         self._vr_list.setMaximumHeight(100)
+        self._vr_list.itemDoubleClicked.connect(
+            lambda _item: self._edit_selected_section())
         vr_layout.addWidget(self._vr_list)
 
         vr_btn_row = QHBoxLayout()
-        add_vr_btn = QPushButton("Add...")
-        add_vr_btn.clicked.connect(self._add_vr_section)
+        add_vr_btn = QPushButton("Add Lookup Section...")
+        add_vr_btn.clicked.connect(lambda: self._edit_lookup_section())
         vr_btn_row.addWidget(add_vr_btn)
+        add_layer_btn = QPushButton("Add Layer Section...")
+        add_layer_btn.clicked.connect(lambda: self._edit_layer_section())
+        vr_btn_row.addWidget(add_layer_btn)
+        edit_vr_btn = QPushButton("Edit...")
+        edit_vr_btn.clicked.connect(self._edit_selected_section)
+        vr_btn_row.addWidget(edit_vr_btn)
         remove_vr_btn = QPushButton("Remove")
         remove_vr_btn.clicked.connect(self._remove_vr_section)
         vr_btn_row.addWidget(remove_vr_btn)
@@ -682,41 +712,164 @@ class LegendFieldConfigDialog(QDialog):
         """Sections with no target layer (scanned across all spatial layers)."""
         return [s for s in self._sections if not s.get('layer')]
 
-    def _refresh_vr_list(self):
-        """Rebuild the project-wide text sections list widget."""
-        self._vr_list.clear()
-        for sec in self._project_wide_sections():
-            lookup = sec.get('lookup')
-            table_name = (lookup['table'].get('name', '?')
-                          if lookup else 'no lookup')
+    @staticmethod
+    def _section_detail(sec):
+        """One-line description of a text section for the list widget."""
+        lookup = sec.get('lookup') or {}
+        targets = sec.get('field_targets')
+        if targets:
+            parts = []
+            for target in targets:
+                fields = target.get('fields', [])
+                fields_str = ", ".join(fields[:3])
+                if len(fields) > 3:
+                    fields_str += "..."
+                parts.append(
+                    f"{target['layer'].get('name', '?')}: {fields_str}")
+            detail = "; ".join(parts)
+        elif lookup.get('table'):
             fields = sec.get('fields', [])
             if fields:
                 fields_str = ", ".join(fields[:4])
                 if len(fields) > 4:
                     fields_str += "..."
-                self._vr_list.addItem(
-                    f"{sec['title']}  ({table_name} → {fields_str})")
             else:
-                self._vr_list.addItem(
-                    f"{sec['title']}  ({table_name} → auto-detect)")
+                fields_str = "auto-detect"
+            detail = f"{lookup['table'].get('name', '?')} → {fields_str}"
+        else:
+            detail = ", ".join(sec.get('fields', [])[:4]) or "no fields"
+        if sec.get('subdivide_by'):
+            detail += f", split by {sec['subdivide_by']}"
+        elif lookup.get('group_column'):
+            detail += f", grouped by {lookup['group_column']}"
+        return detail
 
-    def _add_vr_section(self):
-        """Show dialog to add a lookup table section."""
-        # Find non-spatial tables
-        tables = []
-        for lyr in sorted(QgsProject.instance().mapLayers().values(),
-                          key=lambda l: l.name()):
-            if (lyr.type() == QgsMapLayerType.VectorLayer
-                    and not lyr.isSpatial()):
-                tables.append(lyr)
+    def _refresh_vr_list(self):
+        """Rebuild the text sections list widget."""
+        self._vr_list.clear()
+        for sec in self._project_wide_sections():
+            self._vr_list.addItem(
+                f"{sec['title']}  ({self._section_detail(sec)})")
+
+    @staticmethod
+    def _spatial_layers():
+        return sorted(
+            (lyr for lyr in QgsProject.instance().mapLayers().values()
+             if lyr.type() == QgsMapLayerType.VectorLayer and lyr.isSpatial()),
+            key=lambda l: l.name())
+
+    @staticmethod
+    def _populated_string_fields(layer, skip_paired=True):
+        """Populated string field names of a layer, in field order."""
+        from qgis.PyQt.QtCore import QVariant
+        names = []
+        for i, field in enumerate(layer.fields()):
+            try:
+                if field.type() != QVariant.String:
+                    continue
+                if skip_paired and paired_base_field(layer, field.name()):
+                    continue
+                if field_has_data(layer, i):
+                    names.append(field.name())
+            except Exception:
+                continue
+        return names
+
+    def _build_field_tree(self, section=None):
+        """Checkbox tree of populated string fields, grouped by layer.
+
+        Same-named fields under different layers are separate items, so
+        the selection is layer-explicit.  Returns (tree, checked_targets)
+        where checked_targets() yields field_targets dicts.
+        """
+        tree = QTreeWidget()
+        tree.setHeaderHidden(True)
+        tree.setMaximumHeight(180)
+
+        pre_by_layer = {}   # layer id → set of lowercase field names
+        pre_names = set()   # legacy name-only pre-check (all layers)
+        if section:
+            for target in section.get('field_targets') or []:
+                pre_by_layer[target['layer'].get('id', '')] = {
+                    f.lower() for f in target.get('fields', [])}
+            if not pre_by_layer:
+                pre_names = {f.lower() for f in section.get('fields', [])}
+
+        for layer in self._spatial_layers():
+            fields = self._populated_string_fields(layer)
+            if not fields:
+                continue
+            parent = QTreeWidgetItem([layer.name()])
+            parent.setFlags(parent.flags() & ~Qt.ItemIsUserCheckable)
+            tree.addTopLevelItem(parent)
+            wanted = pre_by_layer.get(layer.id(), pre_names)
+            for fname in fields:
+                child = QTreeWidgetItem([fname])
+                child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
+                child.setCheckState(
+                    0, Qt.Checked if fname.lower() in wanted
+                    else Qt.Unchecked)
+                child.setData(0, Qt.UserRole, layer.id())
+                parent.addChild(child)
+            parent.setExpanded(True)
+
+        def checked_targets():
+            targets = []
+            for i in range(tree.topLevelItemCount()):
+                parent = tree.topLevelItem(i)
+                fields = [parent.child(j).text(0)
+                          for j in range(parent.childCount())
+                          if parent.child(j).checkState(0) == Qt.Checked]
+                if fields:
+                    layer_id = parent.child(0).data(0, Qt.UserRole)
+                    layer = QgsProject.instance().mapLayer(layer_id)
+                    targets.append({
+                        'layer': {'id': layer_id,
+                                  'name': layer.name() if layer
+                                  else parent.text(0)},
+                        'fields': fields,
+                    })
+            return targets
+
+        def set_checked_names(names):
+            wanted = {n.lower() for n in names}
+            for i in range(tree.topLevelItemCount()):
+                parent = tree.topLevelItem(i)
+                for j in range(parent.childCount()):
+                    child = parent.child(j)
+                    child.setCheckState(
+                        0, Qt.Checked if child.text(0).lower() in wanted
+                        else Qt.Unchecked)
+
+        return tree, checked_targets, set_checked_names
+
+    def _upsert_section(self, new_section, existing=None):
+        """Replace an existing section in place, or append."""
+        if existing is not None and existing in self._sections:
+            self._sections[self._sections.index(existing)] = new_section
+        else:
+            self._sections.append(new_section)
+        self._refresh_vr_list()
+
+    def _edit_lookup_section(self, section=None):
+        """Create or edit a lookup-table-backed text section."""
+        editing = section is not None
+        lookup = (section.get('lookup') or {}) if editing else {}
+
+        tables = [lyr for lyr in
+                  sorted(QgsProject.instance().mapLayers().values(),
+                         key=lambda l: l.name())
+                  if (lyr.type() == QgsMapLayerType.VectorLayer
+                      and not lyr.isSpatial())]
         if not tables:
             QMessageBox.information(self, "No Tables",
                                    "No non-spatial lookup tables found in project.")
             return
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Add Lookup Table Section")
-        dlg.setMinimumWidth(400)
+        dlg.setWindowTitle("Edit Lookup Section" if editing
+                           else "Add Lookup Section")
+        dlg.setMinimumWidth(450)
         form = QVBoxLayout(dlg)
 
         form.addWidget(QLabel("Lookup Table:"))
@@ -741,63 +894,18 @@ class LegendFieldConfigDialog(QDialog):
         name_edit = QLineEdit()
         form.addWidget(name_edit)
 
-        form.addWidget(QLabel("Fields to scan (check the data columns):"))
-        fields_list = QListWidget()
-        fields_list.setMaximumHeight(150)
-
-        # Candidate fields: populated string columns across spatial layers
-        # (paired '*Description' columns are description sources, hidden).
-        field_layers = {}  # field name → [layer names]
-        for lyr in QgsProject.instance().mapLayers().values():
-            if (lyr.type() != QgsMapLayerType.VectorLayer
-                    or not lyr.isSpatial()):
-                continue
-            for i, field in enumerate(lyr.fields()):
-                fname = field.name()
-                if fname in field_layers:
-                    field_layers[fname].append(lyr.name())
-                    continue
-                try:
-                    from qgis.PyQt.QtCore import QVariant
-                    if field.type() != QVariant.String:
-                        continue
-                    if paired_base_field(lyr, fname):
-                        continue
-                    if field_has_data(lyr, i):
-                        field_layers[fname] = [lyr.name()]
-                except Exception:
-                    continue
-        for fname in sorted(field_layers, key=str.lower):
-            item = QListWidgetItem(fname)
-            item.setToolTip("Layers: " + ", ".join(field_layers[fname]))
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
-            fields_list.addItem(item)
-        form.addWidget(fields_list)
+        form.addWidget(QLabel("Fields to scan (grouped by layer):"))
+        tree, checked_targets, set_checked_names = \
+            self._build_field_tree(section)
+        form.addWidget(tree)
 
         info_label = QLabel("")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #5F6368; font-size: 10px;")
         form.addWidget(info_label)
 
-        def set_checked_fields(names):
-            wanted = {n.lower() for n in names}
-            for i in range(fields_list.count()):
-                item = fields_list.item(i)
-                item.setCheckState(
-                    Qt.Checked if item.text().lower() in wanted
-                    else Qt.Unchecked)
-
-        def checked_fields():
-            return [fields_list.item(i).text()
-                    for i in range(fields_list.count())
-                    if fields_list.item(i).checkState() == Qt.Checked]
-
-        def on_table_changed():
-            tid = table_combo.currentData()
-            tbl = QgsProject.instance().mapLayer(tid)
-            if not tbl:
-                return
+        def populate_columns(tbl, preselect=None):
+            preselect = preselect or {}
             key_combo.clear()
             val_combo.clear()
             group_combo.clear()
@@ -807,19 +915,27 @@ class LegendFieldConfigDialog(QDialog):
                 val_combo.addItem(f.name())
                 group_combo.addItem(f.name(), f.name())
             auto_key, auto_val = detect_lookup_columns(tbl)
-            ki = key_combo.findText(auto_key)
+            ki = key_combo.findText(preselect.get('key_column') or auto_key)
             if ki >= 0:
                 key_combo.setCurrentIndex(ki)
-            vi = val_combo.findText(auto_val)
+            vi = val_combo.findText(preselect.get('value_column') or auto_val)
             if vi >= 0:
                 val_combo.setCurrentIndex(vi)
-            # A column named 'Type' is the usual discriminator
-            for f in tbl.fields():
-                if f.name().lower() == 'type':
-                    gi = group_combo.findData(f.name())
-                    if gi >= 0:
-                        group_combo.setCurrentIndex(gi)
-                    break
+            group_pick = preselect.get('group_column')
+            if not group_pick and 'group_column' not in preselect:
+                # A column named 'Type' is the usual discriminator
+                group_pick = next((f.name() for f in tbl.fields()
+                                   if f.name().lower() == 'type'), None)
+            if group_pick:
+                gi = group_combo.findData(group_pick)
+                if gi >= 0:
+                    group_combo.setCurrentIndex(gi)
+
+        def on_table_changed():
+            tbl = QgsProject.instance().mapLayer(table_combo.currentData())
+            if not tbl:
+                return
+            populate_columns(tbl)
             tname = tbl.name()
             # Auto-generate section name: strip "Codes" suffix
             sname = tname
@@ -827,47 +943,202 @@ class LegendFieldConfigDialog(QDialog):
                 if sname.endswith(suffix):
                     sname = sname[:-len(suffix)]
                     break
-            if not sname:
-                sname = tname
-            name_edit.setText(sname)
-            # Auto-detect fields by name pattern
+            name_edit.setText(sname or tname)
+            # Auto-check fields matching the table-name pattern
             matched = find_fields_for_table(QgsProject.instance(), tname)
             field_names = sorted(set(fn for _, fn in matched))
-            set_checked_fields(field_names)
+            set_checked_names(field_names)
             if field_names:
-                n_layers = len(set(l.id() for l, _ in matched))
                 info_label.setText(
-                    f"Auto-detected {len(matched)} field(s) across "
-                    f"{n_layers} layer(s). Adjust the checkboxes if needed.")
+                    f"Auto-detected {len(matched)} field(s). Adjust the "
+                    f"checkboxes — each layer's fields are separate.")
             else:
                 info_label.setText(
                     "No fields auto-detected from the table name. "
                     "Check the data columns to scan above.")
 
-        table_combo.currentIndexChanged.connect(lambda: on_table_changed())
-        on_table_changed()
+        if editing and lookup.get('table'):
+            # Prefill from the section; don't auto-overwrite its choices
+            table = resolve_layer_ref(QgsProject.instance(), lookup['table'])
+            if table is not None:
+                ti = table_combo.findData(table.id())
+                if ti >= 0:
+                    table_combo.setCurrentIndex(ti)
+                populate_columns(table, preselect=lookup)
+            name_edit.setText(section.get('title', ''))
+            table_combo.currentIndexChanged.connect(
+                lambda: on_table_changed())
+        else:
+            table_combo.currentIndexChanged.connect(
+                lambda: on_table_changed())
+            on_table_changed()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         form.addWidget(buttons)
 
-        if dlg.exec() == QDialog.Accepted:
-            tbl = QgsProject.instance().mapLayer(table_combo.currentData())
-            if tbl:
-                self._sections.append(normalize_section({
-                    'title': name_edit.text() or tbl.name(),
-                    'layer': None,
-                    'fields': checked_fields(),
-                    'display': 'text',
-                    'lookup': {
-                        'table': {'id': tbl.id(), 'name': tbl.name()},
-                        'key_column': key_combo.currentText(),
-                        'value_column': val_combo.currentText(),
-                        'group_column': group_combo.currentData(),
-                    },
-                }))
-                self._refresh_vr_list()
+        if dlg.exec() != QDialog.Accepted:
+            return
+        tbl = QgsProject.instance().mapLayer(table_combo.currentData())
+        if not tbl:
+            return
+        new_section = normalize_section({
+            'id': section.get('id') if editing else None,
+            'title': name_edit.text() or tbl.name(),
+            'layer': None,
+            'field_targets': checked_targets(),
+            'display': 'text',
+            'lookup': {
+                'table': {'id': tbl.id(), 'name': tbl.name()},
+                'key_column': key_combo.currentText(),
+                'value_column': val_combo.currentText(),
+                'group_column': group_combo.currentData(),
+            },
+        })
+        self._upsert_section(new_section, existing=section)
+
+    def _edit_layer_section(self, section=None):
+        """Create or edit a section sourced from a layer's own columns.
+
+        For layers whose lookup table is gone (client deliverables): code
+        columns are scanned directly, descriptions come from paired
+        '<Field>Description' columns, optionally split by a Type field.
+        """
+        editing = section is not None
+        layers = self._spatial_layers()
+        if not layers:
+            QMessageBox.information(self, "No Layers",
+                                   "No spatial vector layers in project.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Layer Section" if editing
+                           else "Add Layer Section")
+        dlg.setMinimumWidth(450)
+        form = QVBoxLayout(dlg)
+
+        form.addWidget(QLabel("Layer:"))
+        layer_combo = QComboBox()
+        for lyr in layers:
+            layer_combo.addItem(layer_display_name(lyr), lyr.id())
+        form.addWidget(layer_combo)
+
+        form.addWidget(QLabel(
+            "Code fields to scan (↔ shows the paired description column):"))
+        fields_list = QListWidget()
+        fields_list.setMaximumHeight(150)
+        form.addWidget(fields_list)
+
+        form.addWidget(QLabel("Split by field (optional, e.g. Type):"))
+        split_combo = QComboBox()
+        form.addWidget(split_combo)
+
+        form.addWidget(QLabel("Section Name:"))
+        name_edit = QLineEdit()
+        form.addWidget(name_edit)
+
+        info_label = QLabel(
+            "Descriptions are read from '<Field>Description' columns when "
+            "present; otherwise the field values themselves are shown "
+            "(useful when values are already 'Code - Description').")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #5F6368; font-size: 10px;")
+        form.addWidget(info_label)
+
+        pre_target = None
+        if editing and section.get('field_targets'):
+            pre_target = section['field_targets'][0]
+
+        def on_layer_changed():
+            layer = QgsProject.instance().mapLayer(layer_combo.currentData())
+            if not layer:
+                return
+            fields_list.clear()
+            split_combo.clear()
+            split_combo.addItem("(None)", None)
+            pre_fields = set()
+            if pre_target and pre_target['layer'].get('id') == layer.id():
+                pre_fields = {f.lower() for f in pre_target['fields']}
+            for fname in self._populated_string_fields(layer):
+                desc_field = find_paired_description_field(layer, fname)
+                label = (f"{fname}  (↔ {desc_field})" if desc_field
+                         else fname)
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, fname)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.Checked if fname.lower() in pre_fields
+                    else Qt.Unchecked)
+                fields_list.addItem(item)
+            for field in layer.fields():
+                split_combo.addItem(field.name(), field.name())
+            if editing and section.get('subdivide_by'):
+                si = split_combo.findData(section['subdivide_by'])
+                if si >= 0:
+                    split_combo.setCurrentIndex(si)
+            else:
+                type_col = next((f.name() for f in layer.fields()
+                                 if f.name().lower() == 'type'), None)
+                if type_col:
+                    si = split_combo.findData(type_col)
+                    if si >= 0:
+                        split_combo.setCurrentIndex(si)
+            if not editing or not name_edit.text():
+                name_edit.setText(layer.name())
+
+        layer_combo.currentIndexChanged.connect(lambda: on_layer_changed())
+        if editing:
+            name_edit.setText(section.get('title', ''))
+            if pre_target:
+                li = layer_combo.findData(pre_target['layer'].get('id', ''))
+                if li >= 0:
+                    layer_combo.setCurrentIndex(li)
+        on_layer_changed()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addWidget(buttons)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        layer = QgsProject.instance().mapLayer(layer_combo.currentData())
+        if not layer:
+            return
+        fields = [fields_list.item(i).data(Qt.UserRole)
+                  for i in range(fields_list.count())
+                  if fields_list.item(i).checkState() == Qt.Checked]
+        if not fields:
+            QMessageBox.warning(self, "No Fields",
+                                "Check at least one code field to scan.")
+            return
+        new_section = normalize_section({
+            'id': section.get('id') if editing else None,
+            'title': name_edit.text() or layer.name(),
+            'layer': None,
+            'field_targets': [{
+                'layer': {'id': layer.id(), 'name': layer.name()},
+                'fields': fields,
+            }],
+            'subdivide_by': split_combo.currentData(),
+            'display': 'text',
+            'lookup': {'pairs': {'suffix': 'Description'}},
+        })
+        self._upsert_section(new_section, existing=section)
+
+    def _edit_selected_section(self):
+        """Open the right editor for the selected text section."""
+        row = self._vr_list.currentRow()
+        project_wide = self._project_wide_sections()
+        if not (0 <= row < len(project_wide)):
+            return
+        section = project_wide[row]
+        lookup = section.get('lookup') or {}
+        if lookup.get('table'):
+            self._edit_lookup_section(section)
+        else:
+            self._edit_layer_section(section)
 
     def _remove_vr_section(self):
         """Remove the selected project-wide text section."""
@@ -1039,7 +1310,21 @@ class MapLayoutGeneratorPanel(QDockWidget):
         groupBox = QGroupBox("Map Settings")
         layout = QVBoxLayout()
 
-        # Scale settings
+        # Per-sheet scale from the mapsheets layer — the mapsheet
+        # generator stores it, so layouts shouldn't ask for it again.
+        self.useLayerScaleCheckbox = QCheckBox(
+            "Use per-sheet scale from the mapsheets layer ('scale' field)")
+        self.useLayerScaleCheckbox.setChecked(True)
+        self.useLayerScaleCheckbox.setToolTip(
+            "Each sheet uses the scale stored in its polygon's 'scale' "
+            "attribute (set by the Mapsheet Generator); grid spacing "
+            "follows automatically. Sheets without a valid scale fall "
+            "back to the manual scale below.")
+        self.useLayerScaleCheckbox.toggled.connect(
+            self._on_layer_scale_toggled)
+        layout.addWidget(self.useLayerScaleCheckbox)
+
+        # Scale settings (manual fallback)
         scaleLayout = QHBoxLayout()
         scaleLayout.addWidget(QLabel("Map Scale:"))
 
@@ -1070,7 +1355,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
         # Auto-update grid display when scale changes
         self.scaleCombo.currentIndexChanged.connect(self._refresh_grid_interval)
-        self._refresh_grid_interval()
+        self._on_layer_scale_toggled(self.useLayerScaleCheckbox.isChecked())
 
         groupBox.setLayout(layout)
         self.mainLayout.addWidget(groupBox)
@@ -1135,26 +1420,12 @@ class MapLayoutGeneratorPanel(QDockWidget):
             lambda _checked: self._save_legend_state())
         layout.addWidget(self.filterByMapCheckbox)
 
-        # Column count for the code/description text block
-        colLayout = QHBoxLayout()
-        colLayout.addWidget(QLabel("Text columns:"))
-        self.textColumnsSpin = QSpinBox()
-        self.textColumnsSpin.setRange(1, 4)
-        self.textColumnsSpin.setValue(2)
-        self.textColumnsSpin.setToolTip(
-            "Number of columns the 'Code — Description' list flows into "
-            "below the legend.")
-        self.textColumnsSpin.valueChanged.connect(
-            lambda _value: self._save_legend_state())
-        colLayout.addWidget(self.textColumnsSpin)
-        colLayout.addStretch()
-        layout.addLayout(colLayout)
-
         # Additional manual legend text (appended after generated sections).
         # Text sections themselves are regenerated per sheet at generate time.
         codeTableLabel = QLabel(
-            "Legend text preview / additional manual text "
-            "(placed below legend in each layout):")
+            "Legend text (placed below legend, styled to match it). "
+            "Edit lines to correct it: deletions and rewording apply "
+            "to every sheet; added lines are appended.")
         codeTableLabel.setStyleSheet("color: #5F6368; font-size: 10px;")
         layout.addWidget(codeTableLabel)
 
@@ -1340,15 +1611,16 @@ class MapLayoutGeneratorPanel(QDockWidget):
                               'name': layer.name() if layer else ''})
         box_text = self.codeTableText.toPlainText().strip()
         manual = '' if box_text == self._last_preview_text.strip() else box_text
+        preview = self._last_preview_text
         return normalize_config({
             'sections': self._sections,
             'text_mappings': self.legend_text_mappings,
             'legend_unchecked_layers': unchecked,
             'code_table_text_manual': manual,
+            'code_table_preview': preview,
             'options': {
                 'per_sheet_scan': self.perSheetCheckbox.isChecked(),
                 'filter_legend_by_map': self.filterByMapCheckbox.isChecked(),
-                'text_columns': self.textColumnsSpin.value(),
             },
         })
 
@@ -1389,11 +1661,11 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 config['options']['per_sheet_scan'])
             self.filterByMapCheckbox.setChecked(
                 config['options']['filter_legend_by_map'])
-            self.textColumnsSpin.setValue(
-                config['options']['text_columns'])
+            self._last_preview_text = config['code_table_preview']
             manual = config['code_table_text_manual']
-            if manual:
-                self.codeTableText.setPlainText(manual)
+            box = manual or self._last_preview_text
+            if box:
+                self.codeTableText.setPlainText(box)
             QgsMessageLog.logMessage(
                 f"Legend config restored from project "
                 f"({len(self._sections)} section(s)).", LOG_TAG, Qgis.Info)
@@ -1446,7 +1718,6 @@ class MapLayoutGeneratorPanel(QDockWidget):
         self.codeTableText.setEnabled(checked)
         self.perSheetCheckbox.setEnabled(checked)
         self.filterByMapCheckbox.setEnabled(checked)
-        self.textColumnsSpin.setEnabled(checked)
 
     def openLegendTextEditor(self):
         """Open the legend text editor dialog."""
@@ -1512,9 +1783,18 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
     # ── Grid spacing helpers ──────────────────────────────────────────
 
+    def _on_layer_scale_toggled(self, checked):
+        """Per-sheet layer scale supersedes the manual scale combo."""
+        self.scaleCombo.setEnabled(not checked)
+        self.useScaleCheckbox.setEnabled(not checked)
+        self._refresh_grid_interval()
+
     def _refresh_grid_interval(self):
         """Update the auto-grid display from the current scale, unless overridden."""
         if self.overrideGridCheckbox.isChecked():
+            return
+        if self.useLayerScaleCheckbox.isChecked():
+            self.gridIntervalEdit.setText("auto (per sheet)")
             return
         scale = self.getSelectedScale()
         if scale:
@@ -1572,14 +1852,22 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QMessageBox.warning(self, "Error", "Project name is required.")
             return False
 
+        # At least one template is required; a missing orientation falls
+        # back to the other template at generate time.
         portrait_path = self.portraitTemplateEdit.text()
-        if not portrait_path or not os.path.isfile(portrait_path):
-            QMessageBox.warning(self, "Error", "Portrait layout template file not selected.")
-            return False
-
         landscape_path = self.landscapeTemplateEdit.text()
-        if not landscape_path or not os.path.isfile(landscape_path):
-            QMessageBox.warning(self, "Error", "Landscape layout template file not selected.")
+        if portrait_path and not os.path.isfile(portrait_path):
+            QMessageBox.warning(self, "Error",
+                                "Portrait template file does not exist.")
+            return False
+        if landscape_path and not os.path.isfile(landscape_path):
+            QMessageBox.warning(self, "Error",
+                                "Landscape template file does not exist.")
+            return False
+        if not portrait_path and not landscape_path:
+            QMessageBox.warning(self, "Error",
+                                "Select at least one layout template "
+                                "(portrait or landscape).")
             return False
 
         if self.overrideGridCheckbox.isChecked():
@@ -1643,24 +1931,59 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 f"Set Item IDs in Layout Designer to enable auto-population.",
                 LOG_TAG, Qgis.Warning)
 
-    def _place_text_block(self, layout, plain_text):
-        """Place the legend text block in the layout.
-
-        Reuses a template label with Item ID 'code_table' if present
-        (keeping its position/size); otherwise creates a label directly
-        below the finalised legend.  Uses ModeFont (native vector
-        rendering) for text quality matching the legend — HTML mode would
-        rasterise on export.
-        """
-        from qgis.core import QgsLayoutPoint, QgsLayoutSize
+    @staticmethod
+    def _text_block_font(layout):
+        """Font for the text block: the legend's symbol-label font in
+        italic (headings stay distinct via UPPERCASE).  Falls back to
+        MS Shell Dlg 2 8pt."""
+        from qgis.core import QgsLegendStyle
         from qgis.PyQt.QtGui import QFont
 
-        # Prefer an existing template item so users control placement
+        font = None
+        legends = [i for i in layout.items()
+                   if isinstance(i, QgsLayoutItemLegend)]
+        if legends:
+            try:
+                font = legends[0].style(
+                    QgsLegendStyle.SymbolLabel).textFormat().toQFont()
+            except Exception:
+                font = None
+
+        if font is None:
+            font = QFont("MS Shell Dlg 2")
+        if font.pointSizeF() <= 0:
+            font.setPointSizeF(8)
+        font = QFont(font)
+        font.setItalic(True)
+        font.setBold(False)
+        return font
+
+    def _place_text_block(self, layout, section_lines):
+        """Place the legend text as one single-column label.
+
+        ModeFont keeps the text vector on export; the whole block uses
+        the legend-matched italic font with UPPERCASE headings.  A
+        template 'code_table' label, when present, is reused in place;
+        otherwise the label sits below the finalised legend.
+        """
+        from qgis.core import QgsLayoutPoint, QgsLayoutSize
+
+        text = text_from_section_lines(section_lines)
+        if not text:
+            return
+
+        font = self._text_block_font(layout)
+        n_lines = text.count('\n') + 1
+        pt = font.pointSizeF() if font.pointSizeF() > 0 else 8
+        height = n_lines * pt * 1.35 * (25.4 / 72.0) + 2
+
+        # Reuse the template item so users control placement
         for item in layout.items():
             if (isinstance(item, QgsLayoutItemLabel)
                     and item.id() == 'code_table'):
                 item.setMode(QgsLayoutItemLabel.ModeFont)
-                item.setText(plain_text)
+                item.setFont(font)
+                item.setText(text)
                 QgsMessageLog.logMessage(
                     "Legend text placed in template 'code_table' item.",
                     LOG_TAG, Qgis.Info)
@@ -1668,24 +1991,22 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
         label = QgsLayoutItemLabel(layout)
         label.setMode(QgsLayoutItemLabel.ModeFont)
-        label.setText(plain_text)
         label.setId('code_table')
-        label.setFont(QFont("MS Shell Dlg 2", 8))
+        label.setFont(font)
+        label.setText(text)
 
-        # Position below the finalized legend.  Convert the legend's
-        # position/size to layout units rather than assuming millimetres.
-        legends = [i for i in layout.items()
-                   if isinstance(i, QgsLayoutItemLegend)]
         page = layout.pageCollection().page(0)
         page_size = (layout.convertToLayoutUnits(page.pageSize())
                      if page else None)
+        legends = [i for i in layout.items()
+                   if isinstance(i, QgsLayoutItemLegend)]
         if legends:
             legend = legends[0]
-            pos = layout.convertToLayoutUnits(legend.positionWithUnits())
-            size = layout.convertToLayoutUnits(legend.sizeWithUnits())
-            x = pos.x()
-            y = pos.y() + size.height() + 3
-            width = max(size.width(), 80)
+            lpos = layout.convertToLayoutUnits(legend.positionWithUnits())
+            lsize = layout.convertToLayoutUnits(legend.sizeWithUnits())
+            x = lpos.x()
+            y = lpos.y() + lsize.height() + 3
+            width = max(lsize.width(), 80)
         elif page_size is not None:
             x = 10
             y = page_size.height() * 0.6
@@ -1694,111 +2015,17 @@ class MapLayoutGeneratorPanel(QDockWidget):
             x, y, width = 10, 250, 120
 
         label.attemptMove(QgsLayoutPoint(x, y, layout.units()))
-        label.attemptResize(QgsLayoutSize(width, 50, layout.units()))
-        label.adjustSizeToText()
-
-        if page_size is not None:
-            bottom = (layout.convertToLayoutUnits(label.positionWithUnits()).y()
-                      + layout.convertToLayoutUnits(label.sizeWithUnits()).height())
-            if bottom > page_size.height():
-                QgsMessageLog.logMessage(
-                    "Legend text block overflows the page. Consider adding "
-                    "a 'code_table' label item to the template to control "
-                    "its placement.", LOG_TAG, Qgis.Warning)
-
+        label.attemptResize(QgsLayoutSize(width, height, layout.units()))
         layout.addLayoutItem(label)
-        QgsMessageLog.logMessage(
-            "Legend text block created below legend.", LOG_TAG, Qgis.Info)
-
-    def _place_text_columns(self, layout, section_lines, ncols):
-        """Place the legend text block as side-by-side column labels.
-
-        A template 'code_table' label, when present, defines the block
-        envelope: it becomes column 1 (resized to a column width) and
-        siblings 'code_table_col2'... are created beside it, inheriting
-        its text format.  Otherwise columns are positioned below the
-        finalised legend like _place_text_block.
-        """
-        from qgis.core import QgsLayoutPoint, QgsLayoutSize
-        from qgis.PyQt.QtGui import QFont
-
-        columns = flow_lines_into_columns(section_lines, ncols)
-        if not columns:
-            return
-
-        template_item = None
-        for item in layout.items():
-            if (isinstance(item, QgsLayoutItemLabel)
-                    and item.id() == 'code_table'):
-                template_item = item
-                break
-
-        page = layout.pageCollection().page(0)
-        page_size = (layout.convertToLayoutUnits(page.pageSize())
-                     if page else None)
-
-        if template_item is not None:
-            pos = layout.convertToLayoutUnits(
-                template_item.positionWithUnits())
-            size = layout.convertToLayoutUnits(template_item.sizeWithUnits())
-            x, y = pos.x(), pos.y()
-            total_width = size.width()
-            height = size.height()
-        else:
-            legends = [i for i in layout.items()
-                       if isinstance(i, QgsLayoutItemLegend)]
-            if legends:
-                legend = legends[0]
-                lpos = layout.convertToLayoutUnits(
-                    legend.positionWithUnits())
-                lsize = layout.convertToLayoutUnits(legend.sizeWithUnits())
-                x = lpos.x()
-                y = lpos.y() + lsize.height() + 3
-                total_width = max(lsize.width(), 80)
-            elif page_size is not None:
-                x = 10
-                y = page_size.height() * 0.6
-                total_width = max(page_size.width() * 0.25, 80)
-            else:
-                x, y, total_width = 10, 250, 120
-            # ~2.8mm per line at 8pt plus margin
-            max_lines = max(c.count('\n') + 1 for c in columns)
-            height = max_lines * 3.2 + 4
-
-        col_width = total_width / len(columns)
-
-        for ci, text in enumerate(columns):
-            if ci == 0 and template_item is not None:
-                label = template_item
-            else:
-                label = QgsLayoutItemLabel(layout)
-                label.setId('code_table' if ci == 0
-                            else f'code_table_col{ci + 1}')
-                if template_item is not None:
-                    try:
-                        label.setTextFormat(template_item.textFormat())
-                    except AttributeError:
-                        label.setFont(QFont("MS Shell Dlg 2", 8))
-                else:
-                    label.setFont(QFont("MS Shell Dlg 2", 8))
-            label.setMode(QgsLayoutItemLabel.ModeFont)
-            label.setText(text)
-            label.attemptMove(QgsLayoutPoint(
-                x + ci * col_width, y, layout.units()))
-            label.attemptResize(QgsLayoutSize(
-                col_width, height, layout.units()))
-            if label is not template_item:
-                layout.addLayoutItem(label)
 
         if page_size is not None and y + height > page_size.height():
             QgsMessageLog.logMessage(
-                "Legend text columns overflow the page. Add a 'code_table' "
-                "label item to the template to control placement, or "
-                "increase the column count.", LOG_TAG, Qgis.Warning)
+                "Legend text block overflows the page. Add a 'code_table' "
+                "label item to the template to control placement.",
+                LOG_TAG, Qgis.Warning)
 
         QgsMessageLog.logMessage(
-            f"Legend text placed in {len(columns)} column(s).",
-            LOG_TAG, Qgis.Info)
+            "Legend text block created below legend.", LOG_TAG, Qgis.Info)
 
     # ── Legend automation ─────────────────────────────────────────────
 
@@ -2159,10 +2386,21 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 if missed:
                     extra_unmatched[section['id']] = missed
 
-        text = format_text_sections(
+        # Carry the user's pending edits (corrections) across re-previews:
+        # derive them against the old snapshot, re-apply to the new text.
+        headings = [(s['title'].upper() or 'LEGEND') for s in sections]
+        old_overrides = derive_text_overrides(
+            self._last_preview_text,
+            self.codeTableText.toPlainText().strip(), headings)
+
+        section_lines = build_text_section_lines(
             sections, scan_results, lookup_maps, extra_unmatched)
-        self.codeTableText.setPlainText(text)
-        self._last_preview_text = text
+        snapshot = text_from_section_lines(section_lines)
+        displayed = text_from_section_lines(
+            apply_text_overrides(section_lines, old_overrides))
+
+        self.codeTableText.setPlainText(displayed)
+        self._last_preview_text = snapshot
         self._save_legend_state()
         QgsMessageLog.logMessage(
             f"Legend text preview generated for {len(text_like)} section(s).",
@@ -2375,6 +2613,17 @@ class MapLayoutGeneratorPanel(QDockWidget):
             if use_custom_scale:
                 scale_denominator = self.getSelectedScale()
 
+            # Per-sheet scale from the mapsheets layer's 'scale' attribute
+            # (written by the Mapsheet Generator) — supersedes the combo.
+            use_layer_scale = (
+                self.useLayerScaleCheckbox.isChecked()
+                and polygon_layer.fields().indexOf('scale') >= 0)
+            if (self.useLayerScaleCheckbox.isChecked()
+                    and not use_layer_scale):
+                QgsMessageLog.logMessage(
+                    "Mapsheets layer has no 'scale' field — using the "
+                    "manual scale setting instead.", LOG_TAG, Qgis.Warning)
+
             buffer_percentage = 0
 
             feature_count = polygon_layer.featureCount()
@@ -2420,12 +2669,15 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 project_wide_results = scan_sections_for_sheet(
                     QgsProject.instance(), sections)
 
-            # Manual legend text: used verbatim if the user edited the box,
-            # otherwise the text is regenerated (per sheet) from sections.
+            # Edits to the preview box are read as per-entry corrections
+            # applied on every sheet: deleted lines exclude that entry,
+            # reworded lines relabel it, added lines are appended — while
+            # each sheet still shows only its own codes.
             box_text = self.codeTableText.toPlainText().strip()
-            manual_text = (box_text
-                           if box_text != self._last_preview_text.strip()
-                           else '')
+            section_headings = [(s['title'].upper() or 'LEGEND')
+                                for s in sections]
+            text_overrides = derive_text_overrides(
+                self._last_preview_text, box_text, section_headings)
 
             # Selective generation range
             selective_enabled = self.selectiveCheckbox.isChecked()
@@ -2516,9 +2768,19 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         bbox.yMaximum() + buffer_y
                     )
 
-                    # Choose template based on orientation
+                    # Choose template based on orientation; fall back to
+                    # the other template when only one is provided.
                     is_landscape = (orientation == 'Landscape')
-                    template_path = landscape_template_path if is_landscape else portrait_template_path
+                    template_path = (landscape_template_path if is_landscape
+                                     else portrait_template_path)
+                    if not template_path:
+                        template_path = (portrait_template_path
+                                         or landscape_template_path)
+                        QgsMessageLog.logMessage(
+                            f"No {orientation.lower()} template set for "
+                            f"'{polygon_name}' — using the "
+                            f"{'portrait' if is_landscape else 'landscape'} "
+                            f"template instead.", LOG_TAG, Qgis.Warning)
 
                     # Load the template
                     layout = QgsPrintLayout(QgsProject.instance())
@@ -2540,16 +2802,28 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
                     main_map = maps[0]
 
-                    # Set map extent / scale
-                    if use_custom_scale and scale_denominator:
+                    # Set map extent / scale.  The sheet's own 'scale'
+                    # attribute wins; the manual combo is the fallback.
+                    feature_scale = None
+                    if use_layer_scale:
+                        feature_scale = parse_scale_text(feature['scale'])
+                        if feature_scale is None:
+                            QgsMessageLog.logMessage(
+                                f"Sheet '{polygon_name}' has no valid "
+                                f"'scale' value — using the manual scale "
+                                f"setting.", LOG_TAG, Qgis.Warning)
+                    effective_scale = feature_scale or (
+                        scale_denominator if use_custom_scale else None)
+
+                    if effective_scale:
                         center_x = (bbox.xMinimum() + bbox.xMaximum()) / 2
                         center_y = (bbox.yMinimum() + bbox.yMaximum()) / 2
 
                         map_width_mm = main_map.rect().width()
                         map_height_mm = main_map.rect().height()
 
-                        map_width_mapunits = (map_width_mm * scale_denominator) / 1000
-                        map_height_mapunits = (map_height_mm * scale_denominator) / 1000
+                        map_width_mapunits = (map_width_mm * effective_scale) / 1000
+                        map_height_mapunits = (map_height_mm * effective_scale) / 1000
 
                         new_extent = QgsRectangle(
                             center_x - map_width_mapunits / 2,
@@ -2559,14 +2833,19 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         )
 
                         main_map.setExtent(new_extent)
-                        main_map.setScale(scale_denominator)
+                        main_map.setScale(effective_scale)
                     else:
                         main_map.setExtent(bbox_buffered)
 
-                    # Auto-set grid X/Y interval based on selected scale (or
+                    # Auto-set grid X/Y interval from the sheet's scale (or
                     # override).  The interval is metres, so skip non-metre
                     # CRSes rather than writing metres into degree units.
-                    grid_interval = self.getGridInterval()
+                    if self.overrideGridCheckbox.isChecked():
+                        grid_interval = self.getGridInterval()
+                    elif feature_scale:
+                        grid_interval = feature_scale / 10.0
+                    else:
+                        grid_interval = self.getGridInterval()
                     if grid_interval is not None:
                         map_units = main_map.crs().mapUnits()
                         if map_units != QgsUnitTypes.DistanceMeters:
@@ -2616,18 +2895,14 @@ class MapLayoutGeneratorPanel(QDockWidget):
                             unmatched = self._apply_symbol_sections(
                                 layout, sections, scan_results)
 
-                    # Build and place the legend text block.  An edited text
-                    # box overrides the generated text verbatim (single
-                    # label); otherwise entries flow into columns.
-                    if manual_text:
-                        self._place_text_block(layout, manual_text)
-                    else:
-                        section_lines = build_text_section_lines(
-                            sections, scan_results, lookup_maps, unmatched)
-                        if section_lines:
-                            self._place_text_columns(
-                                layout, section_lines,
-                                self.textColumnsSpin.value())
+                    # Build the legend text block, apply the user's
+                    # corrections, and place it as a single label.
+                    section_lines = apply_text_overrides(
+                        build_text_section_lines(
+                            sections, scan_results, lookup_maps, unmatched),
+                        text_overrides)
+                    if section_lines:
+                        self._place_text_block(layout, section_lines)
 
                     # Add layout to project
                     QgsProject.instance().layoutManager().addLayout(layout)
@@ -2679,15 +2954,24 @@ def create_map_layout_generator_panel():
 
 def run(iface):
     """Entry point called from mainplugin.py."""
-    # Singleton: reuse existing panel if still alive
-    if hasattr(iface, '_layout_panel') and iface._layout_panel is not None:
+    # Singleton: reuse the existing panel only when it is alive, visible
+    # AND built from this module.  After a plugin reload the old panel's
+    # class is a different class object — keeping it would show stale UI,
+    # so tear it down and build a fresh one from the reloaded code.
+    panel = getattr(iface, '_layout_panel', None)
+    if panel is not None:
         try:
-            if iface._layout_panel.isVisible():
-                iface._layout_panel.raise_()
-                iface._layout_panel.activateWindow()
+            if (type(panel) is MapLayoutGeneratorPanel
+                    and panel.isVisible()):
+                panel.raise_()
+                panel.activateWindow()
                 return
+            iface.removeDockWidget(panel)
+            panel.close()
+            panel.deleteLater()
         except RuntimeError:
-            iface._layout_panel = None
+            pass  # C++ object already deleted
+        iface._layout_panel = None
 
     panel = create_map_layout_generator_panel()
     iface._layout_panel = panel

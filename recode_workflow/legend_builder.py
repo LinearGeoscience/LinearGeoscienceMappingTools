@@ -373,11 +373,26 @@ def lookup_from_widget(project, layer, field_idx):
 def resolve_section_targets(project, section):
     """Resolve a section to its scan targets: [(layer, [field_names])].
 
-    Explicit-layer sections target that layer; project-wide sections
-    (layer=None) target every spatial vector layer holding any of the
-    fields; project-wide sections with a lookup but no fields auto-detect
-    fields from the lookup table's name pattern.
+    Sections with explicit field_targets use exactly those layer/field
+    pairs.  Explicit-layer sections target that layer; project-wide
+    sections (layer=None) target every spatial vector layer holding any
+    of the fields; project-wide sections with a lookup but no fields
+    auto-detect fields from the lookup table's name pattern.
     """
+    field_targets = section.get('field_targets')
+    if field_targets:
+        targets = []
+        for target in field_targets:
+            layer = resolve_layer_ref(project, target.get('layer'))
+            if layer is None:
+                QgsMessageLog.logMessage(
+                    f"Legend section '{section.get('title')}': target layer "
+                    f"'{target.get('layer', {}).get('name')}' not found — "
+                    f"skipped.", LOG_TAG, Qgis.Warning)
+                continue
+            targets.append((layer, list(target.get('fields', []))))
+        return targets
+
     fields = list(section.get('fields', []))
     layer_ref = section.get('layer')
 
@@ -809,16 +824,20 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
                     LOG_TAG, Qgis.Warning)
             continue
 
-        if section.get('layer') and section.get('subdivide_by'):
-            layer, fields = targets[0]
-            entry = work.setdefault(layer.id(), (layer, set(), []))
-            entry[2].append((sid, fields, section['subdivide_by']))
+        if section.get('subdivide_by'):
+            # One spec per target layer; layers lacking the subdivide
+            # field are skipped inside _scan_layer_combined.
+            for layer, fields in targets:
+                entry = work.setdefault(layer.id(), (layer, set(), []))
+                entry[2].append((sid, fields, section['subdivide_by']))
         else:
             for lyr, fnames in targets:
                 _add_flat(lyr, sid, fnames)
 
-    # Scan each layer once.
+    # Scan each layer once.  Subdivided results are merged across layers
+    # (a section's field_targets may span several layers).
     layer_field_values = {}  # {layer_id: {fname: set}}
+    sub_accum = {}  # {sid: {sub_value: set}}
     results = {}
     for layer_id, (layer, flat_fields, specs) in work.items():
         filter_geom = None
@@ -829,7 +848,12 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
             layer, flat_fields, specs, filter_geom)
         layer_field_values[layer_id] = field_values
         for sid, grouped in sub_results.items():
-            results[sid] = {k: sorted(v) for k, v in sorted(grouped.items())}
+            acc = sub_accum.setdefault(sid, {})
+            for sub_value, values in grouped.items():
+                acc.setdefault(sub_value, set()).update(values)
+
+    for sid, grouped in sub_accum.items():
+        results[sid] = {k: sorted(v) for k, v in sorted(grouped.items())}
 
     # Assemble flat sections (union across their layer targets).
     for sid, targets in flat_targets.items():

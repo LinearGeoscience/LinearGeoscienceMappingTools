@@ -68,8 +68,23 @@ changelog=3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
     scan fields are picked via checkboxes instead of typed; descriptions
     can come straight from paired layer columns (SubType1 ↔
     SubType1Description) or from description-valued fields in client
-    deliverables; lookup column detection no longer falls back to fid
-    (June 2026)
+    deliverables; lookup column detection no longer falls back to fid.
+    Text sections are editable after creation (double-click), the field
+    picker is grouped by layer with layer-explicit selections, a new
+    "Add Layer Section" builds a code table straight from a layer's code +
+    Description columns split by Type, and only one layout template
+    (portrait or landscape) is required — the other orientation falls
+    back to it. The legend text block is styled to match the legend
+    (entries italic in the legend's label font, bold headings) and edits
+    to the preview are applied as per-entry corrections on every sheet —
+    deletions exclude a code, rewording relabels it, additions append —
+    without losing per-sheet filtering. The text block is a single
+    single-column label in the legend's italic label font with
+    UPPERCASE headings. Map scale and grid spacing are read per sheet
+    from the mapsheets layer's 'scale' attribute (set by the Mapsheet
+    Generator), with the manual scale combo as fallback. The layout
+    panel is rebuilt after plugin reloads instead of re-showing the
+    stale dock (June 2026)
     3.3: QGIS plugin repository compliance release: graceful handling of
     missing matplotlib/pandas, documented external dependencies, accurate
     minimum QGIS version (3.40 LTR), vendored libraries now imported without

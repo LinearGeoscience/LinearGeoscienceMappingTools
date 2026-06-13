@@ -28,9 +28,11 @@ deserialize_config = legend_config.deserialize_config
 format_entries = legend_config.format_entries
 format_entry_list = legend_config.format_entry_list
 group_values_by_lookup = legend_config.group_values_by_lookup
+text_from_section_lines = legend_config.text_from_section_lines
+derive_text_overrides = legend_config.derive_text_overrides
+apply_text_overrides = legend_config.apply_text_overrides
 format_text_sections = legend_config.format_text_sections
 build_text_section_lines = legend_config.build_text_section_lines
-flow_lines_into_columns = legend_config.flow_lines_into_columns
 strip_table_suffix = legend_config.strip_table_suffix
 strip_family_suffix = legend_config.strip_family_suffix
 group_fields_into_families = legend_config.group_fields_into_families
@@ -119,6 +121,33 @@ class TestNormalizeSection(unittest.TestCase):
         self.assertEqual(s['lookup'], {'pairs': {'suffix': 'Description'}})
         s2 = normalize_section({'lookup': {'pairs': {'suffix': '_Desc'}}})
         self.assertEqual(s2['lookup']['pairs']['suffix'], '_Desc')
+
+    def test_field_targets_normalised(self):
+        s = normalize_section({'field_targets': [
+            {'layer': {'id': 'a', 'name': 'Overlay'},
+             'fields': ['SubType1', ' ', 'SubType2']},
+            {'layer': None, 'fields': ['X']},      # no layer → dropped
+            {'layer': {'id': 'b', 'name': 'B'}, 'fields': []},  # no fields
+        ]})
+        self.assertEqual(s['field_targets'], [
+            {'layer': {'id': 'a', 'name': 'Overlay'},
+             'fields': ['SubType1', 'SubType2']},
+        ])
+        # Display union derived from targets when fields not given
+        self.assertEqual(s['fields'], ['SubType1', 'SubType2'])
+
+    def test_field_targets_absent_is_none(self):
+        self.assertIsNone(normalize_section({})['field_targets'])
+
+    def test_field_targets_round_trip(self):
+        config = normalize_config({'sections': [{
+            'title': 'Overlay', 'field_targets': [
+                {'layer': {'id': 'a', 'name': 'Overlay'},
+                 'fields': ['SubType1']}],
+            'subdivide_by': 'Type', 'display': 'text',
+            'lookup': {'pairs': {'suffix': 'Description'}}}]})
+        round_tripped = deserialize_config(serialize_config(config))
+        self.assertEqual(config, round_tripped)
 
     def test_text_columns_clamped(self):
         self.assertEqual(
@@ -338,35 +367,75 @@ class TestGroupValuesByLookup(unittest.TestCase):
         ])
 
 
-class TestColumnFlow(unittest.TestCase):
+EM = legend_config.EM_DASH
 
-    def test_empty(self):
-        self.assertEqual(flow_lines_into_columns([], 2), [])
 
-    def test_single_column(self):
-        cols = flow_lines_into_columns(
-            [('MINERALS', ['a', 'b'])], 1)
-        self.assertEqual(cols, ["MINERALS\na\nb"])
+class TestTextOverrides(unittest.TestCase):
 
-    def test_two_columns_balanced(self):
-        cols = flow_lines_into_columns(
-            [('MINERALS', ['a', 'b', 'c', 'd', 'e'])], 2)
-        self.assertEqual(len(cols), 2)
-        self.assertEqual(cols[0], "MINERALS\na\nb")
-        self.assertEqual(cols[1], "c\nd\ne")
+    BASE = (f"ALTERATION\nCy {EM} Chalcopyrite\nSi {EM} Silica\n\n"
+            f"TEXTURES\nBx {EM} Breccia")
+    HEADINGS = ['ALTERATION', 'TEXTURES']
 
-    def test_heading_not_orphaned_at_column_bottom(self):
-        # 6 lines over 2 columns = 3 per column; the second heading would
-        # land at the bottom of column 1 → pushed to column 2.
-        cols = flow_lines_into_columns(
-            [('ONE', ['a']), ('TWO', ['b', 'c'])], 2)
-        self.assertEqual(cols[0], "ONE\na")
-        self.assertEqual(cols[1], "TWO\nb\nc")
+    def test_no_edit_no_overrides(self):
+        self.assertEqual(
+            derive_text_overrides(self.BASE, self.BASE, self.HEADINGS), {})
 
-    def test_more_columns_than_lines(self):
-        cols = flow_lines_into_columns([('T', ['a'])], 4)
-        self.assertTrue(all(c for c in cols))
-        self.assertEqual("\n".join(cols).count('T'), 1)
+    def test_deleted_line_removed_everywhere(self):
+        edited = self.BASE.replace(f"Si {EM} Silica\n", "")
+        ov = derive_text_overrides(self.BASE, edited, self.HEADINGS)
+        self.assertEqual(ov['removed'], [f"Si {EM} Silica"])
+        out = apply_text_overrides(
+            [('ALTERATION', [f"Si {EM} Silica", f"Cy {EM} Chalcopyrite"])],
+            ov)
+        self.assertEqual(out, [('ALTERATION', [f"Cy {EM} Chalcopyrite"])])
+
+    def test_reworded_line_is_replacement(self):
+        edited = self.BASE.replace(
+            f"Si {EM} Silica", f"Si {EM} Silica flooding")
+        ov = derive_text_overrides(self.BASE, edited, self.HEADINGS)
+        self.assertEqual(ov['replaced'],
+                         {f"Si {EM} Silica": f"Si {EM} Silica flooding"})
+        self.assertEqual(ov['removed'], [])
+        out = apply_text_overrides(
+            [('ALTERATION', [f"  Si {EM} Silica"])], ov)
+        # Indentation of the original line is preserved
+        self.assertEqual(out, [('ALTERATION',
+                                [f"  Si {EM} Silica flooding"])])
+
+    def test_added_line_under_heading(self):
+        edited = self.BASE.replace(
+            "TEXTURES\n", "TEXTURES\nVn — Veined\n").replace(
+            '—', EM)
+        ov = derive_text_overrides(self.BASE, edited, self.HEADINGS)
+        self.assertEqual(ov['added'], {'TEXTURES': [f"Vn {EM} Veined"]})
+        out = apply_text_overrides([('TEXTURES', [f"Bx {EM} Breccia"])], ov)
+        self.assertEqual(out, [('TEXTURES',
+                                [f"Bx {EM} Breccia", f"Vn {EM} Veined"])])
+
+    def test_deleted_heading_suppresses_section(self):
+        edited = self.BASE.split("\n\n")[0]  # TEXTURES block deleted
+        ov = derive_text_overrides(self.BASE, edited, self.HEADINGS)
+        self.assertIn('TEXTURES', ov['removed_headings'])
+        out = apply_text_overrides(
+            [('ALTERATION', ['x']), ('TEXTURES', ['y'])], ov)
+        self.assertEqual([t for t, _ in out], ['ALTERATION'])
+
+    def test_typed_without_preview_appends(self):
+        ov = derive_text_overrides('', "custom note", [])
+        self.assertEqual(ov['added_top'], ["custom note"])
+        out = apply_text_overrides([('A', ['x'])], ov)
+        self.assertEqual(out, [('A', ['x']), ('', ['custom note'])])
+
+    def test_cleared_box_suppresses_everything(self):
+        ov = derive_text_overrides(self.BASE, '', self.HEADINGS)
+        out = apply_text_overrides(
+            [('ALTERATION', [f"Cy {EM} Chalcopyrite", f"Si {EM} Silica"]),
+             ('TEXTURES', [f"Bx {EM} Breccia"])], ov)
+        self.assertEqual(out, [])
+
+    def test_text_from_section_lines_untitled(self):
+        text = text_from_section_lines([('A', ['x']), ('', ['note'])])
+        self.assertEqual(text, "A\nx\n\nnote")
 
 
 class TestFamilyGrouping(unittest.TestCase):
