@@ -6,12 +6,12 @@ UI rewritten as QWidget page that fits inside RecodeWorkflowWizard.
 """
 
 from qgis.PyQt.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
-    QComboBox, QMessageBox, QAbstractItemView, QDialog, QScrollArea,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QTableWidget, QHeaderView, QCheckBox,
+    QComboBox, QMessageBox, QAbstractItemView, QScrollArea,
     QFrame,
 )
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import pyqtSignal
 from qgis.core import (
     QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
     QgsRectangle, QgsWkbTypes, QgsMessageLog, Qgis,
@@ -156,14 +156,14 @@ class PlotSymbolsPage(QWidget):
         mappings_section = CollapsibleSection("Layer Mappings", expanded=True)
         ml = mappings_section.content_layout()
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Layer", "Code Table", "Key Field", "Layer Field"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["Layer", "Code Table", "Key Field", "Layer Field", ""])
+        self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 4):
+        for col in range(1, 5):
             self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.setStyleSheet(f"""
             QTableWidget {{
@@ -200,16 +200,11 @@ class PlotSymbolsPage(QWidget):
         btn_add.setStyleSheet(theme.action_button_style(primary=False))
         btn_add.clicked.connect(self._on_add_mapping)
 
-        btn_remove_row = QPushButton("Remove Selected")
-        btn_remove_row.setStyleSheet(theme.action_button_style(primary=False))
-        btn_remove_row.clicked.connect(self._on_remove_mapping)
-
         btn_refresh = QPushButton("Refresh Defaults")
         btn_refresh.setStyleSheet(theme.action_button_style(primary=False))
         btn_refresh.clicked.connect(self._on_refresh_defaults)
 
         mapping_btn_layout.addWidget(btn_add)
-        mapping_btn_layout.addWidget(btn_remove_row)
         mapping_btn_layout.addWidget(btn_refresh)
         mapping_btn_layout.addStretch()
         ml.addLayout(mapping_btn_layout)
@@ -259,141 +254,153 @@ class PlotSymbolsPage(QWidget):
             found = project.mapLayersByName(layer_name)
             tables = project.mapLayersByName(table_name)
             if found and tables:
-                # First match per name; the display suffix makes the chosen
-                # geopackage visible so the user can correct via Add Mapping
+                # First match per name; the row's Layer dropdown lists every
+                # candidate (with file-path suffix) so the user can switch to
+                # the correct one when duplicate-named layers exist.
                 self._add_table_row(found[0], tables[0], key_field, layer_field)
 
-    def _add_table_row(self, layer, table_layer, key_field, layer_field):
-        """Add a mapping row. Layer IDs in Qt.UserRole are the source of truth;
-        the visible text is just the display name."""
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        layer_item = QTableWidgetItem(layer_display_name(layer))
-        layer_item.setData(Qt.UserRole, layer.id())
-        self.table.setItem(row, 0, layer_item)
-        table_item = QTableWidgetItem(layer_display_name(table_layer))
-        table_item.setData(Qt.UserRole, table_layer.id())
-        self.table.setItem(row, 1, table_item)
-        self.table.setItem(row, 2, QTableWidgetItem(key_field))
-        self.table.setItem(row, 3, QTableWidgetItem(layer_field))
+    def _combo_style(self):
+        s = self.scale
+        return (
+            f"QComboBox {{ font-size: {s.font_size(11)}px; "
+            f"font-family: {theme.FONT_FAMILY}; color: {theme.TEXT_PRIMARY}; "
+            f"background-color: {theme.BG_CARD}; "
+            f"border: 1px solid {theme.BORDER}; "
+            f"border-radius: {s.dimension(3)}px; padding: {s.dimension(2)}px; }}"
+        )
 
-    def _on_add_mapping(self):
+    def _collect_layers(self):
+        """Split project layers into geometry layers and non-spatial tables."""
         project = QgsProject.instance()
-        all_layers = project.mapLayers()
         geom_layers = []
         table_layers = []
-        for layer_id, layer in all_layers.items():
+        for layer in project.mapLayers().values():
             if hasattr(layer, 'geometryType'):
                 if layer.geometryType() == QgsWkbTypes.NullGeometry:
                     table_layers.append(layer)
                 else:
                     geom_layers.append(layer)
+        return geom_layers, table_layers
 
+    def _populate_field_combo(self, combo, layer_id, preferred=None):
+        """Fill a field-name combo from *layer_id*, keeping the current
+        selection (or *preferred*) when that field still exists."""
+        keep = preferred if preferred is not None else combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
+        if layer is not None:
+            for field in layer.fields():
+                combo.addItem(field.name())
+        if keep:
+            ki = combo.findText(keep)
+            if ki >= 0:
+                combo.setCurrentIndex(ki)
+        combo.blockSignals(False)
+
+    def _add_table_row(self, layer, table_layer, key_field, layer_field):
+        """Add a fully editable mapping row. Every cell is a dropdown so layers
+        with duplicate/similar names can be disambiguated by the file-path
+        suffix in their display name; currentData holds the layer id."""
+        geom_layers, table_layers = self._collect_layers()
+        combo_style = self._combo_style()
+
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        # Col 0: target geometry layer
+        layer_combo = QComboBox()
+        layer_combo.setStyleSheet(combo_style)
+        for lyr in sorted(geom_layers, key=lambda l: l.name()):
+            layer_combo.addItem(layer_display_name(lyr), lyr.id())
+        if layer is not None:
+            li = layer_combo.findData(layer.id())
+            if li >= 0:
+                layer_combo.setCurrentIndex(li)
+        self.table.setCellWidget(row, 0, layer_combo)
+
+        # Col 1: code table (non-spatial tables first, then geometry layers)
+        table_combo = QComboBox()
+        table_combo.setStyleSheet(combo_style)
+        for lyr in sorted(table_layers, key=lambda l: l.name()):
+            table_combo.addItem(layer_display_name(lyr), lyr.id())
+        for lyr in sorted(geom_layers, key=lambda l: l.name()):
+            table_combo.addItem(layer_display_name(lyr), lyr.id())
+        if table_layer is not None:
+            ti = table_combo.findData(table_layer.id())
+            if ti >= 0:
+                table_combo.setCurrentIndex(ti)
+        self.table.setCellWidget(row, 1, table_combo)
+
+        # Col 2: key field (from code table), Col 3: layer field (from target)
+        key_combo = QComboBox()
+        key_combo.setStyleSheet(combo_style)
+        self.table.setCellWidget(row, 2, key_combo)
+
+        field_combo = QComboBox()
+        field_combo.setStyleSheet(combo_style)
+        self.table.setCellWidget(row, 3, field_combo)
+
+        self._populate_field_combo(key_combo, table_combo.currentData(), key_field)
+        self._populate_field_combo(field_combo, layer_combo.currentData(), layer_field)
+
+        # Switching a layer/table re-derives the available fields for that row
+        table_combo.currentIndexChanged.connect(
+            lambda _i: self._populate_field_combo(key_combo, table_combo.currentData()))
+        layer_combo.currentIndexChanged.connect(
+            lambda _i: self._populate_field_combo(field_combo, layer_combo.currentData()))
+
+        # Col 4: per-row remove button (cells are dropdowns, so row-selection
+        # based removal isn't reliable — give each row its own button)
+        btn_remove = QPushButton("✕")
+        btn_remove.setToolTip("Remove this mapping")
+        btn_remove.setStyleSheet(theme.action_button_style(primary=False))
+        btn_remove.clicked.connect(lambda _c, b=btn_remove: self._remove_row_for_button(b))
+        self.table.setCellWidget(row, 4, btn_remove)
+
+    def _on_add_mapping(self):
+        """Add a new editable row. The row's dropdowns let the user pick the
+        exact layer/table and fields inline, so no separate dialog is needed."""
+        geom_layers, table_layers = self._collect_layers()
         if not geom_layers:
             QMessageBox.information(self, "No Layers",
                                    "No geometry layers found in the current project.")
             return
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Add Layer Mapping")
-        dlg.setMinimumWidth(self.scale.dimension(400))
-        dlg.setStyleSheet(theme.dialog_style())
-        dlg_layout = QVBoxLayout(dlg)
-
-        dlg_layout.addWidget(QLabel("Target Layer:"))
-        combo_layer = QComboBox()
-        for lyr in sorted(geom_layers, key=lambda l: l.name()):
-            combo_layer.addItem(layer_display_name(lyr), lyr.id())
-        dlg_layout.addWidget(combo_layer)
-
-        dlg_layout.addWidget(QLabel("Code Table:"))
-        combo_table = QComboBox()
-        for lyr in sorted(table_layers, key=lambda l: l.name()):
-            combo_table.addItem(layer_display_name(lyr), lyr.id())
-        for lyr in sorted(geom_layers, key=lambda l: l.name()):
-            combo_table.addItem(layer_display_name(lyr), lyr.id())
-        dlg_layout.addWidget(combo_table)
-
-        dlg_layout.addWidget(QLabel("Key Field (in Code Table):"))
-        combo_key = QComboBox()
-        dlg_layout.addWidget(combo_key)
-
-        dlg_layout.addWidget(QLabel("Layer Field (on Target Layer):"))
-        combo_field = QComboBox()
-        dlg_layout.addWidget(combo_field)
-
-        def update_key_fields():
-            combo_key.clear()
-            table_id = combo_table.currentData()
-            if table_id:
-                lyr = project.mapLayer(table_id)
-                if lyr:
-                    for field in lyr.fields():
-                        combo_key.addItem(field.name())
-
-        def update_layer_fields():
-            combo_field.clear()
-            layer_id = combo_layer.currentData()
-            if layer_id:
-                lyr = project.mapLayer(layer_id)
-                if lyr:
-                    for field in lyr.fields():
-                        combo_field.addItem(field.name())
-
-        combo_table.currentIndexChanged.connect(update_key_fields)
-        combo_layer.currentIndexChanged.connect(update_layer_fields)
-        update_key_fields()
-        update_layer_fields()
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_ok = QPushButton("Add")
-        btn_ok.setStyleSheet(theme.action_button_style(primary=True))
-        btn_ok.clicked.connect(dlg.accept)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.setStyleSheet(theme.action_button_style(primary=False))
-        btn_cancel.clicked.connect(dlg.reject)
-        btn_layout.addWidget(btn_ok)
-        btn_layout.addWidget(btn_cancel)
-        dlg_layout.addLayout(btn_layout)
-
-        if dlg.exec() == QDialog.Accepted:
-            layer = project.mapLayer(combo_layer.currentData())
-            table_layer = project.mapLayer(combo_table.currentData())
-            if layer and table_layer:
-                self._add_table_row(
-                    layer,
-                    table_layer,
-                    combo_key.currentText(),
-                    combo_field.currentText(),
-                )
+        layer = sorted(geom_layers, key=lambda l: l.name())[0]
+        table_pool = table_layers or geom_layers
+        table_layer = sorted(table_pool, key=lambda l: l.name())[0]
+        self._add_table_row(layer, table_layer, "", "")
 
     def _on_refresh_defaults(self):
         self.table.setRowCount(0)
         self._populate_default_mappings()
         self.log_message.emit(f"Refreshed default mappings ({self.table.rowCount()} rows)")
 
-    def _on_remove_mapping(self):
-        rows = self.table.selectionModel().selectedRows()
-        if rows:
-            self.table.removeRow(rows[0].row())
+    def _remove_row_for_button(self, btn):
+        """Remove the row whose remove-button is *btn* (rows shift on delete,
+        so resolve the current index by widget identity)."""
+        for row in range(self.table.rowCount()):
+            if self.table.cellWidget(row, 4) is btn:
+                self.table.removeRow(row)
+                return
 
     def _get_mappings(self):
         mappings = []
         for row in range(self.table.rowCount()):
-            layer_item = self.table.item(row, 0)
-            table_item = self.table.item(row, 1)
-            key_field = self.table.item(row, 2)
-            layer_field = self.table.item(row, 3)
-            if all([layer_item, table_item, key_field, layer_field]):
-                mappings.append({
-                    'layer_id': layer_item.data(Qt.UserRole),
-                    'layer_display': layer_item.text().strip(),
-                    'table_id': table_item.data(Qt.UserRole),
-                    'table_display': table_item.text().strip(),
-                    'key_field': key_field.text().strip(),
-                    'layer_field': layer_field.text().strip(),
-                })
+            layer_combo = self.table.cellWidget(row, 0)
+            table_combo = self.table.cellWidget(row, 1)
+            key_combo = self.table.cellWidget(row, 2)
+            field_combo = self.table.cellWidget(row, 3)
+            if not all([layer_combo, table_combo, key_combo, field_combo]):
+                continue
+            mappings.append({
+                'layer_id': layer_combo.currentData(),
+                'layer_display': layer_combo.currentText().strip(),
+                'table_id': table_combo.currentData(),
+                'table_display': table_combo.currentText().strip(),
+                'key_field': key_combo.currentText().strip(),
+                'layer_field': field_combo.currentText().strip(),
+            })
         return mappings
 
     # ─── plot logic (verbatim from script_plotsymbols.py) ─────────

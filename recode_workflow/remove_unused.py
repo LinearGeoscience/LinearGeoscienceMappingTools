@@ -224,7 +224,10 @@ class RemoveUnusedPage(QWidget):
                 if isinstance(layer.renderer(), QgsCategorizedSymbolRenderer):
                     categorized.append(layer)
         categorized.sort(key=lambda l: l.name())
-        self._layer_list.set_layers(categorized)
+        # Default to nothing selected so layers are only processed when the
+        # user explicitly opts in (Select All / individual checkboxes).
+        self._layer_list.set_layers(
+            categorized, unchecked_ids=[l.id() for l in categorized])
 
     def _on_preview(self):
         """Scan selected layers and show counts of categories to remove."""
