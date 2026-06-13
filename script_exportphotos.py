@@ -26,12 +26,12 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QTableWidgetItem, QPushButton, QLineEdit, QMessageBox,
                              QHeaderView, QGroupBox, QFileDialog, QProgressBar,
                              QTextEdit, QSplitter, QCheckBox)
-from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
+from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal, QUrl
 from qgis.PyQt.QtGui import QFont, QColor
 from qgis.core import (QgsProject, QgsVectorLayer, QgsVectorFileWriter, QgsFeature,
-                       QgsSymbol, QgsRuleBasedRenderer, QgsSimpleMarkerSymbolLayer,
+                       QgsSymbol, QgsSingleSymbolRenderer, QgsSimpleMarkerSymbolLayer,
                        QgsPalLayerSettings, QgsVectorLayerSimpleLabeling,
-                       QgsMessageLog, Qgis, QgsWkbTypes)
+                       QgsTextBufferSettings, QgsMessageLog, Qgis, QgsWkbTypes)
 import os
 import shutil
 import datetime
@@ -309,6 +309,12 @@ class PhotoPackageWorker(QThread):
                                     new_placeholder = '{{GPKG_FOLDER}}photos/' + photo_file
 
                                     # Replace all variants in PhotoHTML
+                                    # Current georeference output: QUrl-encoded file URL
+                                    # (forward slashes + %20 etc.) — match this first.
+                                    old_url = QUrl.fromLocalFile(old_abs_path).toString()
+                                    value = value.replace(old_url, new_placeholder)
+                                    # Legacy/backward-compatible variants for layers built
+                                    # before the URL was encoded:
                                     # Handle file:/// URLs with forward slashes (standard format)
                                     value = value.replace(f'file:///{old_fwd}', new_placeholder)
                                     # Handle file:/// URLs with backslashes (rare but possible)
@@ -423,77 +429,32 @@ class PhotoPackageWorker(QThread):
             self.log_message.emit("GeoPackage was created but without embedded style")
 
     def _apply_symbol_renderer(self, layer):
-        """Apply rule-based renderer with stars for favourites and circles for regular photos"""
-        # Get unique geologists
-        geologist_idx = layer.fields().indexFromName('Geologist')
-        if geologist_idx == -1:
-            self.log_message.emit("Warning: 'Geologist' field not found, using simple styling")
-            return
+        """Style every photo point as one simple, clean dot: white fill with a thin charcoal
+        ring. Kept in sync with script_georeference.py :: apply_symbol_renderer (monochrome,
+        uniform — no per-geologist colours, no favourite symbology)."""
+        charcoal = QColor('#333333')
 
-        unique_geologists = layer.uniqueValues(geologist_idx)
+        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        marker = QgsSimpleMarkerSymbolLayer()
+        marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+        marker.setSize(4.5)
+        marker.setColor(QColor(255, 255, 255))   # white fill
+        marker.setStrokeColor(charcoal)          # thin charcoal ring
+        marker.setStrokeWidth(0.5)
+        symbol.changeSymbolLayer(0, marker)
 
-        # Define colors for different geologists
-        colors = [
-            QColor(255, 0, 0),      # Red
-            QColor(0, 255, 0),      # Green
-            QColor(0, 0, 255),      # Blue
-            QColor(255, 255, 0),    # Yellow
-            QColor(255, 0, 255),    # Magenta
-            QColor(0, 255, 255),    # Cyan
-            QColor(255, 165, 0),    # Orange
-            QColor(128, 0, 128),    # Purple
-            QColor(255, 192, 203),  # Pink
-            QColor(165, 42, 42),    # Brown
-        ]
-
-        # Create rule-based renderer
-        root_rule = QgsRuleBasedRenderer.Rule(None)
-
-        for i, geologist in enumerate(unique_geologists):
-            if geologist is None:
-                continue
-
-            dark_color = colors[i % len(colors)]
-            light_color = QColor(dark_color).lighter(160)
-
-            # Rule for favourite photos - star symbol (darker, larger)
-            favourite_filter = f'"Geologist" = \'{geologist}\' AND upper("Favourite") = \'TRUE\''
-            star_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-            star_marker = QgsSimpleMarkerSymbolLayer()
-            star_marker.setShape(QgsSimpleMarkerSymbolLayer.Star)
-            star_marker.setSize(8.0)
-            star_marker.setColor(dark_color)
-            star_symbol.changeSymbolLayer(0, star_marker)
-
-            star_rule = QgsRuleBasedRenderer.Rule(star_symbol)
-            star_rule.setFilterExpression(favourite_filter)
-            star_rule.setLabel(f'{geologist} (Favourite)')
-            root_rule.appendChild(star_rule)
-
-            # Rule for regular photos - circle symbol (lighter, smaller)
-            regular_filter = f'"Geologist" = \'{geologist}\' AND (upper("Favourite") != \'TRUE\' OR "Favourite" IS NULL)'
-            circle_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-            circle_marker = QgsSimpleMarkerSymbolLayer()
-            circle_marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
-            circle_marker.setSize(2.5)
-            circle_marker.setColor(light_color)
-            circle_symbol.changeSymbolLayer(0, circle_marker)
-
-            circle_rule = QgsRuleBasedRenderer.Rule(circle_symbol)
-            circle_rule.setFilterExpression(regular_filter)
-            circle_rule.setLabel(f'{geologist} (Regular)')
-            root_rule.appendChild(circle_rule)
-
-        renderer = QgsRuleBasedRenderer(root_rule)
-        layer.setRenderer(renderer)
+        layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
     def _apply_labels(self, layer):
-        """Apply labels showing photo count"""
+        """Apply labels showing photo count — charcoal text with a thin white halo, shown
+        only on multi-photo points. Kept in sync with script_georeference.py :: apply_labels."""
         if layer.fields().indexFromName('PhotoCount') == -1:
             return
 
         label_settings = QgsPalLayerSettings()
-        label_settings.fieldName = 'PhotoCount'
+        # Only label points that bundle more than one photo — singles stay plain dots.
+        label_settings.fieldName = 'if("PhotoCount" > 1, to_string("PhotoCount"), \'\')'
+        label_settings.isExpression = True
 
         # Handle QGIS version differences for placement enum
         try:
@@ -504,8 +465,17 @@ class PhotoPackageWorker(QThread):
             label_settings.placement = 1  # OverPoint numeric value
 
         label_format = label_settings.format()
-        label_format.setSize(6)
-        label_format.setColor(QColor('white'))
+        label_format.setSize(7)
+        label_format.setColor(QColor('#333333'))   # charcoal, matches the ring
+        label_format.setForcedBold(True)
+
+        # Thin white halo so a 2-digit count that spills past the white dot stays crisp.
+        buffer = QgsTextBufferSettings()
+        buffer.setEnabled(True)
+        buffer.setSize(0.5)
+        buffer.setColor(QColor('white'))
+        label_format.setBuffer(buffer)
+
         label_settings.setFormat(label_format)
         labeling = QgsVectorLayerSimpleLabeling(label_settings)
         layer.setLabelsEnabled(True)
@@ -529,24 +499,44 @@ class PhotoPackageWorker(QThread):
         # Using array_first and string_to_array to avoid regex escaping issues
         # Expression: 'file:///' || file_path(array_first(string_to_array(layer_property(@layer_name,'source'),'|')))
         # file_path() returns the directory containing a file
+        # NOTE: This popup is kept in sync with script_georeference.py ::
+        # apply_html_map_tip. The only intentional difference is the slideshow
+        # expression below, which swaps {{GPKG_FOLDER}} placeholders for the package
+        # location so the exported package is portable. If you change the
+        # header/footer/JS here, mirror it there.
         html = r"""
         <style>
-        .slideshow-container {max-width: 500px; position: relative; margin: auto;}
-        .mySlides {display: none;}
-        .prev, .next {cursor: pointer; position: absolute; top: 50%; width: auto; padding: 16px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.6s ease; border-radius: 0 3px 3px 0; user-select: none;}
+        .lgs-tip {display: inline-block; margin: auto; font-family: 'Segoe UI', Arial, sans-serif; border: 1px solid #D2D6DB; border-radius: 6px; overflow: hidden;}
+        .lgs-head {background: #34A853; color: white; padding: 7px 12px; font-size: 13px; font-weight: bold;}
+        .lgs-head .fav {color: #FFD54A;}
+        .slideshow-container {position: relative; background: #000;}
+        .mySlides {display: none; text-align: center;}
+        .mySlides img {display: block;}
+        .lgs-cap {color: #ddd; font-size: 10px; padding: 3px 6px; background: #000; text-align: center; word-break: break-all;}
+        .prev, .next {cursor: pointer; position: absolute; top: 50%; width: auto; padding: 14px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.3s ease; border-radius: 0 3px 3px 0; user-select: none; background: rgba(0,0,0,0.3);}
         .next {right: 0; border-radius: 3px 0 0 3px;}
         .prev:hover, .next:hover {background-color: rgba(0,0,0,0.8);}
+        .lgs-foot {display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; font-size: 11px; color: #202124; background: #F8F9FA;}
+        .lgs-foot .cmt {flex: 1; min-width: 0;}
+        .lgs-foot .cnt {color: #5F6368; white-space: nowrap; font-weight: bold;}
         </style>
-        <div class="slideshow-container">[% replace("PhotoHTML", '{{GPKG_FOLDER}}', 'file:///' || replace(file_path(array_first(string_to_array(layer_property(@layer_name, 'source'), '|'))), '\\', '/') || '/') %]</div>
+        <div class="lgs-tip">
+          <div class="lgs-head">[% "Geologist" %] &middot; #[% "PhotoID" %] <span class="fav">[% CASE WHEN upper("Favourite") = 'TRUE' THEN '&#9733;' ELSE '' END %]</span></div>
+          <div class="slideshow-container">[% replace("PhotoHTML", '{{GPKG_FOLDER}}', 'file:///' || replace(file_path(array_first(string_to_array(layer_property(@layer_name, 'source'), '|'))), '\\', '/') || '/') %]</div>
+          <div class="lgs-foot"><span class="cmt">[% coalesce("Comments", '') %]</span><span class="cnt" id="lgs-counter"></span></div>
+        </div>
         <script>
         var slideIndex = 1; showSlides(slideIndex);
         function plusSlides(n) { showSlides(slideIndex += n); }
         function showSlides(n) {
           var i; var slides = document.getElementsByClassName("mySlides");
+          if (slides.length == 0) return;
           if (n > slides.length) {slideIndex = 1}
           if (n < 1) {slideIndex = slides.length}
           for (i = 0; i < slides.length; i++) { slides[i].style.display = "none"; }
           slides[slideIndex-1].style.display = "block";
+          var c = document.getElementById('lgs-counter');
+          if (c) { c.innerText = slideIndex + ' / ' + slides.length; }
         }
         </script>
         """

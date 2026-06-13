@@ -26,12 +26,23 @@ try:
     from .layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 except ImportError:
     from layer_select import layer_candidates, populate_layer_combo, combo_current_layer
-from qgis.PyQt.QtCore import QVariant
+
+# Reuse the photo panel's dependency-free EXIF orientation reader so portrait photos can be
+# rotated upright in the map tip (QtWebKit ignores EXIF orientation).
+try:
+    from .photo_panel.loader import read_exif_orientation
+except ImportError:
+    try:
+        from photo_panel.loader import read_exif_orientation
+    except ImportError:
+        def read_exif_orientation(path):
+            return 1
+from qgis.PyQt.QtCore import QVariant, QUrl
 try:
     from qgis.PyQt.QtCore import QMetaType
 except ImportError:
     QMetaType = None
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QImageReader
 import sys
 
 
@@ -233,6 +244,23 @@ def expand_photo_ids(photo_id_str):
     return photo_ids
 
 
+# EXIF orientation (1-8) -> CSS transform applied to the <img>, mirroring
+# photo_panel.loader.get_exif_transform. QtWebKit ignores EXIF, so we rotate in CSS.
+# Orientations 5-8 also swap width/height (90/270 degree rotations).
+_EXIF_CSS_TRANSFORM = {
+    1: '',
+    2: 'scaleX(-1)',
+    3: 'rotate(180deg)',
+    4: 'scaleY(-1)',
+    5: 'rotate(90deg) scaleX(-1)',
+    6: 'rotate(90deg)',
+    7: 'rotate(-90deg) scaleX(-1)',
+    8: 'rotate(-90deg)',
+}
+_EXIF_SWAP = (5, 6, 7, 8)   # orientations that rotate 90/270 and so swap w/h
+_MAPTIP_MAXW, _MAPTIP_MAXH = 480, 460   # cap for the upright on-screen photo
+
+
 def match_photos(point_layer, geologist_folders, codes_layer):
     """Matches photos based on PhotoID in the point_layer and plots them on a new 'Photo Points' layer, separated by Geologist."""
     # Summary tracking
@@ -326,7 +354,10 @@ def match_photos(point_layer, geologist_folders, codes_layer):
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg', '.png')):
                     photo_id = file[-8:-4]
-                    photo_dict[photo_id] = file
+                    # Store the FULL path (root may be a subfolder). Storing only the
+                    # bare filename and rebuilding from photo_folder broke nested layouts:
+                    # the photo matched but the path pointed at the wrong place.
+                    photo_dict[photo_id] = os.path.join(root, file)
 
         try:
             expanded_photo_ids = expand_photo_ids(photo_id_str)
@@ -336,31 +367,87 @@ def match_photos(point_layer, geologist_folders, codes_layer):
 
         photo_html = ""
         photo_files = []
+        first_photo_path = None
         x, y = feature.geometry().asPoint().x(), feature.geometry().asPoint().y()
 
+        # First pass: match files, build the photo table, and work out each photo's upright
+        # (EXIF-corrected) on-screen size so the slides can share one stable frame.
+        slides = []
         for full_photo_id in expanded_photo_ids:
-            photo_file = photo_dict.get(full_photo_id)
-            if photo_file:
-                photo_files.append(photo_file)
-                photo_path = os.path.join(photo_folder, photo_file)
-                full_photo_name = os.path.basename(photo_file)
-
-                # Add to Photo Table with Type, Favourite, and SampleID fields
-                table_feature = QgsFeature()
-                table_feature.setAttributes([
-                    geologist_name, full_photo_id, full_photo_name, photo_path,
-                    x, y, crs_name, comment, str(type_value), str(favourite_value), str(sampleid_value)
-                ])
-                table_provider.addFeature(table_feature)
-
-                # Add to HTML
-                if comment:
-                    photo_html += f'<div class="mySlides"><h3>{comment}</h3><a href="file:///{photo_path}" target="_blank"><img src="file:///{photo_path}" style="max-width:100%;max-height:1000px;object-fit:contain;"></a></div>'
-                else:
-                    photo_html += f'<div class="mySlides"><a href="file:///{photo_path}" target="_blank"><img src="file:///{photo_path}" style="max-width:100%;max-height:500px;object-fit:contain;"></a></div>'
-            else:
+            photo_path = photo_dict.get(full_photo_id)
+            if not photo_path:
                 # Track missing photo ID
                 missing_photos.setdefault(geologist_name, []).append(full_photo_id)
+                continue
+
+            full_photo_name = os.path.basename(photo_path)
+            # photo_files holds bare filenames — the PhotoFiles field and the export
+            # script's path reconstruction both rely on basenames.
+            photo_files.append(full_photo_name)
+            if first_photo_path is None:
+                first_photo_path = photo_path
+
+            # Canonical file URL: forward slashes + percent-encoded spaces/specials so
+            # QtWebKit reliably loads paths like '...\Field Photos - May\...'.
+            photo_url = QUrl.fromLocalFile(photo_path).toString()
+
+            # Add to Photo Table with Type, Favourite, and SampleID fields
+            table_feature = QgsFeature()
+            table_feature.setAttributes([
+                geologist_name, full_photo_id, full_photo_name, photo_path,
+                x, y, crs_name, comment, str(type_value), str(favourite_value), str(sampleid_value)
+            ])
+            table_provider.addFeature(table_feature)
+
+            # EXIF orientation -> upright display size + CSS transform (QtWebKit ignores EXIF).
+            orient = read_exif_orientation(photo_path)
+            if orient not in _EXIF_CSS_TRANSFORM:
+                orient = 1
+            size = QImageReader(photo_path).size()
+            sw, sh = size.width(), size.height()
+            swap = orient in _EXIF_SWAP
+            if sw > 0 and sh > 0:
+                disp_w, disp_h = (sh, sw) if swap else (sw, sh)   # upright pixel dims
+                scale = min(_MAPTIP_MAXW / disp_w, _MAPTIP_MAXH / disp_h, 1.0)
+                f_w, f_h = max(1, round(disp_w * scale)), max(1, round(disp_h * scale))
+                slides.append({'url': photo_url, 'name': full_photo_name, 'swap': swap,
+                               'fw': f_w, 'fh': f_h, 'tcss': _EXIF_CSS_TRANSFORM[orient]})
+            else:
+                # Unreadable dimensions: fall back to plain object-fit (no rotation).
+                slides.append({'url': photo_url, 'name': full_photo_name, 'fallback': True})
+
+        # Envelope: one frame size for every slide of this point so the popup doesn't resize
+        # as you flip between photos. Portrait points get a tall/narrow frame, landscape wide.
+        sized = [s for s in slides if not s.get('fallback')]
+        env_w = max((s['fw'] for s in sized), default=_MAPTIP_MAXW)
+        env_h = max((s['fh'] for s in sized), default=_MAPTIP_MAXH)
+
+        # Second pass: emit one slide per photo. The image is centred in the envelope frame
+        # and rotated upright via CSS. src="..." is unchanged so script_exportphotos.py can
+        # still rewrite the QUrl-encoded paths to portable {{GPKG_FOLDER}} placeholders.
+        for s in slides:
+            if s.get('fallback'):
+                photo_html += (
+                    f'<div class="mySlides">'
+                    f'<a href="{s["url"]}" target="_blank">'
+                    f'<img src="{s["url"]}" style="max-width:{env_w}px;max-height:{env_h}px;object-fit:contain;"></a>'
+                    f'<div class="lgs-cap">{s["name"]}</div>'
+                    f'</div>'
+                )
+                continue
+            # For swapped (90/270) orientations the <img> is sized with width/height swapped
+            # so its footprint after rotation becomes f_w x f_h, matching the frame.
+            iw, ih = (s['fh'], s['fw']) if s['swap'] else (s['fw'], s['fh'])
+            photo_html += (
+                f'<div class="mySlides">'
+                f'<div class="lgs-stage" style="width:{env_w}px;height:{env_h}px;position:relative;margin:auto;">'
+                f'<a href="{s["url"]}" target="_blank"><img src="{s["url"]}" '
+                f'style="position:absolute;top:50%;left:50%;width:{iw}px;height:{ih}px;max-width:none;'
+                f'transform:translate(-50%,-50%) {s["tcss"]};"></a>'
+                f'</div>'
+                f'<div class="lgs-cap">{s["name"]}</div>'
+                f'</div>'
+            )
 
         if len(photo_files) > 1:
             photo_html += """
@@ -373,7 +460,7 @@ def match_photos(point_layer, geologist_folders, codes_layer):
             photo_feature = QgsFeature()
             photo_feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
             photo_feature.setAttributes([
-                geologist_name, photo_id_str, os.path.join(photo_folder, photo_files[0]),
+                geologist_name, photo_id_str, first_photo_path,
                 photo_files[0], photo_files[0], x, y, crs_name, photo_html, comment,
                 len(photo_files), photo_files_str, str(type_value), str(favourite_value), str(sampleid_value)
             ])
@@ -416,25 +503,47 @@ def match_photos(point_layer, geologist_folders, codes_layer):
 
 
 # HTML Map Tip
+#
+# NOTE: The styling/markup below is intentionally kept in sync with
+# script_exportphotos.py :: PhotoExporter._apply_map_tips, which renders the same
+# popup for exported GeoPackages. If you change the header/footer/JS here, mirror it
+# there. The only deliberate difference is the slideshow expression: this layer reads
+# the raw PhotoHTML field, while the export swaps {{GPKG_FOLDER}} placeholders for the
+# package location.
 def apply_html_map_tip(layer):
     html = """
     <style>
-    .slideshow-container {max-width: 500px; position: relative; margin: auto;}
-    .mySlides {display: none;}
-    .prev, .next {cursor: pointer; position: absolute; top: 50%; width: auto; padding: 16px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.6s ease; border-radius: 0 3px 3px 0; user-select: none;}
+    .lgs-tip {display: inline-block; margin: auto; font-family: 'Segoe UI', Arial, sans-serif; border: 1px solid #D2D6DB; border-radius: 6px; overflow: hidden;}
+    .lgs-head {background: #34A853; color: white; padding: 7px 12px; font-size: 13px; font-weight: bold;}
+    .lgs-head .fav {color: #FFD54A;}
+    .slideshow-container {position: relative; background: #000;}
+    .mySlides {display: none; text-align: center;}
+    .mySlides img {display: block;}
+    .lgs-cap {color: #ddd; font-size: 10px; padding: 3px 6px; background: #000; text-align: center; word-break: break-all;}
+    .prev, .next {cursor: pointer; position: absolute; top: 50%; width: auto; padding: 14px; margin-top: -22px; color: white; font-weight: bold; font-size: 18px; transition: 0.3s ease; border-radius: 0 3px 3px 0; user-select: none; background: rgba(0,0,0,0.3);}
     .next {right: 0; border-radius: 3px 0 0 3px;}
     .prev:hover, .next:hover {background-color: rgba(0,0,0,0.8);}
+    .lgs-foot {display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; font-size: 11px; color: #202124; background: #F8F9FA;}
+    .lgs-foot .cmt {flex: 1; min-width: 0;}
+    .lgs-foot .cnt {color: #5F6368; white-space: nowrap; font-weight: bold;}
     </style>
-    <div class="slideshow-container">[% PhotoHTML %]</div>
+    <div class="lgs-tip">
+      <div class="lgs-head">[% "Geologist" %] &middot; #[% "PhotoID" %] <span class="fav">[% CASE WHEN upper("Favourite") = 'TRUE' THEN '&#9733;' ELSE '' END %]</span></div>
+      <div class="slideshow-container">[% PhotoHTML %]</div>
+      <div class="lgs-foot"><span class="cmt">[% coalesce("Comments", '') %]</span><span class="cnt" id="lgs-counter"></span></div>
+    </div>
     <script>
     var slideIndex = 1; showSlides(slideIndex);
     function plusSlides(n) { showSlides(slideIndex += n); }
     function showSlides(n) {
       var i; var slides = document.getElementsByClassName("mySlides");
+      if (slides.length == 0) return;
       if (n > slides.length) {slideIndex = 1}
       if (n < 1) {slideIndex = slides.length}
       for (i = 0; i < slides.length; i++) { slides[i].style.display = "none"; }
       slides[slideIndex-1].style.display = "block";
+      var c = document.getElementById('lgs-counter');
+      if (c) { c.innerText = slideIndex + ' / ' + slides.length; }
     }
     </script>
     """
@@ -442,96 +551,55 @@ def apply_html_map_tip(layer):
     layer.triggerRepaint()
 
 
-# Symbol Renderer (Categorized by Geologist with Star symbols for Favourites)
+# Symbol Renderer (single clean monochrome dot)
 def apply_symbol_renderer(layer):
-    """Apply symbols with stars for favourites (x/X) and circles for regular photos, colored by geologist."""
-    from qgis.core import (
-        QgsSymbol, QgsCategorizedSymbolRenderer, QgsRendererCategory,
-        QgsSimpleMarkerSymbolLayer, QgsRuleBasedRenderer
-    )
+    """Style every photo point as one simple, clean dot: white fill with a thin charcoal
+    ring. Monochrome and uniform — no per-geologist colours and no favourite symbology."""
+    from qgis.core import QgsSymbol, QgsSimpleMarkerSymbolLayer, QgsSingleSymbolRenderer
     from qgis.PyQt.QtGui import QColor
 
-    # Get unique geologists
-    unique_geologists = layer.uniqueValues(layer.fields().indexFromName('Geologist'))
+    charcoal = QColor('#333333')
 
-    # Define colors for different geologists (you can expand this list)
-    colors = [
-        QColor(255, 0, 0),  # Red
-        QColor(0, 255, 0),  # Green
-        QColor(0, 0, 255),  # Blue
-        QColor(255, 255, 0),  # Yellow
-        QColor(255, 0, 255),  # Magenta
-        QColor(0, 255, 255),  # Cyan
-        QColor(255, 165, 0),  # Orange
-        QColor(128, 0, 128),  # Purple
-        QColor(255, 192, 203),  # Pink
-        QColor(165, 42, 42),  # Brown
-    ]
+    symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+    marker = QgsSimpleMarkerSymbolLayer()
+    marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+    marker.setSize(4.5)
+    marker.setColor(QColor(255, 255, 255))   # white fill
+    marker.setStrokeColor(charcoal)          # thin charcoal ring
+    marker.setStrokeWidth(0.5)
+    symbol.changeSymbolLayer(0, marker)
 
-    # Create rule-based renderer
-    root_rule = QgsRuleBasedRenderer.Rule(None)
-
-    geologist_color_map = {}
-    for i, geologist in enumerate(unique_geologists):
-        dark_color = colors[i % len(colors)]
-        # Create lighter version for non-favourites (increase lightness by 60%)
-        light_color = QColor(dark_color)
-        light_color = light_color.lighter(160)  # 160% = 60% lighter
-        geologist_color_map[geologist] = {'dark': dark_color, 'light': light_color}
-
-        # Rule for favourite photos (case-insensitive 'true') - use star symbol (darker, larger)
-        favourite_filter = f'"Geologist" = \'{geologist}\' AND upper("Favourite") = \'TRUE\''
-        star_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-        star_symbol.setSize(4.0)  # Larger for favourites
-        star_symbol.setColor(dark_color)  # Darker color
-
-        # Change symbol to star
-        star_marker = QgsSimpleMarkerSymbolLayer()
-        star_marker.setShape(QgsSimpleMarkerSymbolLayer.Star)
-        star_marker.setSize(8.0)
-        star_marker.setColor(dark_color)
-        star_symbol.changeSymbolLayer(0, star_marker)
-
-        star_rule = QgsRuleBasedRenderer.Rule(star_symbol)
-        star_rule.setFilterExpression(favourite_filter)
-        star_rule.setLabel(f'{geologist} (Favourite)')
-        root_rule.appendChild(star_rule)
-
-        # Rule for regular photos - use circle symbol (lighter, smaller)
-        regular_filter = f'"Geologist" = \'{geologist}\' AND (upper("Favourite") != \'TRUE\' OR "Favourite" IS NULL)'
-        circle_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-        circle_symbol.setSize(2.5)  # Slightly smaller for regular
-        circle_symbol.setColor(light_color)  # Lighter color
-
-        # Ensure it's a circle (default marker)
-        circle_marker = QgsSimpleMarkerSymbolLayer()
-        circle_marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
-        circle_marker.setSize(2.5)
-        circle_marker.setColor(light_color)
-        circle_symbol.changeSymbolLayer(0, circle_marker)
-
-        circle_rule = QgsRuleBasedRenderer.Rule(circle_symbol)
-        circle_rule.setFilterExpression(regular_filter)
-        circle_rule.setLabel(f'{geologist} (Regular)')
-        root_rule.appendChild(circle_rule)
-
-    # Apply the rule-based renderer
-    renderer = QgsRuleBasedRenderer(root_rule)
-    layer.setRenderer(renderer)
+    layer.setRenderer(QgsSingleSymbolRenderer(symbol))
     layer.triggerRepaint()
 
     QgsMessageLog.logMessage(
-        f"Applied star symbols for favourites (case-insensitive 'true') and circle symbols for regular photos across {len(unique_geologists)} geologists.", 'Linear Geoscience', Qgis.Info)
+        "Applied clean monochrome point markers (white fill, charcoal ring).",
+        'Linear Geoscience', Qgis.Info)
 
 
 # Labeling
 def apply_labels(layer):
+    from qgis.core import QgsTextBufferSettings
+
     label_settings = QgsPalLayerSettings()
-    label_settings.fieldName = 'PhotoCount'
+    # Only label points that bundle more than one photo — a lone "1" on every
+    # single-photo point is just clutter.
+    label_settings.fieldName = 'if("PhotoCount" > 1, to_string("PhotoCount"), \'\')'
+    label_settings.isExpression = True
     label_settings.placement = QgsPalLayerSettings.Placement.OverPoint
     label_format = label_settings.format()
-    label_format.setSize(6)
-    label_format.setColor(QColor('white'))
+    label_format.setSize(7)
+    label_format.setColor(QColor('#333333'))   # charcoal, matches the ring
+    label_format.setForcedBold(True)
+
+    # Thin white halo so a 2-digit count that spills past the white dot stays crisp
+    # where it overlaps the imagery.
+    buffer = QgsTextBufferSettings()
+    buffer.setEnabled(True)
+    buffer.setSize(0.5)
+    buffer.setColor(QColor('white'))
+    label_format.setBuffer(buffer)
+
     label_settings.setFormat(label_format)
     labeling = QgsVectorLayerSimpleLabeling(label_settings)
     layer.setLabelsEnabled(True)
