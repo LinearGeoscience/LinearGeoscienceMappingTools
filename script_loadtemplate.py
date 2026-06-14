@@ -14,7 +14,7 @@ from qgis.gui import QgsProjectionSelectionWidget
 class TemplateLoaderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Setup Mapping Template")
+        self.setWindowTitle("New Mapping Template")
         self.resize(600, 450)
 
         # Set up the layout

@@ -56,12 +56,12 @@ Only update azimuth values for specific structures. Select those features in the
 
 # Setup Mapping Section
 INFO_SETUP_MAPPING = """
-<h1>Setup Mapping Geopackage</h1>
+<h1>Set Mapping Scale</h1>
 <p>Setup the Mapping Geopackage Layers ready for <b>QField</b>.</p>
 <ol>
 <li>Import your Mapping Geopackage from the <b>Project Folder</b>.</li>
 <li>Set the <b>Project CRS</b>.</li>
-<li>Run the <b>Setup Mapping Geopackage</b> button and select your desired mapping scale:</li>
+<li>Run the <b>Set Mapping Scale</b> button and select your desired mapping scale:</li>
 <ul>
 <li>Mapping layers are set to the same as the <b>Project CRS</b>.</li>
 <li>Sets the <b>Fixed Reference Scale</b> of each mapping layer.</li>

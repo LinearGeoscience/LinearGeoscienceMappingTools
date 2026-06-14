@@ -1727,7 +1727,7 @@ class StereonetPluginCore:
         
         # Define structure groups with their codes and descriptions
         structure_groups = [
-            ("Bedding & Layering", ["BO", "LAY", "S0", "S0T"], "#8B4513"),
+            ("Bedding && Layering", ["BO", "LAY", "S0", "S0T"], "#8B4513"),
             ("Foliations", ["S1", "S2", "S3", "S4", "S5"], "#708090"),
             ("Fractures", ["FB", "FCT", "FO", "FT", "FTD", "FTN", "FTR", "FTS", "FTT"], "#DC143C"),
             ("Fault Planes", ["FAP", "FAP1", "FAP2", "FAP3", "FAP4", "FAP5", "FAPK"], "#800080"),

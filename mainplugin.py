@@ -45,14 +45,19 @@ SETTINGS_PREFIX = "LinearGeoscience"
 SETTING_LAST_PAGE = f"{SETTINGS_PREFIX}/lastPage"
 SETTING_GEOMETRY = f"{SETTINGS_PREFIX}/dialogGeometry"
 
+
+def _esc_amp(text):
+    """Escape '&' as '&&' so Qt shows a literal ampersand in mnemonic-parsing widgets."""
+    return text.replace("&", "&&")
+
 # Page definitions: (nav_label, icon_file, tooltip, page_title)
 PAGE_DEFS = [
-    ("Setup Mapping", None, "Configure your mapping geopackage for QField", "Setup Mapping"),
+    ("Set Mapping Scale", None, "Configure your mapping geopackage for QField", "Set Mapping Scale"),
     ("Field Photos", None, "Georeference, view, and export field photos", "Field Photos"),
     ("Data Management", None, "Backup, update, reproject, and merge data", "Data Management"),
     ("Declination", None, "Calculate and adjust magnetic declination", "Declination"),
     ("Structural Domains", None, "Create and classify structural domains", "Structural Domains"),
-    ("Mapsheets && Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
+    ("Mapsheets & Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
     ("Modify Symbology", None, "Re-classify coding and apply symbology", "Symbology"),
 ]
 
@@ -61,7 +66,7 @@ class ActionButton(QPushButton):
     """Modern styled action button with consistent appearance."""
 
     def __init__(self, text, icon_name=None, parent=None, plugin_dir=None, primary=True):
-        super().__init__(text, parent)
+        super().__init__(_esc_amp(text), parent)
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._original_text = text
@@ -166,7 +171,7 @@ class FeatureGroup(QGroupBox):
     """Styled feature group containing action buttons and info buttons."""
 
     def __init__(self, title, plugin_dir, parent=None):
-        super().__init__(title, parent)
+        super().__init__(_esc_amp(title), parent)
         self.plugin_dir = plugin_dir
         self.scale = get_scale_manager()
 
@@ -552,7 +557,7 @@ class LinearGeosciencePluginMain:
         nav_group.setExclusive(True)
 
         for idx, (label, icon_file, tooltip, _title) in enumerate(PAGE_DEFS):
-            btn = QPushButton(label)
+            btn = QPushButton(_esc_amp(label))
             btn.setCheckable(True)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -599,7 +604,7 @@ class LinearGeosciencePluginMain:
         lay.addWidget(btn_reconcile)
 
         # Template button
-        btn_template = QPushButton("Setup Mapping Template")
+        btn_template = QPushButton("New Mapping Template")
         btn_template.setCursor(QCursor(Qt.PointingHandCursor))
         btn_template.setMinimumHeight(scale.dimension(34))
         btn_template.setToolTip("Load or configure the mapping geopackage template for your project")
@@ -626,7 +631,7 @@ class LinearGeosciencePluginMain:
         layout.setSpacing(scale.spacing(12))
 
         # Page header label
-        page_header = QLabel("Setup Mapping")
+        page_header = QLabel("Set Mapping Scale")
         page_header.setStyleSheet(theme.page_header_style())
         layout.addWidget(page_header)
 
@@ -664,8 +669,8 @@ class LinearGeosciencePluginMain:
 
     def _build_page_setup(self):
         page, lay = self._make_page()
-        grp = FeatureGroup("Setup Mapping Geopackage", self.plugin_dir, page)
-        grp.addFeature("Setup Mapping Geopackage", None,
+        grp = FeatureGroup("Set Mapping Scale", self.plugin_dir, page)
+        grp.addFeature("Set Mapping Scale", None,
                         feature_info.INFO_SETUP_MAPPING, self.run_setmapping)
         lay.addWidget(grp)
         lay.addStretch()
@@ -867,7 +872,7 @@ class LinearGeosciencePluginMain:
             )
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",
-                f"Could not open Setup Mapping Template: {e}"
+                f"Could not open New Mapping Template: {e}"
             )
 
     def run_declination_adjuster(self):

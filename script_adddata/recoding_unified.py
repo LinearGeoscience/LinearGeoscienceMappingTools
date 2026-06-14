@@ -122,7 +122,7 @@ class UnifiedRecodingDialog(QDialog):
 
         # Tab 1: Layer & Field Mapping
         mapping_tab = self._create_mapping_tab()
-        self.tab_widget.addTab(mapping_tab, "🔗 Layer & Field Mapping")
+        self.tab_widget.addTab(mapping_tab, "🔗 Layer && Field Mapping")
 
         # Tab 2: Value Recoding
         value_tab = self._create_value_recoding_tab()

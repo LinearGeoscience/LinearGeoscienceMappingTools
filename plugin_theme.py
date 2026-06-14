@@ -247,7 +247,7 @@ def group_box_style():
 
 
 def template_button_style():
-    """Orange outlined 'Setup Mapping Template' button (matches Quick Access style)."""
+    """Orange outlined 'New Mapping Template' button (matches Quick Access style)."""
     return _outlined_button_style(ACCENT, ACCENT_PRESSED, ACCENT_PRESSED, ACCENT_TINT)
 
 
