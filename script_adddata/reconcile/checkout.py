@@ -34,6 +34,16 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def atomic_write_json(path: str, data: dict):
+    """Write JSON via a temp file + os.replace so a crash mid-write can't leave
+    a truncated/corrupt artifact (the base snapshot and registry are critical).
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
 def metadata_folder(master_gpkg: str) -> str:
     """Return (creating if needed) the adddata_metadata folder for a master.
 
@@ -92,8 +102,7 @@ def save_base(master_gpkg: str, template_id: str,
         "layers": {name: snap.to_dict() for name, snap in layers.items()},
     }
     path = base_path(master_gpkg, template_id)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    atomic_write_json(path, data)
     return path
 
 
@@ -183,8 +192,7 @@ class CheckoutRegistry:
 
     def save(self):
         self.data["last_updated"] = _utc_now()
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(self.path, self.data)
 
     def register(self, template_id: str, template_path: str, mapper: str,
                  master_version: int = 0, base_filename: str = "",

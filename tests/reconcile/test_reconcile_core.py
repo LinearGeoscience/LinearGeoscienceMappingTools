@@ -205,6 +205,157 @@ def test_synthesize_base_legacy_first_sync():
           "synthesized base lets edits to known features apply as updates")
 
 
+def basefp(uuid, **attrs):
+    """A base fingerprint that carries field_hashes (post-upgrade base)."""
+    return payload(uuid, **attrs).fingerprint()
+
+
+def test_field_hash_decomposition():
+    from snapshot import field_hash, compute_field_hashes
+    # field_hash normalises like attr_hash.
+    check(field_hash(30) == field_hash("30"), "field_hash int/str normalised")
+    check(field_hash(None) == field_hash("") == field_hash("NULL"),
+          "field_hash None/blank/NULL normalised")
+    fh = compute_field_hashes({"UUID": "u", "geom": b"x", "Dip": 10,
+                               "lgs_version": "3", "data_added_batch_id": "b",
+                               "Rock": "granite"})
+    check(set(fh.keys()) == {"Dip", "Rock"},
+          "compute_field_hashes excludes UUID/geom/housekeeping")
+    # Fingerprints now carry field_hashes; equals still ignores them.
+    f = payload("a", Dip=10).fingerprint()
+    check(f.field_hashes is not None and "Dip" in f.field_hashes,
+          "fingerprint carries field_hashes")
+
+
+def test_auto_merge_disjoint():
+    """Working changed field A, master changed field B -> auto-merge, no conflict."""
+    base = {"x": basefp("x", A=1, B=1)}
+    working = {"x": payload("x", A=2, B=1)}       # working edited A
+    master = {"x": payload("x", A=1, B=2)}        # master edited B (payload!)
+    plan = rc.classify("L", "UUID", base, working, master)
+    check(not plan.conflicts, "disjoint edits -> no conflict")
+    check(len(plan.auto_merges) == 1, "disjoint edits -> one auto-merge")
+    merged = plan.auto_merges[0].payload.attrs
+    check(str(merged["A"]) == "2" and str(merged["B"]) == "2",
+          "auto-merge keeps working's A and master's B")
+    check(plan.has_applicable_changes(), "auto-merge is applicable")
+
+
+def test_hard_conflict_field_detail_and_resolutions():
+    """Same field edited differently on both sides -> conflict with field detail."""
+    base = {"x": basefp("x", A=1, B=1)}
+    working = {"x": payload("x", A=2, B=1)}       # working edited A only
+    master = {"x": payload("x", A=3, B=5)}        # master edited A and B
+    plan = rc.classify("L", "UUID", base, working, master)
+    check(len(plan.conflicts) == 1 and not plan.auto_merges,
+          "same-field clash -> conflict (not auto-merge)")
+    c = plan.conflicts[0]
+    check(c.hard_fields == ["A"], f"A is the hard field, got {c.hard_fields}")
+    check(c.master_fields == ["B"], f"B is master-only, got {c.master_fields}")
+    check(c.effective_resolution() == rc.RES_FIELD_MERGE,
+          "default resolution is field_merge when mergeable")
+
+    # field_merge: working wins the clash (A=2), master's independent edit kept (B=5)
+    op = rc.conflict_to_op(c)
+    check(op is not None and str(op.payload.attrs["A"]) == "2"
+          and str(op.payload.attrs["B"]) == "5", "field_merge: A=working, B=master")
+
+    # take_working: working values throughout (A=2, B=1)
+    c.resolution = rc.RES_TAKE_WORKING
+    op = rc.conflict_to_op(c)
+    check(op is not None and str(op.payload.attrs["A"]) == "2"
+          and str(op.payload.attrs["B"]) == "1", "take_working: all working values")
+
+    # take_master / skip: no write
+    c.resolution = rc.RES_TAKE_MASTER
+    check(rc.conflict_to_op(c) is None, "take_master -> no op")
+    c.resolution = rc.RES_SKIP
+    check(rc.conflict_to_op(c) is None, "skip -> no op")
+    check(not plan.has_applicable_changes(),
+          "a skipped conflict leaves nothing applicable")
+
+
+def test_fingerprint_only_master_falls_back():
+    """Master passed as fingerprints (no payload) -> whole-feature conflict."""
+    base = {"x": basefp("x", A=1)}
+    working = {"x": payload("x", A=2)}
+    master = {"x": fp("x", A=3)}                   # fingerprint, not payload
+    plan = rc.classify("L", "UUID", base, working, master)
+    check(len(plan.conflicts) == 1 and plan.conflicts[0].merge is None,
+          "fingerprint-only master -> whole-feature conflict (no field merge)")
+    check(plan.conflicts[0].effective_resolution() == rc.RES_SKIP,
+          "whole-feature conflict defaults to skip")
+
+
+def test_compute_next_base_partial():
+    """The advanced base reflects applied work, converges no-ops, but KEEPS the
+    old entry for a skipped conflict so it re-surfaces next sync."""
+    base = {"f1": basefp("f1", A=1), "f2": basefp("f2", A=1),
+            "fc": basefp("fc", A=1), "fm": basefp("fm", A=1)}
+    working = {
+        "f1": payload("f1", A=2),     # clean update (master unchanged)
+        # f2 deleted
+        "f3": payload("f3", A=9),     # clean insert
+        "fc": payload("fc", A=2),     # working edits A ...
+        "fm": payload("fm", A=1),     # working unchanged
+    }
+    master = {
+        "f1": payload("f1", A=1),     # unchanged
+        "f2": payload("f2", A=1),     # present, unchanged
+        "fc": payload("fc", A=3),     # ... master also edits A -> hard conflict
+        "fm": payload("fm", A=5),     # master-only change
+    }
+    plan = rc.classify("L", "UUID", base, working, master)
+    check([o.uuid for o in plan.clean_updates] == ["f1"], "cnb: clean update f1")
+    check([o.uuid for o in plan.clean_inserts] == ["f3"], "cnb: clean insert f3")
+    check([o.uuid for o in plan.clean_deletes] == ["f2"], "cnb: clean delete f2")
+    check([c.uuid for c in plan.conflicts] == ["fc"], "cnb: fc is the conflict")
+
+    working_fp = {u: p.fingerprint() for u, p in working.items()}
+    master_fp = {u: p.fingerprint() for u, p in master.items()}
+
+    # Leave the conflict unresolved (skip).
+    plan.conflicts[0].resolution = rc.RES_SKIP
+    nb = rc.compute_next_base(plan, base, working_fp, master_fp)
+    check(nb["f1"].equals(working["f1"].fingerprint()), "cnb: update -> working")
+    check(nb["f3"].equals(working["f3"].fingerprint()), "cnb: insert added")
+    check("f2" not in nb, "cnb: delete dropped from base")
+    check(nb["fc"].equals(base["fc"]), "cnb: skipped conflict KEEPS old base")
+    check(nb["fm"].equals(master["fm"].fingerprint()),
+          "cnb: master-only converges to master")
+
+    # Resolve the conflict as a field-merge -> base converges to the merged state.
+    plan.conflicts[0].resolution = rc.RES_FIELD_MERGE
+    nb2 = rc.compute_next_base(plan, base, working_fp, master_fp)
+    merged_fp = plan.conflicts[0].merge.merged_payload().fingerprint()
+    check(nb2["fc"].equals(merged_fp), "cnb: resolved conflict converges to merge")
+
+    # take_master must KEEP the old base (no write-back exists to make it
+    # permanent) so the conflict re-surfaces instead of silently re-applying
+    # the working edit next sync.
+    plan.conflicts[0].resolution = rc.RES_TAKE_MASTER
+    nb3 = rc.compute_next_base(plan, base, working_fp, master_fp)
+    check(nb3["fc"].equals(base["fc"]),
+          "cnb: take_master keeps OLD base (conflict re-surfaces, no silent re-apply)")
+
+
+def test_take_master_update_delete_no_resurrection():
+    """working edited a feature master deleted; take_master must NOT resurrect
+    it on the next sync (the old bug popped it from base -> re-inserted)."""
+    base = {"f1": basefp("f1", A=1)}
+    working = {"f1": payload("f1", A=2)}     # working edited it
+    master = {}                              # master deleted it (absent)
+    plan = rc.classify("L", "UUID", base, working, master)
+    check(len(plan.conflicts) == 1
+          and plan.conflicts[0].type == rc.CONFLICT_UPDATE_DELETE,
+          "update/delete conflict detected")
+    plan.conflicts[0].resolution = rc.RES_TAKE_MASTER     # keep the deletion
+    working_fp = {u: p.fingerprint() for u, p in working.items()}
+    nb = rc.compute_next_base(plan, base, working_fp, {})
+    check("f1" in nb and nb["f1"].equals(base["f1"]),
+          "take_master keeps f1 in base -> re-surfaces, does not resurrect")
+
+
 def main():
     tests = [
         test_hash_excludes_and_normalises,
@@ -215,6 +366,12 @@ def main():
         test_master_only_change_is_noop,
         test_reappend_without_loss,
         test_synthesize_base_legacy_first_sync,
+        test_field_hash_decomposition,
+        test_auto_merge_disjoint,
+        test_hard_conflict_field_detail_and_resolutions,
+        test_fingerprint_only_master_falls_back,
+        test_compute_next_base_partial,
+        test_take_master_update_delete_no_resurrection,
     ]
     for t in tests:
         print(f"- {t.__name__}")

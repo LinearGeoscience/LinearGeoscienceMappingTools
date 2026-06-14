@@ -24,16 +24,24 @@ from typing import Dict, List, Optional
 
 try:  # package context
     from . import checkout
-    from .snapshot import capture_layer, snapshot_from_payloads, FeatureFingerprint
-    from .reconcile import classify, ReconcilePlan
+    from .snapshot import (capture_layer, snapshot_from_payloads,
+                           LayerSnapshot, FeatureFingerprint)
+    from .reconcile import classify, compute_next_base, ReconcilePlan, RES_SKIP
     from .changelog import ReconcileChangelog
+    from .locking import ReconcileLock
+    from . import lineage
+    from . import tombstones as tombstones_mod
     from . import commit as commit_mod
     from .migrate import LGS_LAYERS
 except ImportError:  # standalone
     import checkout
-    from snapshot import capture_layer, snapshot_from_payloads, FeatureFingerprint
-    from reconcile import classify, ReconcilePlan
+    from snapshot import (capture_layer, snapshot_from_payloads,
+                          LayerSnapshot, FeatureFingerprint)
+    from reconcile import classify, compute_next_base, ReconcilePlan, RES_SKIP
     from changelog import ReconcileChangelog
+    from locking import ReconcileLock
+    import lineage
+    import tombstones as tombstones_mod
     import commit as commit_mod
     from migrate import LGS_LAYERS
 
@@ -98,11 +106,20 @@ def build_plans(master_gpkg: str, template_path: str,
     layer_names = layer_names or LGS_LAYERS
     template_id = checkout.template_id_from_path(template_path)
     out = {"template_id": template_id, "plans": [], "captures": {},
-           "reports": {}, "uuid_fields": {}, "missing_layers": [], "errors": []}
+           "master_captures": {}, "reports": {}, "uuid_fields": {},
+           "missing_layers": [], "errors": [], "master_version_at_build": None}
 
     if QgsVectorLayer is None:
         out["errors"].append("QGIS not available")
         return out
+
+    # Snapshot the master version at build time so apply can detect that someone
+    # else reconciled in between (optimistic concurrency check).
+    try:
+        out["master_version_at_build"] = ReconcileChangelog(
+            master_gpkg).current_version()
+    except Exception:
+        pass
 
     for i, name in enumerate(layer_names):
         if progress_cb:
@@ -123,91 +140,211 @@ def build_plans(master_gpkg: str, template_path: str,
 
         working_payloads, wreport = capture_layer(
             tpl_layer, uuid_field=uuid_field, transform=transform)
-        master_fp = _master_fingerprints(master_layer, master_uuid_field)
+        # Capture master PAYLOADS (not just fingerprints) so the field-level
+        # three-way merge and conflict resolution have master's actual values.
+        master_payloads, _ = capture_layer(
+            master_layer, uuid_field=master_uuid_field, transform=None)
         base_fp = checkout.load_base_layer(master_gpkg, template_id, name)
 
-        plan = classify(name, uuid_field, base_fp, working_payloads, master_fp)
+        plan = classify(name, uuid_field, base_fp,
+                        working_payloads, master_payloads)
+
+        # Split/merge proposals from the residual (children = working inserts;
+        # parents = master geometry of the just-deleted features). Polygons only.
+        try:
+            child_payloads = {op.uuid: op.payload
+                              for op in plan.clean_inserts if op.payload}
+            parent_payloads = {op.uuid: master_payloads[op.uuid]
+                               for op in plan.clean_deletes
+                               if op.uuid in master_payloads}
+            splits, merges = lineage.detect_lineage(
+                name, child_payloads, parent_payloads)
+            plan.splits = splits
+            plan.merges = merges
+        except Exception as exc:  # pragma: no cover - never block a preview
+            out["errors"].append(f"lineage {name}: {exc}")
+
         out["plans"].append(plan)
         out["captures"][name] = working_payloads
+        out["master_captures"][name] = master_payloads
         out["reports"][name] = wreport
         out["uuid_fields"][name] = uuid_field
 
     return out
 
 
+def _fp_map(payloads) -> Dict[str, FeatureFingerprint]:
+    return {u: p.fingerprint() for u, p in (payloads or {}).items()}
+
+
 def apply_plans(master_gpkg: str, template_path: str, build: dict,
                 mapper: str = "", batch_id: Optional[str] = None,
-                progress_cb=None) -> dict:
-    """Commit the clean ops of each plan, then advance base + log.
+                resolutions: Optional[dict] = None,
+                force_lock: bool = False, progress_cb=None) -> dict:
+    """Commit each plan's applicable ops (clean + auto-merge + resolved
+    conflicts), then advance the base per-feature and log it.
 
-    `build` is the dict returned by build_plans (possibly with conflicts left
-    unresolved — those are simply not applied in the MVP).
+    Concurrency-safe: aborts if the master changed since the preview was built
+    (optimistic version check) or another reconcile holds the advisory lock
+    (override with force_lock). Base advance is per-layer: a layer whose commit
+    errors keeps its old base for retry; unresolved conflicts keep their old
+    base entry so they re-surface next sync.
+
+    `resolutions` (optional) maps "<layer>\\x1f<uuid>" -> resolution string and
+    is applied onto the plans' ConflictRecords before committing; if omitted the
+    plans already carry whatever the UI set.
     """
     template_id = build["template_id"]
     plans: List[ReconcilePlan] = build["plans"]
-    captures = build["captures"]
+    captures = build.get("captures", {})
+    master_captures = build.get("master_captures", {})
     uuid_fields = build.get("uuid_fields", {})
     batch_id = batch_id or new_batch_id()
-    result = {"ok": False, "batch_id": batch_id, "layers": {},
+    result = {"ok": False, "aborted": False, "batch_id": batch_id, "layers": {},
               "totals": {"inserted": 0, "updated": 0, "deleted": 0},
-              "errors": []}
+              "unresolved_conflicts": 0, "errors": []}
 
     if QgsVectorLayer is None:
         result["errors"].append("QGIS not available")
         return result
 
-    applied_layers = []
-    for i, plan in enumerate(plans):
-        if progress_cb:
-            progress_cb(int(i / max(len(plans), 1) * 80), f"Applying {plan.layer}")
-        if not plan.has_applicable_changes():
-            result["layers"][plan.layer] = {"ok": True, "inserted": 0,
-                                            "updated": 0, "deleted": 0,
-                                            "errors": []}
-            applied_layers.append(plan.layer)
-            continue
-        master_layer = _open(master_gpkg, plan.layer)
-        if master_layer is None:
-            result["errors"].append(f"master layer missing: {plan.layer}")
-            continue
-        res = commit_mod.apply_plan(
-            master_layer, plan, mapper=mapper, batch_id=batch_id,
-            uuid_field=uuid_fields.get(plan.layer, "UUID"))
-        result["layers"][plan.layer] = res
-        for k in ("inserted", "updated", "deleted"):
-            result["totals"][k] += res.get(k, 0)
-        if res.get("ok"):
-            applied_layers.append(plan.layer)
-        else:
-            result["errors"].extend(res.get("errors", []))
+    if resolutions:
+        _apply_resolutions(plans, resolutions)
 
-    all_ok = not result["errors"]
+    log = ReconcileChangelog(master_gpkg)
 
-    # Advance the base ONLY on a fully clean apply, so a partial failure can be
-    # retried against the unchanged base.
-    if all_ok:
+    # --- optimistic concurrency: did the master move since we built? ---
+    built_at = build.get("master_version_at_build")
+    if built_at is not None and log.current_version() != built_at:
+        result["aborted"] = True
+        result["errors"].append(
+            f"Master changed since the preview was built "
+            f"(version {built_at} -> {log.current_version()}). "
+            f"Rebuild the preview before applying.")
+        return result
+
+    lock = ReconcileLock(master_gpkg, mapper=mapper)
+    acquired, holder = lock.acquire(force=force_lock)
+    if not acquired:
+        result["aborted"] = True
+        result["lock_holder"] = holder
+        who = (holder or {}).get("mapper") or "another user"
+        since = (holder or {}).get("acquired_utc") or "?"
+        result["errors"].append(
+            f"A reconcile is already in progress ({who}, since {since}). "
+            f"Wait and retry, or override the lock.")
+        return result
+
+    try:
+        old_full = checkout.load_base(master_gpkg, template_id)
+        old_layers = (old_full or {}).get("layers", {}) if old_full else {}
+        new_base_layers: Dict[str, LayerSnapshot] = {}
+        all_tombstones = []
+
+        for i, plan in enumerate(plans):
+            if progress_cb:
+                progress_cb(int(i / max(len(plans), 1) * 80),
+                            f"Applying {plan.layer}")
+            result["unresolved_conflicts"] += sum(
+                1 for c in plan.conflicts
+                if c.effective_resolution() == RES_SKIP)
+            uf = uuid_fields.get(plan.layer, "UUID")
+            # Stamp accepted split/merge groups (lgs_parent_uuid / lgs_merged_from
+            # + parent attr-carry) onto the insert ops before they are applied.
+            try:
+                lineage.stamp_accepted(
+                    plan, master_captures.get(plan.layer, {}))
+            except Exception as exc:  # pragma: no cover - defensive
+                result["errors"].append(f"lineage stamp {plan.layer}: {exc}")
+            inserts, updates, deletes = plan.applicable_ops()
+
+            if not (inserts or updates or deletes):
+                res = {"ok": True, "inserted": 0, "updated": 0,
+                       "deleted": 0, "errors": []}
+            else:
+                master_layer = _open(master_gpkg, plan.layer)
+                if master_layer is None:
+                    result["errors"].append(
+                        f"master layer missing: {plan.layer}")
+                    continue
+                res = commit_mod.apply_plan(
+                    master_layer, plan, mapper=mapper, batch_id=batch_id,
+                    uuid_field=uf)
+            result["layers"][plan.layer] = res
+            for k in ("inserted", "updated", "deleted"):
+                result["totals"][k] += res.get(k, 0)
+
+            if res.get("ok"):
+                all_tombstones.extend(res.get("tombstones", []))
+                nb = compute_next_base(
+                    plan, old_layers.get(plan.layer),
+                    _fp_map(captures.get(plan.layer)),
+                    _fp_map(master_captures.get(plan.layer)))
+                new_base_layers[plan.layer] = LayerSnapshot(
+                    layer_name=plan.layer, uuid_field=uf, features=nb)
+            else:
+                result["errors"].extend(res.get("errors", []))
+                # Keep the old base for this layer so a retry is clean.
+                if plan.layer in old_layers:
+                    new_base_layers[plan.layer] = LayerSnapshot(
+                        layer_name=plan.layer, uuid_field=uf,
+                        features=dict(old_layers[plan.layer]))
+
+        # Preserve base layers that weren't part of this run (e.g. the template
+        # lacked them) so update_base doesn't drop them.
+        for name, fps in old_layers.items():
+            if name not in new_base_layers:
+                new_base_layers[name] = LayerSnapshot(
+                    layer_name=name, uuid_field=uuid_fields.get(name, "UUID"),
+                    features=dict(fps))
+
+        # Persist tombstones for the features actually removed (audit/recover).
+        if all_tombstones:
+            try:
+                tombstones_mod.append_tombstones(master_gpkg, all_tombstones)
+            except Exception as exc:  # pragma: no cover - non-fatal
+                result["errors"].append(f"tombstones: {exc}")
+        result["tombstones_written"] = len(all_tombstones)
+
         if progress_cb:
             progress_cb(90, "Advancing base snapshot")
-        log = ReconcileChangelog(master_gpkg)
-        snapshots = {}
-        for name, payloads in captures.items():
-            snapshots[name] = snapshot_from_payloads(
-                name, uuid_fields.get(name, "UUID"), payloads)
         master_version = log.current_version() + 1
-        checkout.update_base(master_gpkg, template_id, snapshots,
-                             master_version=master_version, mapper=mapper)
+        try:
+            checkout.update_base(master_gpkg, template_id, new_base_layers,
+                                 master_version=master_version, mapper=mapper)
+        except Exception as exc:  # I/O failure: surface, don't crash the caller
+            result["errors"].append(f"base update failed: {exc}")
         try:
             checkout.CheckoutRegistry(master_gpkg).mark_reconciled(
                 template_id, master_version=master_version)
         except Exception:
             pass
-        log.log_reconcile(batch_id, template_id, mapper, plans,
-                          applied=result["totals"])
-        result["ok"] = True
+        notes = (f"partial: {len(result['errors'])} layer error(s)"
+                 if result["errors"] else "")
+        try:
+            log.log_reconcile(batch_id, template_id, mapper, plans,
+                              applied=result["totals"], notes=notes)
+        except Exception as exc:  # base already advanced; changelog is non-fatal
+            result["errors"].append(f"changelog write failed: {exc}")
+        result["ok"] = not result["errors"]
+    finally:
+        lock.release()
 
     if progress_cb:
         progress_cb(100, "Reconcile complete")
     return result
+
+
+def _apply_resolutions(plans, resolutions: dict):
+    """Stamp UI-chosen resolutions onto the plans' conflicts.
+
+    Keyed by "<layer>\\x1f<uuid>"; values are reconcile.RES_* strings.
+    """
+    for plan in plans:
+        for c in plan.conflicts:
+            key = f"{plan.layer}\x1f{c.uuid}"
+            if key in resolutions and resolutions[key]:
+                c.resolution = resolutions[key]
 
 
 def register_and_snapshot(master_gpkg: str, template_path: str,

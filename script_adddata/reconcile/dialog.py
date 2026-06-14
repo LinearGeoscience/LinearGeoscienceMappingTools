@@ -24,7 +24,7 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFileDialog, QGroupBox, QProgressBar, QTreeWidget, QTreeWidgetItem,
-    QMessageBox, QApplication, QWidget)
+    QMessageBox, QApplication, QWidget, QComboBox)
 
 from qgis.core import QgsMessageLog, Qgis
 
@@ -32,8 +32,20 @@ try:
     from . import engine
     from . import migrate
     from . import checkout
+    from . import reconcile as rc
 except ImportError:  # pragma: no cover
     from script_adddata.reconcile import engine, migrate, checkout
+    from script_adddata.reconcile import reconcile as rc
+
+
+# Resolution choices offered per conflict, in display order. The field-merge
+# option is only shown when a field-level merge is available for that conflict.
+_RES_LABELS = [
+    (rc.RES_FIELD_MERGE, "Field-merge (working wins clashes)"),
+    (rc.RES_TAKE_WORKING, "Take working"),
+    (rc.RES_TAKE_MASTER, "Take master"),
+    (rc.RES_SKIP, "Skip (leave for next time)"),
+]
 
 try:
     from ...plugin_theme import (action_button_style, group_box_style,
@@ -131,9 +143,15 @@ class ReconcileDialog(QDialog):
         pvl.addLayout(btn_row)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Layer / operation", "Count", "Detail"])
-        self.tree.setColumnWidth(0, 320)
+        self.tree.setHeaderLabels(["Layer / operation", "Count / resolution",
+                                   "Detail"])
+        self.tree.setColumnWidth(0, 300)
+        self.tree.setColumnWidth(1, 230)
         pvl.addWidget(self.tree)
+        # Maps "<layer>\x1f<uuid>" -> (ConflictRecord, QComboBox) for apply time.
+        self._conflict_widgets = {}
+        # [(SplitGroup|MergeGroup, QTreeWidgetItem)] for accept/reject checkboxes.
+        self._lineage_items = []
 
         self.summary = QLabel("No preview yet.")
         self.summary.setWordWrap(True)
@@ -281,9 +299,11 @@ class ReconcileDialog(QDialog):
 
     def _populate_tree(self, build):
         self.tree.clear()
+        self._conflict_widgets = {}
+        self._lineage_items = []
         plans = build.get("plans", [])
-        tot = {"inserts": 0, "updates": 0, "deletes": 0, "conflicts": 0,
-               "skipped": 0}
+        tot = {"inserts": 0, "updates": 0, "deletes": 0, "auto_merges": 0,
+               "conflicts": 0, "splits": 0, "merges": 0, "skipped": 0}
 
         for plan in plans:
             s = plan.summary()
@@ -297,25 +317,32 @@ class ReconcileDialog(QDialog):
             self._op_node(top, "Adds", [o.uuid for o in plan.clean_inserts])
             self._op_node(top, "Updates", [o.uuid for o in plan.clean_updates])
             self._op_node(top, "Deletes", [o.uuid for o in plan.clean_deletes])
-            self._conflict_node(top, plan.conflicts)
+            self._op_node(top, "Auto-merged (disjoint edits)",
+                          [o.uuid for o in plan.auto_merges])
+            self._conflict_node(top, plan)
+            self._lineage_node(top, "Splits (1 → many)", plan.splits, "split")
+            self._lineage_node(top, "Merges (many → 1)", plan.merges, "merge")
             self._op_node(top, "Skipped / no-op",
                           [u for u, _ in plan.skipped], collapsed=True)
             top.setExpanded(True)
 
+        # setItemWidget must run after items are in the tree.
+        self._attach_conflict_widgets()
+
         missing = build.get("missing_layers", [])
         parts = [f"{tot['inserts']} adds", f"{tot['updates']} updates",
-                 f"{tot['deletes']} deletes", f"{tot['conflicts']} conflicts"]
+                 f"{tot['deletes']} deletes",
+                 f"{tot['auto_merges']} auto-merged",
+                 f"{tot['conflicts']} conflicts"]
         msg = "Preview: " + ", ".join(parts) + "."
         if tot["conflicts"]:
-            msg += (" Conflicts are shown but NOT applied in this version — "
-                    "they are left for manual handling.")
+            msg += (" Choose a resolution per conflict (default shown); "
+                    "those left on 'Skip' re-surface next sync.")
         if missing:
             msg += (" Layers not in master (use Append to create first): "
                     + ", ".join(missing) + ".")
         self.summary.setText(msg)
-
-        has_clean = (tot["inserts"] + tot["updates"] + tot["deletes"]) > 0
-        self.apply_btn.setEnabled(has_clean)
+        self._refresh_apply_enabled()
 
     def _op_node(self, parent, label, uuids, collapsed=False):
         node = QTreeWidgetItem([label, str(len(uuids)), ""])
@@ -327,48 +354,151 @@ class ReconcileDialog(QDialog):
                 ["", "", f"… and {len(uuids) - _UUID_PREVIEW_LIMIT} more"]))
         node.setExpanded(not collapsed and 0 < len(uuids) <= 12)
 
-    def _conflict_node(self, parent, conflicts):
-        node = QTreeWidgetItem(["Conflicts (not applied)",
-                                str(len(conflicts)), ""])
+    def _conflict_node(self, parent, plan):
+        conflicts = plan.conflicts
+        node = QTreeWidgetItem(["Conflicts", str(len(conflicts)), ""])
         parent.addChild(node)
         for c in conflicts[:_UUID_PREVIEW_LIMIT]:
-            node.addChild(QTreeWidgetItem(["", c.type, f"{c.uuid} — {c.reason}"]))
+            item = QTreeWidgetItem([c.uuid, "", c.type])
+            node.addChild(item)
+            self._add_conflict_detail(item, c)
+            # Defer the combo until the item is attached to the tree.
+            key = f"{plan.layer}\x1f{c.uuid}"
+            c.resolution = c.default_resolution
+            self._conflict_widgets[key] = (c, item)
+        if len(conflicts) > _UUID_PREVIEW_LIMIT:
+            node.addChild(QTreeWidgetItem(
+                ["", "", f"… and {len(conflicts) - _UUID_PREVIEW_LIMIT} more "
+                 "(resolve the rest after applying these)"]))
         node.setExpanded(bool(conflicts))
+
+    def _add_conflict_detail(self, item, c):
+        """Field-level child rows: which field clashes and the rival values."""
+        for fname in c.hard_fields:
+            vals = c.field_values.get(fname, {})
+            item.addChild(QTreeWidgetItem(
+                [f"  ⚑ {fname}", "clash",
+                 f"working='{vals.get('working', '')}'  vs  "
+                 f"master='{vals.get('master', '')}'"]))
+        for fname in c.work_fields:
+            item.addChild(QTreeWidgetItem(
+                [f"  {fname}", "working-only edit", ""]))
+        for fname in c.master_fields:
+            item.addChild(QTreeWidgetItem(
+                [f"  {fname}", "master-only edit", ""]))
+        if c.geom_conflict:
+            item.addChild(QTreeWidgetItem(
+                ["  geometry", "clash", "edited on both sides"]))
+        if not (c.hard_fields or c.work_fields or c.master_fields):
+            item.addChild(QTreeWidgetItem(["", "", c.reason]))
+
+    def _attach_conflict_widgets(self):
+        for key, (c, item) in self._conflict_widgets.items():
+            combo = QComboBox()
+            for res, label in _RES_LABELS:
+                if res == rc.RES_FIELD_MERGE and c.merge is None:
+                    continue          # field-merge needs a field-level merge
+                combo.addItem(label, res)
+            idx = combo.findData(c.effective_resolution())
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(
+                lambda _i, cc=c, cb=combo: self._on_resolution_changed(cc, cb))
+            self.tree.setItemWidget(item, 1, combo)
+
+    def _on_resolution_changed(self, conflict, combo):
+        conflict.resolution = combo.currentData()
+        self._refresh_apply_enabled()
+
+    def _refresh_apply_enabled(self):
+        plans = (self.build or {}).get("plans", [])
+        applicable = any(p.has_applicable_changes() for p in plans)
+        self.apply_btn.setEnabled(applicable)
+
+    def _lineage_node(self, parent, label, groups, kind):
+        node = QTreeWidgetItem([label, str(len(groups)), ""])
+        parent.addChild(node)
+        for g in groups:
+            if kind == "split":
+                detail = (f"parent {g.parent_uuid} → {len(g.child_uuids)} "
+                          f"children ({int(g.cover_frac * 100)}% covered)")
+            else:
+                detail = (f"{len(g.parent_uuids)} parents → {g.survivor_uuid} "
+                          f"({int(g.cover_frac * 100)}% covered)")
+            item = QTreeWidgetItem(["accept", "", detail])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.Checked)   # default-accept (passed threshold)
+            node.addChild(item)
+            self._lineage_items.append((g, item))
+        node.setExpanded(bool(groups))
+
+    def _sync_lineage_acceptance(self):
+        for g, item in self._lineage_items:
+            g.accepted = (item.checkState(0) == Qt.Checked)
 
     def _apply(self):
         if not self.build:
             return
         plans = self.build.get("plans", [])
-        n_conflicts = sum(len(p.conflicts) for p in plans)
-        mapper = self.mapper_edit.text().strip()
+        unresolved = sum(1 for p in plans for c in p.conflicts
+                         if c.effective_resolution() == rc.RES_SKIP)
+        resolved = sum(1 for p in plans for c in p.conflicts
+                       if c.effective_resolution() != rc.RES_SKIP)
+        auto = sum(len(p.auto_merges) for p in plans)
+        self._sync_lineage_acceptance()
+        splits = sum(1 for g, _ in self._lineage_items
+                     if getattr(g, "accepted", True) and hasattr(g, "child_uuids"))
+        merges = sum(1 for g, _ in self._lineage_items
+                     if getattr(g, "accepted", True) and hasattr(g, "parent_uuids"))
 
-        confirm = (f"Apply clean changes to the master?\n\n"
-                   f"Conflicts left for manual handling: {n_conflicts}")
+        confirm = ("Apply to the master?\n\n"
+                   f"Auto-merged disjoint edits: {auto}\n"
+                   f"Conflicts resolved (will apply): {resolved}\n"
+                   f"Conflicts skipped (re-surface next sync): {unresolved}\n"
+                   f"Splits accepted: {splits}   Merges accepted: {merges}")
         if QMessageBox.question(self, "Apply reconcile", confirm,
                                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
+        self._run_apply(force_lock=False)
 
+    def _run_apply(self, force_lock):
+        mapper = self.mapper_edit.text().strip()
         self.apply_btn.setEnabled(False)
+        self._sync_lineage_acceptance()
         try:
             result = engine.apply_plans(
                 self.master_gpkg, self.template_gpkg, self.build,
-                mapper=mapper, progress_cb=self._on_progress)
+                mapper=mapper, force_lock=force_lock,
+                progress_cb=self._on_progress)
             t = result["totals"]
+
+            if result.get("aborted"):
+                self._handle_abort(result)
+                return
+
             if result.get("ok"):
                 self._reload_master_layers()
+                extra = ""
+                if result.get("unresolved_conflicts"):
+                    extra += (f"\n{result['unresolved_conflicts']} conflict(s) "
+                              "left unresolved — they will re-appear next sync.")
+                if result.get("tombstones_written"):
+                    extra += (f"\n{result['tombstones_written']} deleted "
+                              "feature(s) saved as recoverable tombstones.")
                 QMessageBox.information(
                     self, "Reconcile",
                     f"Applied {t['inserted']} adds, {t['updated']} updates, "
-                    f"{t['deleted']} deletes.\nBatch: {result['batch_id']}\n\n"
-                    "The base snapshot has been advanced — re-syncing this "
+                    f"{t['deleted']} deletes.\nBatch: {result['batch_id']}{extra}"
+                    "\n\nThe base snapshot has been advanced — re-syncing this "
                     "template will apply further edits, not lose them.")
                 self._reset_preview()
             else:
                 QMessageBox.warning(
                     self, "Reconcile",
-                    "Reconcile did not complete cleanly (no base advance):\n"
+                    "Reconcile completed with errors (failed layers kept their "
+                    "previous base for retry):\n"
                     + "\n".join(result.get("errors", []))
-                    + f"\n\nApplied so far: {t}")
+                    + f"\n\nApplied: {t}")
                 self.apply_btn.setEnabled(True)
         except Exception as exc:
             QgsMessageLog.logMessage(f"reconcile apply failed: {exc}",
@@ -378,6 +508,30 @@ class ReconcileDialog(QDialog):
         finally:
             self.progress.setValue(0)
             self.status.setText("Ready")
+
+    def _handle_abort(self, result):
+        """Version-guard / lock aborts: offer rebuild or override."""
+        if result.get("lock_holder") is not None:
+            holder = result["lock_holder"]
+            who = holder.get("mapper") or "another user"
+            since = holder.get("acquired_utc") or "?"
+            override = QMessageBox.question(
+                self, "Reconcile locked",
+                f"A reconcile is already in progress ({who}, since {since}).\n\n"
+                "Override the lock and apply anyway? Only do this if you are "
+                "sure no one else is mid-reconcile.",
+                QMessageBox.Yes | QMessageBox.No)
+            if override == QMessageBox.Yes:
+                self._run_apply(force_lock=True)
+            else:
+                self.apply_btn.setEnabled(True)
+            return
+        # Otherwise the master moved since the preview was built.
+        QMessageBox.warning(
+            self, "Reconcile out of date",
+            "\n".join(result.get("errors", []))
+            + "\n\nClick 'Build preview' again to refresh, then apply.")
+        self._reset_preview()
 
     def _reload_master_layers(self):
         """Refresh any loaded master layers so the map reflects the merge."""

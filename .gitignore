@@ -173,3 +173,6 @@ docs/_templates/
 *.zip
 *.tar.gz
 *.tar.bz2
+
+# Personal working notes (not committed)
+RECONCILE_GUIDE.md

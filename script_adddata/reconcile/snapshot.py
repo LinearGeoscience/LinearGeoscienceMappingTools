@@ -81,6 +81,28 @@ def attr_hash(attrs: Dict[str, object], uuid_field: str = "UUID",
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
 
+def field_hash(value) -> str:
+    """sha1 of one normalised attribute value.
+
+    A per-field decomposition of attr_hash: hashing every non-excluded field
+    independently lets the three-way merge tell *which* fields each side
+    changed (so disjoint edits auto-merge and only genuine same-field clashes
+    are conflicts). Uses the same norm_value as attr_hash so the per-field and
+    aggregate hashes stay consistent.
+    """
+    return hashlib.sha1(norm_value(value).encode("utf-8")).hexdigest()
+
+
+def compute_field_hashes(attrs: Dict[str, object], uuid_field: str = "UUID",
+                         geom_field: str = "geom") -> Dict[str, str]:
+    """{field_name: field_hash} over the same content fields as attr_hash."""
+    return {
+        name: field_hash(value)
+        for name, value in attrs.items()
+        if not _is_excluded(name, uuid_field, geom_field)
+    }
+
+
 def geom_hash(wkb: Optional[bytes]) -> Optional[str]:
     """sha1 of geometry WKB, or None for no/empty geometry."""
     if not wkb:
@@ -92,10 +114,19 @@ def geom_hash(wkb: Optional[bytes]) -> Optional[str]:
 
 @dataclass
 class FeatureFingerprint:
-    """Content fingerprint of one feature (no payload)."""
+    """Content fingerprint of one feature (no payload).
+
+    `field_hashes` is an OPTIONAL per-field decomposition of attr_hash, written
+    into the base snapshot so a later sync can tell which fields each side
+    edited. Old base JSON has no field_hashes (None) — the field-level merge
+    falls back to whole-feature conflict in that case, so it is fully
+    back-compatible. `equals()` ignores field_hashes (they are a strict
+    decomposition of attr_hash; if attr_hash matches, the fields match).
+    """
     attr_hash: str
     geom_hash: Optional[str] = None
     wkb_type: Optional[str] = None
+    field_hashes: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> dict:
         d = {"hash": self.attr_hash}
@@ -103,6 +134,8 @@ class FeatureFingerprint:
             d["geom_hash"] = self.geom_hash
         if self.wkb_type is not None:
             d["wkb_type"] = self.wkb_type
+        if self.field_hashes is not None:
+            d["field_hashes"] = self.field_hashes
         return d
 
     @classmethod
@@ -111,6 +144,7 @@ class FeatureFingerprint:
             attr_hash=d.get("hash", ""),
             geom_hash=d.get("geom_hash"),
             wkb_type=d.get("wkb_type"),
+            field_hashes=d.get("field_hashes"),
         )
 
     def equals(self, other: "FeatureFingerprint") -> bool:
@@ -139,6 +173,8 @@ class FeaturePayload:
             attr_hash=attr_hash(self.attrs, self.uuid_field, self.geom_field),
             geom_hash=geom_hash(self.wkb),
             wkb_type=self.wkb_type,
+            field_hashes=compute_field_hashes(
+                self.attrs, self.uuid_field, self.geom_field),
         )
 
 
@@ -150,6 +186,7 @@ def fingerprint_attrs(attrs: Dict[str, object], wkb: Optional[bytes] = None,
         attr_hash=attr_hash(attrs, uuid_field, geom_field),
         geom_hash=geom_hash(wkb),
         wkb_type=wkb_type,
+        field_hashes=compute_field_hashes(attrs, uuid_field, geom_field),
     )
 
 

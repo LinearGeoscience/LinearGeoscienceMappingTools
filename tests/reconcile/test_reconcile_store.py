@@ -18,6 +18,8 @@ sys.path.insert(0, RECONCILE_DIR)
 import snapshot          # noqa: E402
 import checkout          # noqa: E402
 import changelog         # noqa: E402
+import locking           # noqa: E402
+import tombstones        # noqa: E402
 import reconcile as rc   # noqa: E402
 from snapshot import FeaturePayload, snapshot_from_payloads  # noqa: E402
 
@@ -53,6 +55,31 @@ def test_base_roundtrip(master):
     check(fps["a"].equals(payloads["a"].fingerprint()),
           "base fingerprint matches original payload")
     check(loaded["mapper"] == "HW", "mapper persisted")
+    # Per-field hashes survive the JSON round-trip (needed for field merge).
+    check(fps["a"].field_hashes is not None and "Dip" in fps["a"].field_hashes,
+          "field_hashes persisted in base snapshot")
+
+
+def test_locking(master):
+    lk = locking.ReconcileLock(master, mapper="HW", stale_seconds=10)
+    ok, holder = lk.acquire()
+    check(ok and holder is None, "first acquire succeeds")
+    check(lk.read()["mapper"] == "HW", "lock records mapper")
+
+    lk2 = locking.ReconcileLock(master, mapper="JS", stale_seconds=10)
+    ok2, holder2 = lk2.acquire()
+    check(not ok2 and holder2 and holder2["mapper"] == "HW",
+          "second acquire blocked by a live lock")
+    ok3, _ = lk2.acquire(force=True)
+    check(ok3, "force overrides the lock")
+    lk2.release()
+    check(lk.read() is None, "release removes the lock")
+
+    # A lock that is already stale (stale_seconds=0) can be taken over.
+    locking.ReconcileLock(master, mapper="HW", stale_seconds=0).acquire()
+    ok4, _ = locking.ReconcileLock(master, mapper="JS", stale_seconds=0).acquire()
+    check(ok4, "stale lock is overridable")
+    locking.ReconcileLock(master).release()
 
     # Missing base -> None (legacy first sync signal).
     check(checkout.load_base(master, "NoSuchTemplate") is None,
@@ -102,10 +129,33 @@ def test_changelog(master):
           "reconcile entry records inserted uuids")
 
 
+def test_tombstones(master):
+    recs = [
+        {"uuid": "d1", "layer": "L", "attrs": {"Rock": "granite"},
+         "wkb_hex": None, "deleted_utc": "2026-01-01T00:00:00+00:00"},
+        {"uuid": "d2", "layer": "L", "attrs": {},
+         "wkb_hex": None, "deleted_utc": "2026-06-14T00:00:00+00:00"},
+    ]
+    n = tombstones.append_tombstones(master, recs)
+    check(n == 2, "two tombstones appended")
+    check(tombstones.count_tombstones(master) == 2, "count is 2")
+    loaded = tombstones.load_tombstones(master)
+    check(loaded[0]["uuid"] == "d1", "tombstone attrs/uuid persisted")
+
+    # Purge anything deleted before March 2026 -> drops d1, keeps d2.
+    removed = tombstones.purge_tombstones(
+        master, before_utc="2026-03-01T00:00:00+00:00")
+    check(removed == 1, "purge removed the old tombstone")
+    check(tombstones.count_tombstones(master) == 1, "one tombstone remains")
+    check(tombstones.load_tombstones(master)[0]["uuid"] == "d2",
+          "the recent tombstone survives the purge")
+
+
 def main():
     with tempfile.TemporaryDirectory() as d:
         master = os.path.join(d, "LGS_Master_28350.gpkg")
-        for t in (test_base_roundtrip, test_registry, test_changelog):
+        for t in (test_base_roundtrip, test_registry, test_changelog,
+                  test_locking, test_tombstones):
             print(f"- {t.__name__}")
             t(master)
     print(f"\n{_passed} checks passed, {_failed} failed")

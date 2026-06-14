@@ -25,8 +25,10 @@ from typing import Dict, Optional
 
 try:  # package context
     from .reconcile import ReconcilePlan, Op, OP_INSERT, OP_UPDATE, OP_DELETE
+    from .snapshot import is_empty
 except ImportError:  # standalone
     from reconcile import ReconcilePlan, Op, OP_INSERT, OP_UPDATE, OP_DELETE
+    from snapshot import is_empty
 
 try:  # pragma: no cover - only inside QGIS
     from qgis.core import QgsFeature, QgsGeometry
@@ -85,13 +87,16 @@ def apply_plan(master_layer, plan: ReconcilePlan, mapper: str = "",
     Returns {ok, inserted, updated, deleted, errors:[...]}.
     """
     result = {"ok": False, "inserted": 0, "updated": 0, "deleted": 0,
-              "errors": [], "layer": plan.layer}
+              "errors": [], "tombstones": [], "layer": plan.layer}
 
     if QgsFeature is None:
         result["errors"].append("QGIS not available")
         return result
 
-    if not plan.has_applicable_changes():
+    # applicable_ops folds clean ops + auto-merges + resolved conflicts into a
+    # single insert/update/delete set, after the chosen resolutions.
+    inserts, updates, deletes = plan.applicable_ops()
+    if not (inserts or updates or deletes):
         result["ok"] = True
         return result
 
@@ -108,7 +113,7 @@ def apply_plan(master_layer, plan: ReconcilePlan, mapper: str = "",
         has_added_batch = _has_field(master_layer, "data_added_batch_id")
 
         # ---- inserts ----
-        for op in plan.clean_inserts:
+        for op in inserts:
             feat = QgsFeature(fields)
             _apply_payload_attrs(master_layer, feat, op, uuid_field)
             _set_if_present(master_layer, feat, uuid_field, op.uuid)
@@ -118,6 +123,12 @@ def apply_plan(master_layer, plan: ReconcilePlan, mapper: str = "",
             _set_if_present(master_layer, feat, LGS_EDITOR, mapper)
             _set_if_present(master_layer, feat, LGS_FEATURE_HASH,
                             op.payload.fingerprint().attr_hash if op.payload else "")
+            if op.lgs_parent_uuid:
+                _set_if_present(master_layer, feat, LGS_PARENT_UUID,
+                                op.lgs_parent_uuid)
+            if op.lgs_merged_from:
+                _set_if_present(master_layer, feat, LGS_MERGED_FROM,
+                                op.lgs_merged_from)
             if has_added_ts:
                 _set_if_present(master_layer, feat, "data_added_timestamp", ts)
             if has_added_batch:
@@ -131,22 +142,29 @@ def apply_plan(master_layer, plan: ReconcilePlan, mapper: str = "",
             else:
                 result["errors"].append(f"insert failed for {op.uuid}")
 
-        # ---- updates ----
-        for op in plan.clean_updates:
+        # ---- updates (clean updates + auto-merges + resolved conflicts) ----
+        for op in updates:
             fid = uuid_to_fid.get(op.uuid)
             if fid is None:
                 result["errors"].append(f"update target {op.uuid} not found")
                 continue
-            _apply_update(master_layer, fid, op, mapper, ts, uuid_field)
-            result["updated"] += 1
+            err = _apply_update(master_layer, fid, op, mapper, ts, uuid_field)
+            if err:
+                result["errors"].append(err)
+            else:
+                result["updated"] += 1
 
-        # ---- deletes ----
-        for op in plan.clean_deletes:
+        # ---- deletes (record a tombstone before removing) ----
+        for op in deletes:
             fid = uuid_to_fid.get(op.uuid)
             if fid is None:
                 continue
+            rec = _tombstone_record(master_layer, fid, op.uuid, plan.layer,
+                                    batch_id, mapper, ts)
             if master_layer.deleteFeature(fid):
                 result["deleted"] += 1
+                if rec is not None:
+                    result["tombstones"].append(rec)
             else:
                 result["errors"].append(f"delete failed for {op.uuid}")
 
@@ -158,10 +176,12 @@ def apply_plan(master_layer, plan: ReconcilePlan, mapper: str = "",
 
         result["errors"].extend(str(e) for e in master_layer.commitErrors())
         master_layer.rollBack()
+        result["tombstones"] = []   # rolled back -> nothing was actually deleted
         return result
 
     except Exception as exc:  # pragma: no cover - defensive
         master_layer.rollBack()
+        result["tombstones"] = []
         result["errors"].append(str(exc))
         return result
 
@@ -180,7 +200,11 @@ def _apply_payload_attrs(master_layer, feat, op: Op, uuid_field: str):
 
 def _apply_update(master_layer, fid, op: Op, mapper: str, ts: str,
                   uuid_field: str):
-    """Apply one update by fid: changed attrs + geometry + provenance bump."""
+    """Apply one update by fid: changed attrs + geometry + provenance bump.
+
+    Returns None on success, or an error string if a buffered change was
+    rejected (so the caller does not over-count and the layer rolls back).
+    """
     fields = master_layer.fields()
     payload = op.payload
 
@@ -214,11 +238,54 @@ def _apply_update(master_layer, fid, op: Op, mapper: str, ts: str,
     put(LGS_LAST_MODIFIED, ts)
     put(LGS_EDITOR, mapper)
     put(LGS_FEATURE_HASH, payload.fingerprint().attr_hash if payload else "")
+    if op.lgs_parent_uuid:
+        put(LGS_PARENT_UUID, op.lgs_parent_uuid)
+    if op.lgs_merged_from:
+        put(LGS_MERGED_FROM, op.lgs_merged_from)
 
     if changes:
-        master_layer.changeAttributeValues(fid, changes)
+        if not master_layer.changeAttributeValues(fid, changes):
+            return f"attribute update rejected for {op.uuid}"
 
     if op.geom_changed and payload and payload.wkb:
         geom = QgsGeometry()
         geom.fromWkb(payload.wkb)
-        master_layer.changeGeometry(fid, geom)
+        if not master_layer.changeGeometry(fid, geom):
+            return f"geometry update rejected for {op.uuid}"
+    return None
+
+
+def _json_value(value):
+    """Coerce an attribute value to something JSON-serialisable for a tombstone."""
+    if is_empty(value):
+        return None
+    if isinstance(value, (int, float, bool, str)):
+        return value
+    return str(value)
+
+
+def _tombstone_record(layer, fid, uuid, layer_name, batch_id, mapper, ts):
+    """Snapshot a feature's attrs + geometry (WKB hex) just before deletion."""
+    try:
+        feat = layer.getFeature(fid)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    attrs = {}
+    fields = layer.fields()
+    vals = feat.attributes()
+    for i in range(len(fields)):
+        name = fields[i].name()
+        if name.lower() == "fid":
+            continue
+        attrs[name] = _json_value(vals[i] if i < len(vals) else None)
+    wkb_hex = None
+    try:
+        if feat.hasGeometry():
+            g = feat.geometry()
+            if g is not None and not g.isNull() and not g.isEmpty():
+                wkb_hex = bytes(g.asWkb()).hex()
+    except Exception:  # pragma: no cover
+        pass
+    return {"uuid": uuid, "layer": layer_name, "batch_id": batch_id,
+            "mapper": mapper, "deleted_utc": ts, "attrs": attrs,
+            "wkb_hex": wkb_hex}
