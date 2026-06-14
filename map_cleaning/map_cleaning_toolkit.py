@@ -297,6 +297,10 @@ class MapCleaningToolkit(object):
 
         # Remove dock widget
         if self.dockwidget:
+            try:
+                self.dockwidget.cleanup()
+            except (RuntimeError, TypeError):
+                pass
             self.iface.removeDockWidget(self.dockwidget)
             self.dockwidget.deleteLater()
             self.dockwidget = None

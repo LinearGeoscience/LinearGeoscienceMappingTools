@@ -3,8 +3,7 @@
 Dock Widget UI for Map Cleaning Toolkit - Clipping Panel
 Tabbed interface for clipping operations and spline settings
 """
-from qgis.core import QgsMapLayerProxyModel
-from qgis.gui import QgsMapLayerComboBox
+from qgis.core import QgsProject, QgsWkbTypes
 from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -20,6 +19,13 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from ...layer_select import (
+        layer_candidates, populate_layer_combo, combo_current_layer)
+except ImportError:
+    from layer_select import (
+        layer_candidates, populate_layer_combo, combo_current_layer)
 
 
 def detect_uuid_field(layer):
@@ -141,9 +147,16 @@ class ClipperDockWidget(QDockWidget):
         layer_layout.setSpacing(4)
         layer_layout.setContentsMargins(6, 6, 6, 6)
 
-        self.layer_combo = QgsMapLayerComboBox()
-        self.layer_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        self.layer_combo.layerChanged.connect(self.on_layer_changed)
+        self.layer_combo = QComboBox()
+        populate_layer_combo(
+            self.layer_combo,
+            layer_candidates(geometry=QgsWkbTypes.PolygonGeometry))
+        self.layer_combo.currentIndexChanged.connect(self._on_layer_combo_changed)
+
+        # A plain combo (unlike QgsMapLayerComboBox) does not auto-track the
+        # project, so refresh when layers are added/removed.
+        QgsProject.instance().layersAdded.connect(self.refresh_layers)
+        QgsProject.instance().layersRemoved.connect(self.refresh_layers)
 
         layer_layout.addWidget(self.layer_combo)
         layer_group.setLayout(layer_layout)
@@ -385,7 +398,7 @@ class ClipperDockWidget(QDockWidget):
         actions_layout = QVBoxLayout()
         actions_layout.setSpacing(6)
 
-        self.primary_button_isolated = QPushButton("Lock Cutters & Select Targets")
+        self.primary_button_isolated = QPushButton("Lock Cutters && Select Targets")
         self.primary_button_isolated.setEnabled(False)
         self.primary_button_isolated.setStyleSheet(
             "QPushButton { background-color: #2196F3; color: white; "
@@ -948,7 +961,7 @@ class ClipperDockWidget(QDockWidget):
     def reset_to_step_1(self):
         """Reset to step 1"""
         self.isolated_step = 1
-        self.primary_button_isolated.setText("Lock Cutters & Select Targets")
+        self.primary_button_isolated.setText("Lock Cutters && Select Targets")
         self.step_label_isolated.setText("Current Step: <b>1 of 2</b>")
 
     def update_selection_counts(self, cutter_count, target_count):
@@ -1041,7 +1054,36 @@ class ClipperDockWidget(QDockWidget):
 
     def get_current_layer(self):
         """Get currently selected layer"""
-        return self.layer_combo.currentLayer()
+        return combo_current_layer(self.layer_combo)
+
+    def _on_layer_combo_changed(self, _index):
+        """Resolve the selected layer and run the existing change handler."""
+        self.on_layer_changed(self.get_current_layer())
+
+    def refresh_layers(self):
+        """Rebuild the dropdown when project layers change.
+
+        Preserves the current selection where possible. Only re-runs the
+        change handler when the active layer actually changed (e.g. the
+        selected layer was removed), so unrelated project edits don't clear
+        in-progress selections via the toolkit's clear_all().
+        """
+        prev_id = self.layer_combo.currentData()
+        populate_layer_combo(
+            self.layer_combo,
+            layer_candidates(geometry=QgsWkbTypes.PolygonGeometry),
+            select_layer_id=prev_id)
+        if self.layer_combo.currentData() != prev_id:
+            self.on_layer_changed(self.get_current_layer())
+
+    def cleanup(self):
+        """Disconnect project signals before the dock is destroyed."""
+        for sig in (QgsProject.instance().layersAdded,
+                    QgsProject.instance().layersRemoved):
+            try:
+                sig.disconnect(self.refresh_layers)
+            except (RuntimeError, TypeError):
+                pass
 
     def get_mode(self):
         """Get current clipping mode"""
