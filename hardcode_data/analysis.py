@@ -40,6 +40,13 @@ DISTINCT_CAP = 1000
 SAMPLE_VALUES_MAX = 5
 PROGRESS_EVERY = 500
 
+# lgs_* provenance columns used by the reconcile (three-way merge) system.
+# Injected here so the existing field-create pass keeps them present on the
+# standard layers; reconcile fills/maintains the values. All TEXT so they
+# survive any QField round-trip. See script_adddata/reconcile/commit.py.
+LGS_FIELDS = ['lgs_version', 'lgs_last_modified', 'lgs_author', 'lgs_editor',
+              'lgs_feature_hash', 'lgs_parent_uuid', 'lgs_merged_from']
+
 # copy_operations tuples are (source_field, target_field, geometry_axis);
 # geometry_axis 'x'/'y' enables a from-geometry fallback when the source
 # attribute is empty, so every point still gets hardcoded coordinates
@@ -56,16 +63,19 @@ LAYER_CONFIGS = {
             'source_field': 'Subtype1',
             'lookup_table': 'FieldNotebookCodes',
         },
+        'inject_lgs_fields': True,
     },
     '2 - Overlay': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
+        'inject_lgs_fields': True,
     },
     '3 - Linework': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
+        'inject_lgs_fields': True,
     },
     '4 - Basemap': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
@@ -78,6 +88,7 @@ LAYER_CONFIGS = {
             'source_field': 'Lithology1',
             'lookup_table': 'BasemapCodes',
         },
+        'inject_lgs_fields': True,
     },
 }
 
@@ -265,6 +276,12 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
         if idx == -1 and name not in report.fields_to_create:
             report.fields_to_create.append(name)
         standard_ops.append((name, idx, standard_values.get(name, '')))
+
+    # Inject the lgs_* provenance columns (created empty; reconcile fills them).
+    if config.get('inject_lgs_fields'):
+        for name in LGS_FIELDS:
+            if fields.indexOf(name) == -1 and name not in report.fields_to_create:
+                report.fields_to_create.append(name)
 
     # Copy operations: need an existing source field, unless a geometry
     # axis provides a fallback value

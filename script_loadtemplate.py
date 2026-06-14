@@ -111,6 +111,37 @@ class TemplateLoaderDialog(QDialog):
         crs_group.setLayout(crs_layout)
         layout.addWidget(crs_group)
 
+        # Change tracking (optional) — register the template for reconcile
+        tracking_group = QGroupBox("Change Tracking (optional)")
+        tracking_layout = QVBoxLayout()
+        tracking_info = QLabel(
+            "Register this template for three-way reconcile. If you select the "
+            "master GeoPackage now, a base snapshot is recorded so the mapper's "
+            "edits can be merged back later without loss.")
+        tracking_info.setWordWrap(True)
+        tracking_layout.addWidget(tracking_info)
+
+        mapper_hbox = QHBoxLayout()
+        mapper_hbox.addWidget(QLabel("Mapper ID:"))
+        self.mapper_input = QLineEdit()
+        self.mapper_input.setPlaceholderText("e.g., HW (who will collect this data)")
+        mapper_hbox.addWidget(self.mapper_input)
+        tracking_layout.addLayout(mapper_hbox)
+
+        master_hbox = QHBoxLayout()
+        master_hbox.addWidget(QLabel("Master GeoPackage:"))
+        self.tracking_master_label = QLineEdit()
+        self.tracking_master_label.setReadOnly(True)
+        self.tracking_master_label.setPlaceholderText("(optional)")
+        self.tracking_master_button = QPushButton("Browse...")
+        self.tracking_master_button.clicked.connect(self.select_tracking_master)
+        master_hbox.addWidget(self.tracking_master_label)
+        master_hbox.addWidget(self.tracking_master_button)
+        tracking_layout.addLayout(master_hbox)
+
+        tracking_group.setLayout(tracking_layout)
+        layout.addWidget(tracking_group)
+
         # Progress bar
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout()
@@ -153,6 +184,7 @@ class TemplateLoaderDialog(QDialog):
         # Initialize variables
         self.output_location = None
         self.custom_template_path = None
+        self.tracking_master_path = None
 
         # Try to set default location to project path
         self.set_default_location()
@@ -181,6 +213,18 @@ class TemplateLoaderDialog(QDialog):
             self.custom_template_path = file_path
             self.custom_template_path_label.setText(file_path)
             self.check_enable_create()
+
+    def select_tracking_master(self):
+        """Browse for the master GeoPackage to register this template against."""
+        start_dir = ""
+        if self.tracking_master_path and os.path.exists(self.tracking_master_path):
+            start_dir = os.path.dirname(self.tracking_master_path)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Master GeoPackage", start_dir, "GeoPackage (*.gpkg)"
+        )
+        if file_path:
+            self.tracking_master_path = file_path
+            self.tracking_master_label.setText(file_path)
 
     def set_default_location(self):
         """Set default output location to project path"""
@@ -372,6 +416,29 @@ class TemplateLoaderDialog(QDialog):
             QApplication.processEvents()
             self.load_template_to_project(output_gpkg, group_name, vector_layers, nonspatial_tables)
 
+            # Register the template for reconcile change-tracking (optional,
+            # non-fatal — a failure here must not break template creation).
+            tracking_note = ""
+            mapper = self.mapper_input.text().strip()
+            if self.tracking_master_path and os.path.exists(self.tracking_master_path):
+                self.status_label.setText("Registering for change tracking...")
+                QApplication.processEvents()
+                try:
+                    from .script_adddata.reconcile import engine as _recon_engine
+                    res = _recon_engine.register_and_snapshot(
+                        self.tracking_master_path, output_gpkg, mapper)
+                    if res.get("errors"):
+                        tracking_note = ("\n\nChange tracking: registered with "
+                                         "warnings: " + "; ".join(res["errors"]))
+                    else:
+                        tracking_note = ("\n\nChange tracking: template registered "
+                                         f"for reconcile (mapper: {mapper or 'n/a'}).")
+                except Exception as track_exc:
+                    QgsMessageLog.logMessage(
+                        f"Reconcile registration failed: {track_exc}",
+                        'Linear Geoscience', Qgis.Warning)
+                    tracking_note = f"\n\nChange tracking could not be set up: {track_exc}"
+
             self.status_label.setText("Template created successfully!")
             self.progress_bar.setValue(100)
 
@@ -381,6 +448,7 @@ class TemplateLoaderDialog(QDialog):
                 f"Location: {self.output_location}\n"
                 f"Geopackage: {gpkg_filename}\n\n"
                 f"All layers have been loaded into your QGIS project."
+                f"{tracking_note}"
             )
 
         except Exception as e:

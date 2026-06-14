@@ -681,6 +681,9 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Append Mapping Data", None,
                         feature_info.INFO_APPEND_DATA, self.run_appenddata)
         grp.addSeparator()
+        grp.addFeature("Reconcile / Merge Field Data", None,
+                        feature_info.INFO_RECONCILE, self.run_reconcile)
+        grp.addSeparator()
         grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
         lay.addWidget(grp)
@@ -819,6 +822,10 @@ class LinearGeosciencePluginMain:
     def run_appenddata(self):
         from .script_adddata import run_gpkg_append_tool_dialog
         run_gpkg_append_tool_dialog(self.iface)
+
+    def run_reconcile(self):
+        from .script_adddata.reconcile.dialog import run_reconcile_tool_dialog
+        run_reconcile_tool_dialog(self.iface)
 
     def run_mapsheetgenerator(self):
         from .script_mapsheet_generator import run

@@ -168,6 +168,27 @@ INFO_HARDCODE_DATA = """
 <p><b>Important:</b> Run this procedure before modifying any mapping layers and before exporting to a master database.</p>
 """
 
+INFO_RECONCILE = """
+<h1>Reconcile / Merge Field Data</h1>
+<p>A three-way merge between a working QField template and the master GeoPackage. Where the <b>Append Mapping Data</b> tool only ever <i>adds</i> new features, Reconcile also propagates <b>edits</b> and <b>deletes</b>, and lets you re-sync an edited template <b>without losing the edits</b>. Everything is previewed before anything is written.</p>
+<h2>How it works:</h2>
+<ul>
+   <li><b>UUID identity:</b> features are matched by their <b>UUID</b> (never the per-file <b>fid</b>).</li>
+   <li><b>Base snapshot:</b> a per-template snapshot is stored as the common ancestor. Working changes and master changes are both compared against it, so the tool can tell a genuine edit from an unchanged feature.</li>
+   <li><b>Re-sync without loss:</b> after each accepted reconcile the base advances, so the next sync of the same template applies further edits as <b>updates</b> instead of silently skipping them.</li>
+   <li><b>Conflicts:</b> when a feature was changed in <i>both</i> the master and the template, it is shown as a conflict and <b>left for manual handling</b> (it is not overwritten).</li>
+</ul>
+<h2>One-off setup:</h2>
+<p>Click <b>Verify / migrate master</b> once per master GeoPackage. This adds the <code>lgs_*</code> tracking columns, backfills any missing UUIDs, verifies the UUID default expressions and records a baseline. It is safe to re-run.</p>
+<h2>Usage:</h2>
+<ol>
+   <li>Select the <b>master GeoPackage</b> and the <b>working template</b>, and enter the <b>Mapper ID</b> (who collected the data).</li>
+   <li>Click <b>Build preview</b> and review the adds / updates / deletes / conflicts per layer.</li>
+   <li>Click <b>Apply reconcile</b> to commit the clean changes. Each layer is written in a single transaction; on any error that layer rolls back.</li>
+</ol>
+<p><b>Tip:</b> run <b>Hardcode Data & Update Legends</b> before reconciling, as you would before appending.</p>
+"""
+
 INFO_DECLINATION_ADJUSTER = """
 <h1>Add/Subtract Declination</h1>
 <p>A powerful tool for adjusting magnetic declination values in azimuth fields with comprehensive filtering and preview capabilities.</p>
