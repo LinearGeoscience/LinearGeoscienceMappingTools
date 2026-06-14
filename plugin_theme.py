@@ -40,6 +40,14 @@ ACCENT = "#FF9E00"
 ACCENT_HOVER = "#FFA820"
 ACCENT_PRESSED = "#E68900"
 
+QFIELD = "#475569"
+QFIELD_HOVER = "#64748B"
+QFIELD_PRESSED = "#334155"
+
+RECONCILE = "#34A853"
+RECONCILE_HOVER = "#41B662"
+RECONCILE_PRESSED = "#2E9648"
+
 BG_PRIMARY = "#F8F9FA"
 BG_SIDEBAR = "#FFFFFF"
 BG_CARD = "#FFFFFF"
@@ -257,6 +265,68 @@ def template_button_style():
         }}
         QPushButton:pressed {{
             background-color: {ACCENT_PRESSED};
+        }}
+    """
+
+
+def qfield_button_style():
+    """Slate-blue 'Export for QField' button at sidebar bottom (above template)."""
+    s = _s()
+    pad_v = s.dimension(10)
+    pad_h = s.dimension(12)
+    br = radius_md()
+    margin = s.dimension(8)
+    fs = font_md()
+    return f"""
+        QPushButton {{
+            text-align: center;
+            background-color: {QFIELD};
+            border: 2px solid {QFIELD_PRESSED};
+            padding: {pad_v}px {pad_h}px;
+            border-radius: {br}px;
+            color: white;
+            font-weight: bold;
+            font-size: {fs}px;
+            font-family: {FONT_FAMILY};
+            margin: {margin}px;
+        }}
+        QPushButton:hover {{
+            background-color: {QFIELD_HOVER};
+            border: 2px solid {QFIELD};
+        }}
+        QPushButton:pressed {{
+            background-color: {QFIELD_PRESSED};
+        }}
+    """
+
+
+def reconcile_button_style():
+    """Brand-green 'Reconcile / Merge' button at sidebar bottom (below QField export)."""
+    s = _s()
+    pad_v = s.dimension(10)
+    pad_h = s.dimension(12)
+    br = radius_md()
+    margin = s.dimension(8)
+    fs = font_md()
+    return f"""
+        QPushButton {{
+            text-align: center;
+            background-color: {RECONCILE};
+            border: 2px solid {RECONCILE_PRESSED};
+            padding: {pad_v}px {pad_h}px;
+            border-radius: {br}px;
+            color: white;
+            font-weight: bold;
+            font-size: {fs}px;
+            font-family: {FONT_FAMILY};
+            margin: {margin}px;
+        }}
+        QPushButton:hover {{
+            background-color: {RECONCILE_HOVER};
+            border: 2px solid {RECONCILE};
+        }}
+        QPushButton:pressed {{
+            background-color: {RECONCILE_PRESSED};
         }}
     """
 

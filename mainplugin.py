@@ -580,6 +580,26 @@ class LinearGeosciencePluginMain:
         version_info.setStyleSheet(theme.version_label_style())
         lay.addWidget(version_info)
 
+        # QField export button (above template)
+        btn_qfield = QPushButton("Export for\nQField")
+        btn_qfield.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_qfield.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_qfield.setMinimumHeight(scale.dimension(50))
+        btn_qfield.setToolTip("Export selected layers and the current project for QField (offline)")
+        btn_qfield.setStyleSheet(theme.qfield_button_style())
+        btn_qfield.clicked.connect(self.run_qfield_export)
+        lay.addWidget(btn_qfield)
+
+        # Reconcile button (below QField export, above template)
+        btn_reconcile = QPushButton("Reconcile /\nMerge")
+        btn_reconcile.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_reconcile.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_reconcile.setMinimumHeight(scale.dimension(50))
+        btn_reconcile.setToolTip("Reconcile and re-sync the working geopackage back into the master GeoPackage")
+        btn_reconcile.setStyleSheet(theme.reconcile_button_style())
+        btn_reconcile.clicked.connect(self.run_reconcile)
+        lay.addWidget(btn_reconcile)
+
         # Template button
         btn_template = QPushButton("Setup Mapping\nTemplate")
         btn_template.setCursor(QCursor(Qt.PointingHandCursor))
@@ -680,9 +700,6 @@ class LinearGeosciencePluginMain:
         grp.addSeparator()
         grp.addFeature("Append Mapping Data", None,
                         feature_info.INFO_APPEND_DATA, self.run_appenddata)
-        grp.addSeparator()
-        grp.addFeature("Reconcile / Merge Field Data", None,
-                        feature_info.INFO_RECONCILE, self.run_reconcile)
         grp.addSeparator()
         grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
@@ -826,6 +843,11 @@ class LinearGeosciencePluginMain:
     def run_reconcile(self):
         from .script_adddata.reconcile.dialog import run_reconcile_tool_dialog
         run_reconcile_tool_dialog(self.iface)
+
+    def run_qfield_export(self):
+        from .qfield_export.gui.export_dialog import ExportDialog
+        dlg = ExportDialog(self.iface, self.iface.mainWindow())
+        dlg.exec_()
 
     def run_mapsheetgenerator(self):
         from .script_mapsheet_generator import run
