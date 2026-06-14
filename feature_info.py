@@ -188,6 +188,7 @@ INFO_RECONCILE = """
 <ol>
    <li>Select the <b>master GeoPackage</b> and the <b>working template</b>, and enter the <b>Mapper ID</b> (who collected the data).</li>
    <li>Click <b>Build preview</b> and review the adds / updates / deletes / auto-merged / conflicts / splits / merges per layer.</li>
+   <li><b>Click any feature</b> in the preview to zoom and flash it on the map — <b>amber = template version</b>, <b>grey = master version</b> — so you can see exactly which feature it is and what changed.</li>
    <li>Pick a resolution for any conflict and tick the splits / merges you want to accept.</li>
    <li>Click <b>Apply reconcile</b> to commit. Each layer is written in a single transaction; on any error that layer rolls back and keeps its previous base for a clean retry.</li>
 </ol>

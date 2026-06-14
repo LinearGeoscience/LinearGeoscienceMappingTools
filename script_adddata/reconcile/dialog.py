@@ -21,12 +21,19 @@ commit uses a QgsVectorLayer edit session, which must run on the main thread.
 import os
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFileDialog, QGroupBox, QProgressBar, QTreeWidget, QTreeWidgetItem,
     QMessageBox, QApplication, QWidget, QComboBox)
 
-from qgis.core import QgsMessageLog, Qgis
+from qgis.core import (QgsMessageLog, Qgis, QgsGeometry, QgsRectangle,
+                       QgsVectorLayer, QgsCoordinateReferenceSystem,
+                       QgsCoordinateTransform, QgsProject)
+
+# Flash colours: the template (working) version vs the master version.
+_FLASH_TEMPLATE = QColor(255, 170, 0)   # amber
+_FLASH_MASTER = QColor(110, 110, 110)   # grey
 
 try:
     from . import engine
@@ -148,6 +155,15 @@ class ReconcileDialog(QDialog):
         self.tree.setColumnWidth(0, 300)
         self.tree.setColumnWidth(1, 230)
         pvl.addWidget(self.tree)
+        # Click a feature row -> zoom + flash it on the map canvas.
+        self.tree.itemClicked.connect(self._on_tree_clicked)
+        self._crs_cache = {}
+        flash_hint = QLabel(
+            "Tip: click a feature to zoom and flash it on the map — "
+            "<b><span style='color:#ffaa00'>amber = template version</span></b>, "
+            "<b><span style='color:#6e6e6e'>grey = master version</span></b>.")
+        flash_hint.setWordWrap(True)
+        pvl.addWidget(flash_hint)
         # Maps "<layer>\x1f<uuid>" -> (ConflictRecord, QComboBox) for apply time.
         self._conflict_widgets = {}
         # [(SplitGroup|MergeGroup, QTreeWidgetItem)] for accept/reject checkboxes.
@@ -314,16 +330,20 @@ class ReconcileDialog(QDialog):
                 top.setText(2, "no recorded base — synthesized")
             self.tree.addTopLevelItem(top)
 
-            self._op_node(top, "Adds", [o.uuid for o in plan.clean_inserts])
-            self._op_node(top, "Updates", [o.uuid for o in plan.clean_updates])
-            self._op_node(top, "Deletes", [o.uuid for o in plan.clean_deletes])
+            self._op_node(top, "Adds", [o.uuid for o in plan.clean_inserts],
+                          layer=plan.layer)
+            self._op_node(top, "Updates", [o.uuid for o in plan.clean_updates],
+                          layer=plan.layer)
+            self._op_node(top, "Deletes", [o.uuid for o in plan.clean_deletes],
+                          layer=plan.layer)
             self._op_node(top, "Auto-merged (disjoint edits)",
-                          [o.uuid for o in plan.auto_merges])
+                          [o.uuid for o in plan.auto_merges], layer=plan.layer)
             self._conflict_node(top, plan)
             self._lineage_node(top, "Splits (1 → many)", plan.splits, "split")
             self._lineage_node(top, "Merges (many → 1)", plan.merges, "merge")
             self._op_node(top, "Skipped / no-op",
-                          [u for u, _ in plan.skipped], collapsed=True)
+                          [u for u, _ in plan.skipped], collapsed=True,
+                          layer=plan.layer)
             top.setExpanded(True)
 
         # setItemWidget must run after items are in the tree.
@@ -344,11 +364,14 @@ class ReconcileDialog(QDialog):
         self.summary.setText(msg)
         self._refresh_apply_enabled()
 
-    def _op_node(self, parent, label, uuids, collapsed=False):
+    def _op_node(self, parent, label, uuids, collapsed=False, layer=None):
         node = QTreeWidgetItem([label, str(len(uuids)), ""])
         parent.addChild(node)
         for u in uuids[:_UUID_PREVIEW_LIMIT]:
-            node.addChild(QTreeWidgetItem(["", "", u]))
+            leaf = QTreeWidgetItem(["", "", u])
+            if layer is not None:
+                leaf.setData(0, Qt.UserRole, ("feature", layer, u))
+            node.addChild(leaf)
         if len(uuids) > _UUID_PREVIEW_LIMIT:
             node.addChild(QTreeWidgetItem(
                 ["", "", f"… and {len(uuids) - _UUID_PREVIEW_LIMIT} more"]))
@@ -360,6 +383,7 @@ class ReconcileDialog(QDialog):
         parent.addChild(node)
         for c in conflicts[:_UUID_PREVIEW_LIMIT]:
             item = QTreeWidgetItem([c.uuid, "", c.type])
+            item.setData(0, Qt.UserRole, ("feature", plan.layer, c.uuid))
             node.addChild(item)
             self._add_conflict_detail(item, c)
             # Defer the combo until the item is attached to the tree.
@@ -428,6 +452,14 @@ class ReconcileDialog(QDialog):
             item = QTreeWidgetItem(["accept", "", detail])
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(0, Qt.Checked)   # default-accept (passed threshold)
+            if kind == "split":
+                item.setData(0, Qt.UserRole,
+                             ("split", g.layer, g.parent_uuid,
+                              list(g.child_uuids)))
+            else:
+                item.setData(0, Qt.UserRole,
+                             ("merge", g.layer, g.survivor_uuid,
+                              list(g.parent_uuids)))
             node.addChild(item)
             self._lineage_items.append((g, item))
         node.setExpanded(bool(groups))
@@ -435,6 +467,120 @@ class ReconcileDialog(QDialog):
     def _sync_lineage_acceptance(self):
         for g, item in self._lineage_items:
             g.accepted = (item.checkState(0) == Qt.Checked)
+
+    # --------------------------------------------------------------- map flash
+    def _on_tree_clicked(self, item, column):
+        """Zoom + flash the clicked feature(s): template (amber) vs master (grey)."""
+        data = item.data(0, Qt.UserRole)
+        if not data or not self.build or self.iface is None:
+            return
+        kind = data[0]
+        captures = self.build.get("captures") or {}
+        master_captures = self.build.get("master_captures") or {}
+        template_geoms, master_geoms, layer = [], [], None
+        try:
+            if kind == "feature":
+                _, layer, uuid = data
+                wg = self._geom(captures, layer, uuid)
+                mg = self._geom(master_captures, layer, uuid)
+                if wg:
+                    template_geoms.append(wg)
+                if mg:
+                    master_geoms.append(mg)
+            elif kind == "split":
+                _, layer, parent, children = data
+                pg = self._geom(master_captures, layer, parent)
+                if pg:
+                    master_geoms.append(pg)
+                template_geoms += [g for g in
+                                   (self._geom(captures, layer, c) for c in children)
+                                   if g]
+            elif kind == "merge":
+                _, layer, survivor, parents = data
+                sg = self._geom(captures, layer, survivor)
+                if sg:
+                    template_geoms.append(sg)
+                master_geoms += [g for g in
+                                 (self._geom(master_captures, layer, p) for p in parents)
+                                 if g]
+            else:
+                return
+        except Exception as exc:  # pragma: no cover - defensive UI path
+            QgsMessageLog.logMessage(f"reconcile flash lookup failed: {exc}",
+                                     "Linear Geoscience", Qgis.Warning)
+            return
+
+        if not (template_geoms or master_geoms):
+            self.status.setText("No geometry to show for this feature "
+                                "(non-spatial or empty).")
+            return
+        self._zoom_and_flash(layer, template_geoms, master_geoms)
+
+    def _geom(self, captures, layer, uuid):
+        """Build a QgsGeometry (master CRS) from a captured payload, or None."""
+        payload = (captures.get(layer) or {}).get(uuid)
+        wkb = getattr(payload, "wkb", None) if payload is not None else None
+        if not wkb:
+            return None
+        g = QgsGeometry()
+        g.fromWkb(wkb)
+        return g if (not g.isNull() and not g.isEmpty()) else None
+
+    def _layer_crs(self, layer):
+        """CRS of a master layer (cached). Captured geometries are in this CRS."""
+        if layer in self._crs_cache:
+            return self._crs_cache[layer]
+        crs = None
+        try:
+            lyr = QgsVectorLayer(f"{self.master_gpkg}|layername={layer}",
+                                 layer, "ogr")
+            if lyr.isValid():
+                crs = lyr.crs()
+        except Exception:
+            crs = None
+        self._crs_cache[layer] = crs
+        return crs
+
+    def _zoom_and_flash(self, layer, template_geoms, master_geoms):
+        canvas = self.iface.mapCanvas()
+        if canvas is None:
+            return
+        src_crs = self._layer_crs(layer) or QgsCoordinateReferenceSystem()
+        dst_crs = canvas.mapSettings().destinationCrs()
+
+        # Union extent (in source CRS), transformed to the canvas CRS, with margin.
+        rect = QgsRectangle()
+        rect.setMinimal()
+        for g in template_geoms + master_geoms:
+            rect.combineExtentWith(g.boundingBox())
+        try:
+            if src_crs.isValid() and dst_crs.isValid() and src_crs != dst_crs:
+                xform = QgsCoordinateTransform(src_crs, dst_crs,
+                                               QgsProject.instance())
+                rect = xform.transformBoundingBox(rect)
+        except Exception:
+            pass
+        if not rect.isEmpty():
+            rect.scale(1.6)            # breathing room around the feature
+            canvas.setExtent(rect)
+            canvas.refresh()
+
+        # Flash: template amber, master grey (flashGeometries transforms the CRS).
+        try:
+            clear = QColor(0, 0, 0, 0)
+            if template_geoms:
+                canvas.flashGeometries(template_geoms, src_crs,
+                                       _FLASH_TEMPLATE, clear, 3, 650)
+            if master_geoms:
+                canvas.flashGeometries(master_geoms, src_crs,
+                                       _FLASH_MASTER, clear, 3, 650)
+        except Exception as exc:  # pragma: no cover - some canvas states
+            QgsMessageLog.logMessage(f"reconcile flash failed: {exc}",
+                                     "Linear Geoscience", Qgis.Warning)
+        self.status.setText(
+            f"{layer}: flashed {len(template_geoms)} template + "
+            f"{len(master_geoms)} master geometr"
+            f"{'y' if len(template_geoms)+len(master_geoms) == 1 else 'ies'}.")
 
     def _apply(self):
         if not self.build:
