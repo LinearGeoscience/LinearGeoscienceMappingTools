@@ -77,6 +77,7 @@ class ReconcileDialog(QDialog):
         self.master_gpkg = None
         self.template_gpkg = None
         self.build = None
+        self._template_prepared = False
 
         self.setWindowTitle("Reconcile / Merge Field Data")
         self.resize(720, 640)
@@ -133,6 +134,40 @@ class ReconcileDialog(QDialog):
         self.setup_status.setWordWrap(True)
         sl.addWidget(self.setup_status, 1)
         layout.addWidget(setup)
+
+        # --- Prepare field data (hardcode the working template) ---
+        prep = QGroupBox("Prepare field data")
+        try:
+            prep.setStyleSheet(group_box_style())
+        except Exception:
+            pass
+        prl = QVBoxLayout(prep)
+
+        meta_row = QHBoxLayout()
+        meta_row.addWidget(QLabel("Project ID:"))
+        self.project_id_edit = QLineEdit()
+        self.project_id_edit.setPlaceholderText("e.g. P12345")
+        meta_row.addWidget(self.project_id_edit, 1)
+        meta_row.addWidget(QLabel("Mapped scale:"))
+        self.mapped_scale_edit = QLineEdit()
+        self.mapped_scale_edit.setPlaceholderText("e.g. 1:2500")
+        meta_row.addWidget(self.mapped_scale_edit, 1)
+        prl.addLayout(meta_row)
+
+        prep_row = QHBoxLayout()
+        self.hardcode_btn = QPushButton("Hardcode / prepare working template")
+        self.hardcode_btn.clicked.connect(self._run_hardcode)
+        self._style(self.hardcode_btn, primary=False)
+        prep_row.addWidget(self.hardcode_btn)
+        prep_row.addStretch()
+        prl.addLayout(prep_row)
+
+        self.prep_status = QLabel(
+            "Fills UUIDs, legends, coordinates and lgs_* columns in the "
+            "template (empty cells only). Run before building the preview.")
+        self.prep_status.setWordWrap(True)
+        prl.addWidget(self.prep_status)
+        layout.addWidget(prep)
 
         # --- Preview ---
         prev = QGroupBox("Preview")
@@ -219,6 +254,7 @@ class ReconcileDialog(QDialog):
             self.master_gpkg = path
             self.master_edit.setText(path)
             self._prefill_mapper()
+            self._prefill_metadata()
             self._reset_preview()
 
     def _pick_template(self):
@@ -227,7 +263,9 @@ class ReconcileDialog(QDialog):
         if path:
             self.template_gpkg = path
             self.template_edit.setText(path)
+            self._template_prepared = False
             self._prefill_mapper()
+            self._prefill_metadata()
             self._reset_preview()
 
     def _prefill_mapper(self):
@@ -243,6 +281,56 @@ class ReconcileDialog(QDialog):
                 self.mapper_edit.setText(entry["mapper"])
         except Exception:
             pass
+
+    def _prefill_metadata(self):
+        """Prefill Project ID / Mapped scale from the master's features."""
+        if not (self.master_gpkg and os.path.exists(self.master_gpkg)):
+            return
+        if (self.project_id_edit.text().strip()
+                and self.mapped_scale_edit.text().strip()):
+            return
+        try:
+            pid, scale = self._read_master_metadata()
+        except Exception:
+            return
+        if pid and not self.project_id_edit.text().strip():
+            self.project_id_edit.setText(pid)
+        if scale and not self.mapped_scale_edit.text().strip():
+            self.mapped_scale_edit.setText(scale)
+
+    def _read_master_metadata(self):
+        """First non-empty (ProjectID, MappedScale) across the master layers."""
+        from .migrate import LGS_LAYERS
+
+        def _clean(value):
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text if text and text != "NULL" else None
+
+        pid = scale = None
+        for name in LGS_LAYERS:
+            lyr = QgsVectorLayer(f"{self.master_gpkg}|layername={name}",
+                                 name, "ogr")
+            if not lyr.isValid():
+                continue
+            names = [f.name() for f in lyr.fields()]
+            has_pid = "ProjectID" in names
+            has_scale = "MappedScale" in names
+            if not (has_pid or has_scale):
+                continue
+            for i, feat in enumerate(lyr.getFeatures()):
+                if i > 2000:
+                    break
+                if pid is None and has_pid:
+                    pid = _clean(feat["ProjectID"])
+                if scale is None and has_scale:
+                    scale = _clean(feat["MappedScale"])
+                if pid and scale:
+                    break
+            if pid and scale:
+                break
+        return pid, scale
 
     def _reset_preview(self):
         self.build = None
@@ -295,8 +383,125 @@ class ReconcileDialog(QDialog):
             self.progress.setValue(0)
             self.status.setText("Ready")
 
+    def _run_hardcode(self):
+        """Hardcode the working template in place (empty-only) before preview."""
+        if not self._require_paths():
+            return
+        try:
+            from ...hardcode_data.runner import hardcode_geopackage
+        except Exception:  # pragma: no cover - standalone import fallback
+            from hardcode_data.runner import hardcode_geopackage
+
+        project_id = self.project_id_edit.text().strip()
+        mapped_scale = self.mapped_scale_edit.text().strip()
+        if not project_id or not mapped_scale:
+            if QMessageBox.question(
+                    self, "Prepare field data",
+                    "Project ID and/or Mapped scale are blank, so those "
+                    "standard fields won't be filled. UUIDs, legends and "
+                    "coordinates will still be prepared.\n\nContinue?",
+                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                return
+
+        self.hardcode_btn.setEnabled(False)
+        try:
+            report = hardcode_geopackage(
+                self.template_gpkg, project_id=project_id,
+                mapped_scale=mapped_scale,
+                lookup_sources=[self.template_gpkg, self.master_gpkg],
+                progress_cb=self._on_progress)
+        except Exception as exc:
+            QgsMessageLog.logMessage(f"reconcile hardcode failed: {exc}",
+                                     "Linear Geoscience", Qgis.Critical)
+            QMessageBox.critical(self, "Prepare field data",
+                                 f"Preparation failed:\n{exc}")
+            return
+        finally:
+            self.hardcode_btn.setEnabled(True)
+            self.progress.setValue(0)
+            self.status.setText("Ready")
+
+        self._template_prepared = True
+        self._show_hardcode_summary(report)
+        # The template changed on disk; any prior preview is now stale.
+        self._reset_preview()
+
+    def _show_hardcode_summary(self, report):
+        layers = report.get("layers", {})
+        totals = report.get("totals", {})
+        lines = []
+        for name, info in layers.items():
+            if not info.get("present"):
+                continue
+            bits = [f"{info.get('applied', 0)} cells filled"]
+            if info.get("uuids_filled"):
+                bits.append(f"{info['uuids_filled']} UUIDs")
+            if info.get("legend_skipped"):
+                bits.append(f"legend skipped ({info['legend_skipped']})")
+            lines.append(f"• {name}: " + ", ".join(bits))
+
+        msg = ("Prepared the working template (empty cells only).\n\n"
+               f"Total cells filled: {totals.get('applied', 0)}; "
+               f"UUIDs backfilled: {totals.get('uuids_filled', 0)}.\n\n"
+               + "\n".join(lines))
+
+        missing = sorted({c for info in layers.values()
+                          for c in info.get("missing_codes", [])})
+        if missing:
+            shown = ", ".join(missing[:20])
+            extra = (f" … (+{len(missing) - 20} more)"
+                     if len(missing) > 20 else "")
+            msg += ("\n\n⚠ Legend codes with no lookup entry (their Legend/"
+                    "Description was left blank): " + shown + extra
+                    + "\nAdd them to the lookup table and re-run prepare.")
+
+        dups = sorted({d for info in layers.values()
+                       for d in info.get("duplicate_uuids", [])})
+        if dups:
+            msg += (f"\n\n⚠ {len(dups)} duplicate UUID value(s) found (left "
+                    "unchanged — fix before applying the reconcile).")
+
+        if report.get("errors"):
+            msg += "\n\nErrors:\n" + "\n".join(report["errors"])
+
+        if missing or dups or report.get("errors"):
+            QMessageBox.warning(self, "Prepare field data", msg)
+        else:
+            QMessageBox.information(self, "Prepare field data", msg)
+
+        status = (f"Prepared: {totals.get('applied', 0)} cells filled, "
+                  f"{totals.get('uuids_filled', 0)} UUIDs backfilled.")
+        if missing:
+            status += f"  ⚠ {len(missing)} missing legend code(s)."
+        self.prep_status.setText(status)
+
+    def _confirm_prepare(self):
+        """Offer to hardcode before previewing. Returns True to continue."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Prepare field data first?")
+        box.setText(
+            "The working template hasn't been hardcoded yet. Preparing it "
+            "fills UUIDs, legends and coordinates so features reconcile "
+            "cleanly instead of as blanking conflicts.")
+        prep_btn = box.addButton("Prepare && continue", QMessageBox.AcceptRole)
+        box.addButton("Build without preparing", QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(prep_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn:
+            return False
+        if clicked is prep_btn:
+            self._run_hardcode()
+            # Only proceed if preparation actually succeeded.
+            return self._template_prepared
+        return True  # "Build without preparing"
+
     def _build_preview(self):
         if not self._require_paths():
+            return
+        if not self._template_prepared and not self._confirm_prepare():
             return
         self._reset_preview()
         self.preview_btn.setEnabled(False)
