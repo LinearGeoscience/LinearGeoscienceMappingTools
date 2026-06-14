@@ -12,7 +12,7 @@ from qgis.PyQt.QtGui import QDoubleValidator
 from qgis.PyQt.QtXml import QDomDocument
 from qgis.core import (QgsProject, QgsPrintLayout, QgsReadWriteContext,
                        QgsLayoutItemMap, QgsLayoutItemMapGrid, QgsRectangle,
-                       QgsLayoutItemLabel,
+                       QgsLayoutItemLabel, QgsLayoutItemScaleBar,
                        QgsLayoutItemLegend, QgsLayoutExporter,
                        QgsWkbTypes, QgsMapLayerType, QgsMessageLog, Qgis,
                        QgsMapLayerLegendUtils, QgsLayerTreeGroup,
@@ -65,6 +65,96 @@ except ImportError:
 LOG_TAG = 'Linear Geoscience'
 
 
+def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
+                              do_tiff=False, do_png=False, log=None, progress=None):
+    """Export named print layouts from the current project to disk.
+
+    UI-free and reusable: driven by both the Create Layouts dock and the unified
+    Mapping Export. PDF is georeferenced (GeoPDF where supported); GeoTIFF and
+    PNG are written with a worldfile so they stay georeferenced.
+
+    Args:
+        layout_names: layout names present in the current project.
+        out_dir: existing output directory.
+        dpi: export resolution.
+        do_pdf / do_tiff / do_png: which formats to write.
+        log: optional callable(message) for status/error text.
+        progress: optional callable(done, total) for progress reporting.
+
+    Returns:
+        tuple: (success_count, fail_count)
+    """
+    def _log(msg):
+        if log:
+            log(msg)
+        QgsMessageLog.logMessage(msg, LOG_TAG, Qgis.Info)
+
+    total = len(layout_names)
+    export_success = 0
+    export_fail = 0
+
+    for idx, name in enumerate(layout_names):
+        if progress:
+            progress(idx + 1, total)
+
+        layout = QgsProject.instance().layoutManager().layoutByName(name)
+        if not layout:
+            _log(f"Layout '{name}' not found for export.")
+            export_fail += 1
+            continue
+
+        exporter = QgsLayoutExporter(layout)
+        safe_name = (name.replace('\n', '_').replace(' ', '_')
+                     .replace('/', '-').replace('\\', '-'))
+
+        try:
+            ok = True
+            if do_pdf:
+                pdf_settings = QgsLayoutExporter.PdfExportSettings()
+                pdf_settings.dpi = dpi
+                try:
+                    pdf_settings.writeGeoPdf = True
+                except AttributeError:
+                    pass
+                result = exporter.exportToPdf(
+                    os.path.join(out_dir, f"{safe_name}.pdf"), pdf_settings)
+                if result != QgsLayoutExporter.Success:
+                    ok = False
+                    _log(f"PDF export failed for '{name}': error code {result}")
+
+            if do_tiff:
+                tiff_settings = QgsLayoutExporter.ImageExportSettings()
+                tiff_settings.dpi = dpi
+                tiff_settings.generateWorldFile = True
+                result = exporter.exportToImage(
+                    os.path.join(out_dir, f"{safe_name}.tif"), tiff_settings)
+                if result != QgsLayoutExporter.Success:
+                    ok = False
+                    _log(f"GeoTIFF export failed for '{name}': error code {result}")
+
+            if do_png:
+                png_settings = QgsLayoutExporter.ImageExportSettings()
+                png_settings.dpi = dpi
+                png_settings.generateWorldFile = True
+                result = exporter.exportToImage(
+                    os.path.join(out_dir, f"{safe_name}.png"), png_settings)
+                if result != QgsLayoutExporter.Success:
+                    ok = False
+                    _log(f"PNG export failed for '{name}': error code {result}")
+
+            if ok:
+                export_success += 1
+                _log(f"Exported: {name}")
+            else:
+                export_fail += 1
+
+        except Exception as e:
+            _log(f"Export error for '{name}': {e}")
+            export_fail += 1
+
+    return export_success, export_fail
+
+
 def parse_scale_text(value):
     """Parse a scale attribute ('1:10,000', '10000', 10000.0) into an
     integer denominator, or None when empty/invalid."""
@@ -80,6 +170,86 @@ def parse_scale_text(value):
     except ValueError:
         return None
     return denominator if denominator > 0 else None
+
+
+# Nice mantissas for scalebar segment sizes (x 10^k metres).
+_SCALEBAR_NICE_MANTISSAS = (1.0, 2.0, 2.5, 5.0)
+
+
+def compute_nice_scalebar(scale, target_bar_mm, max_bar_mm,
+                          min_segments=3, max_segments=8,
+                          pref_lo=4, pref_hi=6, km_threshold_m=1000.0):
+    """Choose nice-round scalebar segments that fill a fixed paper frame.
+
+    Pure function (no QGIS dependencies) so it can be unit-tested.
+
+    Given a map ``scale`` denominator (e.g. 500 for 1:500), a desired drawn
+    bar length ``target_bar_mm`` and a hard ceiling ``max_bar_mm`` (both in
+    millimetres on the page), pick a nice segment size (mantissa 1/2/2.5/5 x
+    10^k metres) and a segment count so the drawn bars fill the target as
+    closely as possible without ever exceeding the ceiling.
+
+    Candidates are scored lexicographically (smaller is better):
+      1) fractional shortfall/overshoot from the target fill -- a perfect fill
+         always wins, which is what reproduces 5 x 25 m at 1:500;
+      2) distance outside the preferred segment-count band [pref_lo, pref_hi];
+      3) prefer round mantissas (1/2/5) over 2.5;
+      4) more segments as a final tiebreak.
+
+    Switches the label to kilometres once the segment size reaches
+    ``km_threshold_m`` metres.
+
+    Returns a dict with keys ``units_per_segment`` (in the chosen display
+    unit), ``n_segments``, ``unit_label`` ('m'/'km'), ``map_units_per_bar_unit``
+    (1.0/1000.0), ``drawn_mm``, ``segment_m`` and ``total_m``; or ``None`` when
+    ``scale`` is not a positive number (caller should skip).
+    """
+    if not scale or scale <= 0:
+        return None
+
+    best = None  # (score_tuple, drawn_mm, seg_m, n)
+    for k in range(-3, 12):                 # 0.001 m .. 5e9 m segment sizes
+        base = 10.0 ** k
+        for mant in _SCALEBAR_NICE_MANTISSAS:
+            seg_m = mant * base             # metres per segment
+            for n in range(min_segments, max_segments + 1):
+                drawn_mm = (seg_m * n) / scale * 1000.0
+                if drawn_mm > max_bar_mm + 1e-9:
+                    continue                # never overflow the frame
+                fill_err = abs(drawn_mm - target_bar_mm) / target_bar_mm
+                if n < pref_lo:
+                    seg_pen = pref_lo - n
+                elif n > pref_hi:
+                    seg_pen = n - pref_hi
+                else:
+                    seg_pen = 0
+                mant_pen = 0.0 if mant in (1.0, 2.0, 5.0) else 1.0
+                score = (fill_err, seg_pen, mant_pen, -n)
+                if best is None or score < best[0]:
+                    best = (score, drawn_mm, seg_m, n)
+
+    if best is None:                        # target/max impossibly small
+        return None
+
+    _, drawn_mm, seg_m, n = best
+    if seg_m >= km_threshold_m:
+        unit_label = 'km'
+        map_units_per_bar_unit = 1000.0
+        units_per_segment = seg_m / 1000.0
+    else:
+        unit_label = 'm'
+        map_units_per_bar_unit = 1.0
+        units_per_segment = seg_m
+
+    return {
+        'units_per_segment': units_per_segment,
+        'n_segments': n,
+        'unit_label': unit_label,
+        'map_units_per_bar_unit': map_units_per_bar_unit,
+        'drawn_mm': drawn_mm,
+        'segment_m': seg_m,
+        'total_m': seg_m * n,
+    }
 
 
 class LegendTextEditorDialog(QDialog):
@@ -1895,6 +2065,96 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
         return True
 
+    # ── Scalebar auto-resize ──────────────────────────────────────────
+
+    # Fallbacks if the template's scalebar box can't be measured sensibly.
+    _SCALEBAR_DEFAULT_TARGET_MM = 250.0
+    _SCALEBAR_DEFAULT_MAX_MM = 262.0
+    _SCALEBAR_LABEL_ALLOWANCE_MM = 12.0   # right-hand label overhang
+    _SCALEBAR_SAFETY_MM = 8.0
+    _SCALEBAR_MIN_BOX_MM = 20.0           # below this, treat box as untrustworthy
+
+    def _configure_scalebar(self, layout, main_map, effective_scale):
+        """Resize the template scalebar's nice-number bars to fill its fixed
+        frame at the current map scale, preserving its position and styling.
+
+        No-ops gracefully when there is no scale, no scalebar item, or the
+        map CRS is not in metres.
+        """
+        # Need a numeric scale to compute ground distances.
+        if not effective_scale:
+            return
+
+        # Locate the scalebar: prefer Item ID, fall back to first instance.
+        scalebar = layout.itemById('scalebar')
+        if not isinstance(scalebar, QgsLayoutItemScaleBar):
+            bars = [i for i in layout.items()
+                    if isinstance(i, QgsLayoutItemScaleBar)]
+            if not bars:
+                QgsMessageLog.logMessage(
+                    f"No scalebar item found in template for "
+                    f"'{layout.name()}' (set Item ID 'scalebar' in Layout "
+                    f"Designer to enable auto-resize); skipping scalebar.",
+                    LOG_TAG, Qgis.Warning)
+                return
+            scalebar = bars[0]
+
+        # The metres maths only holds for a metre-based map CRS, matching the
+        # grid block's guard.
+        if main_map.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
+            QgsMessageLog.logMessage(
+                f"Map CRS for '{layout.name()}' is not in metres; "
+                f"skipping scalebar auto-resize.", LOG_TAG, Qgis.Warning)
+            return
+
+        # Derive target / max drawn lengths from the AUTHORED box width, read
+        # now (before any mutation) so it reflects the template, not a
+        # previously auto-fitted size.  rect() is in layout mm.
+        box_mm = scalebar.rect().width()
+        if box_mm is None or box_mm < self._SCALEBAR_MIN_BOX_MM:
+            target_bar_mm = self._SCALEBAR_DEFAULT_TARGET_MM
+            max_bar_mm = self._SCALEBAR_DEFAULT_MAX_MM
+            QgsMessageLog.logMessage(
+                f"Scalebar box width for '{layout.name()}' looks invalid "
+                f"({box_mm}); using default {target_bar_mm} mm target.",
+                LOG_TAG, Qgis.Warning)
+        else:
+            max_bar_mm = box_mm - self._SCALEBAR_SAFETY_MM
+            target_bar_mm = box_mm - self._SCALEBAR_LABEL_ALLOWANCE_MM
+            # Clamp into a sane band and below max.
+            target_bar_mm = min(max(target_bar_mm, 40.0), max_bar_mm)
+
+        # Compute the nice-number layout (pure, testable).
+        result = compute_nice_scalebar(
+            int(effective_scale), target_bar_mm, max_bar_mm)
+        if result is None:
+            QgsMessageLog.logMessage(
+                f"Could not compute a nice scalebar for '{layout.name()}' "
+                f"at 1:{effective_scale}; leaving template scalebar as-is.",
+                LOG_TAG, Qgis.Warning)
+            return
+
+        # Apply, units-first then magnitudes then counts, then one update().
+        if result['unit_label'] == 'km':
+            distance_unit = QgsUnitTypes.DistanceKilometers
+        else:
+            distance_unit = QgsUnitTypes.DistanceMeters
+
+        scalebar.setLinkedMap(main_map)
+        scalebar.setUnits(distance_unit)
+        scalebar.setUnitLabel(result['unit_label'])
+        scalebar.setMapUnitsPerScaleBarUnit(result['map_units_per_bar_unit'])
+        scalebar.setUnitsPerSegment(result['units_per_segment'])
+        scalebar.setNumberOfSegments(result['n_segments'])
+        scalebar.setNumberOfSegmentsLeft(0)
+        scalebar.update()
+
+        QgsMessageLog.logMessage(
+            f"Scalebar for '{layout.name()}' at 1:{effective_scale}: "
+            f"{result['n_segments']} x {result['units_per_segment']:g} "
+            f"{result['unit_label']} (~{result['drawn_mm']:.1f} mm drawn).",
+            LOG_TAG, Qgis.Info)
+
     # ── Label auto-population ─────────────────────────────────────────
 
     def _populate_labels(self, layout, feature_number, total_count,
@@ -2507,88 +2767,24 @@ class MapLayoutGeneratorPanel(QDockWidget):
     # ── Batch export ──────────────────────────────────────────────────
 
     def _export_layouts(self, layout_names):
-        """Export layouts to selected formats."""
-        out_dir = self.outputDirEdit.text()
-        dpi = self.dpiSpin.value()
-        do_pdf = self.exportPdfCheckbox.isChecked()
-        do_tiff = self.exportTiffCheckbox.isChecked()
-        do_png = self.exportPngCheckbox.isChecked()
-
+        """Export layouts to selected formats (delegates to the shared helper)."""
         self.statusLabel.setText("Exporting layouts...")
         self.progressBar.setMaximum(len(layout_names))
         self.progressBar.setValue(0)
 
-        export_success = 0
-        export_fail = 0
-
-        for idx, name in enumerate(layout_names):
-            self.progressBar.setValue(idx + 1)
+        def _progress(done, total):
+            self.progressBar.setValue(done)
             QApplication.processEvents()
 
-            layout = QgsProject.instance().layoutManager().layoutByName(name)
-            if not layout:
-                QgsMessageLog.logMessage(
-                    f"Layout '{name}' not found for export.", LOG_TAG, Qgis.Warning)
-                export_fail += 1
-                continue
-
-            exporter = QgsLayoutExporter(layout)
-            safe_name = (name.replace('\n', '_').replace(' ', '_')
-                         .replace('/', '-').replace('\\', '-'))
-
-            try:
-                ok = True
-                if do_pdf:
-                    pdf_settings = QgsLayoutExporter.PdfExportSettings()
-                    pdf_settings.dpi = dpi
-                    try:
-                        pdf_settings.writeGeoPdf = True
-                    except AttributeError:
-                        pass
-                    result = exporter.exportToPdf(
-                        os.path.join(out_dir, f"{safe_name}.pdf"), pdf_settings)
-                    if result != QgsLayoutExporter.Success:
-                        ok = False
-                        QgsMessageLog.logMessage(
-                            f"PDF export failed for '{name}': error code {result}",
-                            LOG_TAG, Qgis.Warning)
-
-                if do_tiff:
-                    tiff_settings = QgsLayoutExporter.ImageExportSettings()
-                    tiff_settings.dpi = dpi
-                    tiff_settings.generateWorldFile = True
-                    result = exporter.exportToImage(
-                        os.path.join(out_dir, f"{safe_name}.tif"), tiff_settings)
-                    if result != QgsLayoutExporter.Success:
-                        ok = False
-                        QgsMessageLog.logMessage(
-                            f"GeoTIFF export failed for '{name}': error code {result}",
-                            LOG_TAG, Qgis.Warning)
-
-                if do_png:
-                    png_settings = QgsLayoutExporter.ImageExportSettings()
-                    png_settings.dpi = dpi
-                    result = exporter.exportToImage(
-                        os.path.join(out_dir, f"{safe_name}.png"), png_settings)
-                    if result != QgsLayoutExporter.Success:
-                        ok = False
-                        QgsMessageLog.logMessage(
-                            f"PNG export failed for '{name}': error code {result}",
-                            LOG_TAG, Qgis.Warning)
-
-                if ok:
-                    export_success += 1
-                    self.statusLabel.setText(f"Exported: {name}")
-                else:
-                    export_fail += 1
-                    self.statusLabel.setText(f"Export failed: {name}")
-
-            except Exception as e:
-                QgsMessageLog.logMessage(
-                    f"Export error for '{name}': {e}", LOG_TAG, Qgis.Warning)
-                export_fail += 1
-
-        return export_success, export_fail
+        return export_layouts_to_formats(
+            layout_names,
+            self.outputDirEdit.text(),
+            dpi=self.dpiSpin.value(),
+            do_pdf=self.exportPdfCheckbox.isChecked(),
+            do_tiff=self.exportTiffCheckbox.isChecked(),
+            do_png=self.exportPngCheckbox.isChecked(),
+            log=lambda m: self.statusLabel.setText(m),
+            progress=_progress)
 
     # ── Main generation ───────────────────────────────────────────────
 
@@ -2864,6 +3060,10 @@ class MapLayoutGeneratorPanel(QDockWidget):
                                 QgsMessageLog.logMessage(
                                     f"Template for '{layout_name}' has no map grid; "
                                     f"skipping grid spacing.", LOG_TAG, Qgis.Warning)
+
+                    # Auto-resize the scalebar's nice-number bars to the
+                    # template frame at this map's scale.
+                    self._configure_scalebar(layout, main_map, effective_scale)
 
                     # Auto-populate labels by Item ID
                     self._populate_labels(layout, feature_number,

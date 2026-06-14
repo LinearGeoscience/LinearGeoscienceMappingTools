@@ -445,24 +445,32 @@ You have a layer of field stations with magnetic compass bearings collected in 2
 """
 
 INFO_STATIC_MAPPING_EXPORT = """
-<h1>Static Mapping Export</h1>
-<p>Exports selected layers from your working mapping GeoPackage to a clean, client-ready GeoPackage. Only the <b>symbology and labelling</b> styles are carried across &mdash; field forms, constraints, default values, and other editing configuration used in the field are stripped out.</p>
+<h1>Mapping Export</h1>
+<p>Exports a whole mapping job in one run. The <b>core</b> export takes selected layers from your working GeoPackage into a clean, client-ready <b>Mapping.gpkg</b> &mdash; only <b>symbology and labelling</b> are carried across; field forms, constraints, and default values are stripped out. Optional sections bundle photos, sampling, the mapsheet grid, rasters, and structural data alongside it.</p>
 <h2>How to Export:</h2>
 <ol>
-   <li>Click the <b>'Static Mapping Export'</b> button.</li>
-   <li>Select your source (working) GeoPackage.</li>
-   <li>Tick the layers to export. Names are auto-numbered (1_, 2_, ...) and can be edited.</li>
-   <li>Set the post-processing options and the <b>reference scale</b>. The global scale applies to all layers; each layer's dropdown can override it or be set to <b>'(no change)'</b> to keep its existing scale.</li>
-   <li>Select the output GeoPackage location and click <b>'Export Selected Layers'</b>.</li>
+   <li>Click the <b>'Mapping Export'</b> button.</li>
+   <li>(Core layers) Select your source GeoPackage and tick the layers to export. Names are auto-numbered (1_, 2_, ...) and can be edited. Set the post-processing options and <b>reference scale</b>.</li>
+   <li>Tick any <b>additional exports</b> you want (they read from the current QGIS project).</li>
+   <li>Choose a <b>parent folder</b> and export-folder name, then click <b>'Run Export'</b>.</li>
 </ol>
-<h2>Post-Processing (applied to the new GeoPackage only):</h2>
+<h2>Output folder (one per run):</h2>
 <ul>
-   <li><b>Remove unused symbology:</b> Category values with no matching features are pruned from each layer's categorized renderer.</li>
-   <li><b>Remove empty fields:</b> Fields where every value is NULL or blank are deleted. The primary key and any fields used by symbology are always kept.</li>
-   <li><b>Reference scale:</b> The chosen fixed reference scale is set on each layer's renderer.</li>
-   <li>The finalised symbology and labelling are saved into the GeoPackage as the default style, so layers load fully styled when added to the client's project.</li>
+   <li><b>Mapping.gpkg</b> &mdash; the styled vector layers (core export).</li>
+   <li><b>Photos/</b> &mdash; field photo points + table + a copy of every photo.</li>
+   <li><b>Samples/</b> &mdash; the same, but only photos with Type = 'Sample' (optionally renamed by SampleID).</li>
+   <li><b>Mapsheets.gpkg</b> &mdash; the mapsheet grid.</li>
+   <li><b>Imagery.gpkg</b> &mdash; selected rasters (DEM / satellite / other), optionally reprojected.</li>
+   <li><b>Layouts/</b> &mdash; selected finalised print layouts as PDF / GeoTIFF / PNG at the chosen DPI (georeferenced, with worldfiles).</li>
+   <li><b>Structural/</b> &mdash; opens the Stereonet Export tab (Leapfrog + Stereonet11); choose a format and click Export there.</li>
 </ul>
-<p><b>Note:</b> The source GeoPackage is never modified.</p>
+<h2>Post-Processing (core layers only):</h2>
+<ul>
+   <li><b>Remove unused symbology:</b> Category values with no matching features are pruned.</li>
+   <li><b>Remove empty fields:</b> Fields where every value is NULL or blank are deleted. The primary key and fields used by symbology are kept.</li>
+   <li><b>Reference scale:</b> The chosen fixed reference scale is set on each layer's renderer.</li>
+</ul>
+<p><b>Note:</b> The source GeoPackage and project layers are never modified.</p>
 """
 
 

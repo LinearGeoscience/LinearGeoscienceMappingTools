@@ -10,13 +10,14 @@ a fixed reference scale into each exported layer's style.
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsVectorFileWriter,
     QgsCoordinateTransformContext, Qgis, QgsReadWriteContext,
-    QgsRenderContext, QgsCategorizedSymbolRenderer, NULL
+    QgsRenderContext, QgsCategorizedSymbolRenderer, NULL, QgsWkbTypes
 )
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QTableWidget, QTableWidgetItem, QTextEdit,
     QHeaderView, QMessageBox, QLineEdit, QGroupBox, QCheckBox,
-    QScrollArea, QWidget, QSplitter, QFrame, QComboBox
+    QScrollArea, QWidget, QSplitter, QFrame, QComboBox,
+    QListWidget, QListWidgetItem, QSpinBox
 )
 from qgis.PyQt.QtCore import Qt, QDateTime
 from qgis.PyQt.QtGui import QColor, QFont
@@ -27,7 +28,15 @@ import sqlite3
 import traceback
 
 from ..recode_workflow.remove_unused import remove_unused_categories
+from ..layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 from .graphics_check import find_unembedded_graphics
+from .mapping_export import (
+    default_export_folder_name, project_name, find_mapsheet_layer,
+    export_mapsheet_to_gpkg, list_project_rasters, export_rasters_to_gpkg,
+    select_photo_features, build_field_photo_worker, build_sample_photo_worker,
+    list_project_layouts, export_layouts,
+    launch_stereonet_export, PHOTO_PATH_FIELD,
+)
 
 try:
     from .. import plugin_theme as theme
@@ -475,17 +484,22 @@ class LayerExporter:
 
 
 class StaticMappingExportDialog(QDialog):
-    """Main GUI dialog for the Static Mapping Export tool."""
+    """Main GUI dialog for the unified Mapping Export tool."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, stereonet_core=None):
         super().__init__(parent)
-        self.setWindowTitle("Static Mapping Export")
-        self.setMinimumSize(800, 700)
+        self.setWindowTitle("Mapping Export")
+        self.setMinimumSize(820, 720)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
         if theme:
             self.setStyleSheet(theme.dialog_style() + theme.group_box_style())
 
+        # Live Stereonet core (for the structural section). None if the
+        # stereonet plugin failed to load - the section is then disabled.
+        self.stereonet_core = stereonet_core
+
         self.source_gpkg = ""
+        self.parent_dir = ""             # Parent folder the export folder is created in
         self.layer_checkboxes = {}       # {original_name: checkbox}
         self.layer_rename_inputs = {}    # {original_name: line_edit}
         self.layer_base_names = {}       # {original_name: extracted_base_name}
@@ -493,19 +507,33 @@ class StaticMappingExportDialog(QDialog):
         self.layer_scale_combos = {}     # {original_name: scale_combo}
         self.layer_scale_overridden = {} # {original_name: bool, True if user changed scale}
 
+        # Async photo-export orchestration state
+        self._photo_queue = []           # list of (label, QThread worker)
+        self._active_worker = None
+        self._retired_workers = []       # keep finished workers alive (no GC mid-finish)
+        self._current_export_root = ""
+
         self._setup_ui()
         self._connect_signals()
 
-        self.log("Static Mapping Export initialized", "INFO")
-        self.log("Select a source geopackage to begin", "INFO")
+        self.log("Mapping Export initialized", "INFO")
+        self.log("Select a source geopackage and/or enable additional exports", "INFO")
 
     def _setup_ui(self):
         """Set up the user interface."""
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(10)
+
+        # Scrollable configuration area (keeps the run button + log fixed at
+        # the bottom regardless of how many optional sections are enabled).
+        config_scroll = QScrollArea()
+        config_scroll.setWidgetResizable(True)
+        config_container = QWidget()
+        layout = QVBoxLayout(config_container)
         layout.setSpacing(10)
 
         # Source geopackage selection
-        source_group = QGroupBox("Source Geopackage")
+        source_group = QGroupBox("Source Geopackage (for the layer export)")
         source_layout = QHBoxLayout(source_group)
 
         self.source_path_edit = QLineEdit()
@@ -540,8 +568,8 @@ class StaticMappingExportDialog(QDialog):
         # Scrollable layer list
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumHeight(200)
-        scroll_area.setMaximumHeight(300)
+        scroll_area.setMinimumHeight(140)
+        scroll_area.setMaximumHeight(240)
 
         self.layers_container = QWidget()
         self.layers_layout = QVBoxLayout(self.layers_container)
@@ -580,26 +608,51 @@ class StaticMappingExportDialog(QDialog):
 
         layout.addWidget(post_group)
 
-        # Output geopackage selection
-        output_group = QGroupBox("Output Geopackage")
-        output_layout = QHBoxLayout(output_group)
+        # Optional additional exports (each operates on the CURRENT project)
+        layout.addWidget(self._build_photos_group())
+        layout.addWidget(self._build_samples_group())
+        layout.addWidget(self._build_mapsheet_group())
+        layout.addWidget(self._build_rasters_group())
+        layout.addWidget(self._build_layouts_group())
+        layout.addWidget(self._build_structural_group())
 
-        self.output_path_edit = QLineEdit()
-        self.output_path_edit.setReadOnly(True)
-        self.output_path_edit.setPlaceholderText("Select output geopackage location...")
-        output_layout.addWidget(self.output_path_edit)
+        # Parent output folder (everything is written into <parent>/<name>/)
+        output_group = QGroupBox("Output Folder")
+        output_outer = QVBoxLayout(output_group)
 
+        parent_row = QHBoxLayout()
+        parent_row.addWidget(QLabel("Parent folder:"))
+        self.parent_path_edit = QLineEdit()
+        self.parent_path_edit.setReadOnly(True)
+        self.parent_path_edit.setPlaceholderText("Select where the export folder is created...")
+        parent_row.addWidget(self.parent_path_edit)
         self.browse_output_btn = QPushButton("Browse...")
         self.browse_output_btn.setFixedWidth(100)
-        output_layout.addWidget(self.browse_output_btn)
+        parent_row.addWidget(self.browse_output_btn)
+        output_outer.addLayout(parent_row)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Export folder name:"))
+        self.folder_name_edit = QLineEdit()
+        self.folder_name_edit.setText(default_export_folder_name())
+        self.folder_name_edit.setToolTip(
+            "Name of the folder created inside the parent folder. All outputs "
+            "(Mapping.gpkg, Mapsheets.gpkg, Imagery.gpkg, Photos/, Samples/, "
+            "Structural/) are written here.")
+        name_row.addWidget(self.folder_name_edit)
+        output_outer.addLayout(name_row)
 
         layout.addWidget(output_group)
+        layout.addStretch()
 
-        # Export button
+        config_scroll.setWidget(config_container)
+        outer.addWidget(config_scroll, 1)
+
+        # Export button (fixed, below the scroll area)
         export_layout = QHBoxLayout()
         export_layout.addStretch()
 
-        self.export_btn = QPushButton("Export Selected Layers")
+        self.export_btn = QPushButton("Run Export")
         self.export_btn.setFixedWidth(200)
         self.export_btn.setFixedHeight(40)
         font = self.export_btn.font()
@@ -611,15 +664,15 @@ class StaticMappingExportDialog(QDialog):
         export_layout.addWidget(self.export_btn)
 
         export_layout.addStretch()
-        layout.addLayout(export_layout)
+        outer.addLayout(export_layout)
 
-        # Log panel
+        # Log panel (fixed, below the scroll area)
         log_group = QGroupBox("Export Log")
         log_layout = QVBoxLayout(log_group)
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(150)
+        self.log_text.setMinimumHeight(140)
         font = QFont("Consolas", 9)
         self.log_text.setFont(font)
         log_layout.addWidget(self.log_text)
@@ -631,17 +684,176 @@ class StaticMappingExportDialog(QDialog):
         clear_log_layout.addWidget(self.clear_log_btn)
         log_layout.addLayout(clear_log_layout)
 
-        layout.addWidget(log_group)
+        outer.addWidget(log_group)
+
+    # ------------------------------------------------------------------
+    # Optional export section builders (each returns a checkable QGroupBox)
+    # ------------------------------------------------------------------
+    def _photo_layer_candidates(self):
+        """Point photo layers in the project that carry a PhotoPath field."""
+        return layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+                                required_fields=[PHOTO_PATH_FIELD])
+
+    def _build_photos_group(self):
+        group = QGroupBox("Export Field Photos  (-> Photos/)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        vbox.addWidget(QLabel(
+            "Portable package: photo points + attribute table (GeoPackage) and "
+            "a copy of every photo."))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Photo layer:"))
+        self.photos_combo = QComboBox()
+        populate_layer_combo(self.photos_combo, self._photo_layer_candidates(),
+                             target_name="Photo Points")
+        row.addWidget(self.photos_combo, 1)
+        vbox.addLayout(row)
+        self.photos_group = group
+        return group
+
+    def _build_samples_group(self):
+        group = QGroupBox("Export Sampling + Sample Photos  (-> Samples/)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        vbox.addWidget(QLabel(
+            "Only photos with Type = 'Sample'. Exported separately from the "
+            "field photos above."))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Photo layer:"))
+        self.samples_combo = QComboBox()
+        populate_layer_combo(self.samples_combo, self._photo_layer_candidates(),
+                             target_name="Photo Points")
+        row.addWidget(self.samples_combo, 1)
+        vbox.addLayout(row)
+        self.samples_rename_cb = QCheckBox(
+            "Rename photos by SampleID (copy + CSV instead of package)")
+        self.samples_rename_cb.setToolTip(
+            "When ticked, sample photos are copied and renamed by SampleID with "
+            "a CSV table (reuses the photo export's copy mode). When unticked, a "
+            "portable GeoPackage package is produced.")
+        vbox.addWidget(self.samples_rename_cb)
+        self.samples_group = group
+        return group
+
+    def _build_mapsheet_group(self):
+        group = QGroupBox("Export Mapsheet Grid  (-> Mapsheets.gpkg)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Mapsheet layer:"))
+        self.mapsheet_combo = QComboBox()
+        polygons = layer_candidates(geometry=QgsWkbTypes.PolygonGeometry)
+        detected = find_mapsheet_layer()
+        populate_layer_combo(
+            self.mapsheet_combo, polygons, target_name="Mapsheets",
+            select_layer_id=detected.id() if detected else None)
+        row.addWidget(self.mapsheet_combo, 1)
+        vbox.addLayout(row)
+        self.mapsheet_group = group
+        return group
+
+    def _build_rasters_group(self):
+        group = QGroupBox("Export Other Layers / Rasters  (-> Imagery.gpkg)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        vbox.addWidget(QLabel(
+            "Tick the rasters (DEM / satellite / other) to export alongside the "
+            "mapping. Add files from disk if they are not loaded in the project."))
+        self.raster_list = QListWidget()
+        self.raster_list.setMaximumHeight(120)
+        for raster in list_project_rasters():
+            item = QListWidgetItem(raster.name())
+            item.setData(Qt.UserRole, raster.source())
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.raster_list.addItem(item)
+        vbox.addWidget(self.raster_list)
+        btn_row = QHBoxLayout()
+        self.add_raster_btn = QPushButton("Add files...")
+        self.add_raster_btn.setFixedWidth(110)
+        btn_row.addWidget(self.add_raster_btn)
+        btn_row.addStretch()
+        self.raster_reproject_cb = QCheckBox("Reproject to project CRS")
+        btn_row.addWidget(self.raster_reproject_cb)
+        vbox.addLayout(btn_row)
+        self.rasters_group = group
+        return group
+
+    def _build_layouts_group(self):
+        group = QGroupBox("Export Layouts  (-> Layouts/)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        vbox.addWidget(QLabel(
+            "Export finalised print layouts. PDFs are georeferenced; GeoTIFF/PNG "
+            "get a worldfile."))
+        self.layout_list = QListWidget()
+        self.layout_list.setMaximumHeight(110)
+        for name in list_project_layouts():
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self.layout_list.addItem(item)
+        if self.layout_list.count() == 0:
+            self.layout_list.addItem(QListWidgetItem("(no print layouts in project)"))
+            self.layout_list.setEnabled(False)
+        vbox.addWidget(self.layout_list)
+
+        fmt_row = QHBoxLayout()
+        fmt_row.addWidget(QLabel("Formats:"))
+        self.layout_pdf_cb = QCheckBox("PDF")
+        self.layout_pdf_cb.setChecked(True)
+        self.layout_tiff_cb = QCheckBox("GeoTIFF")
+        self.layout_png_cb = QCheckBox("PNG")
+        fmt_row.addWidget(self.layout_pdf_cb)
+        fmt_row.addWidget(self.layout_tiff_cb)
+        fmt_row.addWidget(self.layout_png_cb)
+        fmt_row.addSpacing(16)
+        fmt_row.addWidget(QLabel("DPI:"))
+        self.layout_dpi_spin = QSpinBox()
+        self.layout_dpi_spin.setRange(72, 1200)
+        self.layout_dpi_spin.setValue(300)
+        self.layout_dpi_spin.setFixedWidth(80)
+        fmt_row.addWidget(self.layout_dpi_spin)
+        fmt_row.addStretch()
+        vbox.addLayout(fmt_row)
+        self.layouts_group = group
+        return group
+
+    def _build_structural_group(self):
+        group = QGroupBox("Export Structural Data  (-> Structural/)")
+        group.setCheckable(True)
+        group.setChecked(False)
+        vbox = QVBoxLayout(group)
+        if self.stereonet_core is None:
+            group.setEnabled(False)
+            group.setToolTip("The Stereonet plugin is not available in this session.")
+            vbox.addWidget(QLabel("Stereonet plugin not available."))
+        else:
+            vbox.addWidget(QLabel(
+                "Opens the Stereonet Export tab (Leapfrog + Stereonet11) pointed "
+                "at Structural/. Choose a format there and click 'Export Files'."))
+        self.structural_group = group
+        return group
 
     def _connect_signals(self):
         """Connect UI signals to slots."""
         self.browse_source_btn.clicked.connect(self._browse_source)
-        self.browse_output_btn.clicked.connect(self._browse_output)
+        self.browse_output_btn.clicked.connect(self._browse_parent_folder)
         self.export_btn.clicked.connect(self._do_export)
         self.select_all_btn.clicked.connect(self._select_all_layers)
         self.select_none_btn.clicked.connect(self._select_none_layers)
         self.clear_log_btn.clicked.connect(self._clear_log)
         self.global_scale_combo.currentTextChanged.connect(self._on_global_scale_changed)
+        self.folder_name_edit.textChanged.connect(self._update_export_button)
+        self.add_raster_btn.clicked.connect(self._add_raster_files)
+        for group in (self.photos_group, self.samples_group, self.mapsheet_group,
+                      self.rasters_group, self.layouts_group, self.structural_group):
+            group.toggled.connect(self._update_export_button)
 
     def log(self, message, level="INFO"):
         """Add a log message with color coding."""
@@ -680,23 +892,42 @@ class StaticMappingExportDialog(QDialog):
             self.source_gpkg = path
             self.source_path_edit.setText(path)
             self.log(f"Source selected: {os.path.basename(path)}", "INFO")
+            # Default the parent folder to the source's directory and refresh
+            # the folder-name default (uses the source name when the project
+            # is unsaved).
+            if not self.parent_dir:
+                self.parent_dir = os.path.dirname(path)
+                self.parent_path_edit.setText(self.parent_dir)
+            if not self.folder_name_edit.text().strip() or \
+                    self.folder_name_edit.text() == default_export_folder_name():
+                self.folder_name_edit.setText(default_export_folder_name(path))
             self._load_layers()
             self._update_export_button()
 
-    def _browse_output(self):
-        """Open file dialog to select output geopackage location."""
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Select Output Geopackage",
-            "",
-            "Geopackage (*.gpkg)"
-        )
-
+    def _browse_parent_folder(self):
+        """Open a dialog to choose the parent folder for the export."""
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Parent Folder for Export", self.parent_dir or "")
         if path:
-            if not path.lower().endswith('.gpkg'):
-                path += '.gpkg'
-            self.output_path_edit.setText(path)
-            self.log(f"Output selected: {os.path.basename(path)}", "INFO")
+            self.parent_dir = path
+            self.parent_path_edit.setText(path)
+            self.log(f"Parent folder: {path}", "INFO")
+            self._update_export_button()
+
+    def _add_raster_files(self):
+        """Add raster files from disk to the raster export list (checked)."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Raster Files", "",
+            "Rasters (*.tif *.tiff *.ecw *.img *.vrt *.jp2 *.png *.jpg);;All Files (*)")
+        for path in paths:
+            name = os.path.splitext(os.path.basename(path))[0]
+            item = QListWidgetItem(f"{name}  ({os.path.basename(path)})")
+            item.setData(Qt.UserRole, path)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self.raster_list.addItem(item)
+        if paths:
+            self.log(f"Added {len(paths)} raster file(s)", "INFO")
             self._update_export_button()
 
     def _load_layers(self):
@@ -843,23 +1074,29 @@ class StaticMappingExportDialog(QDialog):
             checkbox.blockSignals(False)
         self._on_selection_changed()
 
+    def _has_valid_core_selection(self):
+        """True when the core layer export has a source and valid selection."""
+        if not self.source_gpkg:
+            return False
+        has_selection = any(cb.isChecked() for cb in self.layer_checkboxes.values())
+        if not has_selection:
+            return False
+        for layer_name, checkbox in self.layer_checkboxes.items():
+            if checkbox.isChecked() and not self.layer_rename_inputs[layer_name].text().strip():
+                return False
+        return True
+
+    def _any_optional_enabled(self):
+        """True when at least one optional export section is ticked."""
+        return any(g.isChecked() for g in (
+            self.photos_group, self.samples_group, self.mapsheet_group,
+            self.rasters_group, self.layouts_group, self.structural_group))
+
     def _update_export_button(self):
         """Enable/disable export button based on current state."""
-        has_source = bool(self.source_gpkg)
-        has_output = bool(self.output_path_edit.text())
-        has_selection = any(cb.isChecked() for cb in self.layer_checkboxes.values())
-
-        # Check for valid new names on selected layers
-        valid_names = True
-        if has_selection:
-            for layer_name, checkbox in self.layer_checkboxes.items():
-                if checkbox.isChecked():
-                    new_name = self.layer_rename_inputs[layer_name].text().strip()
-                    if not new_name:
-                        valid_names = False
-                        break
-
-        self.export_btn.setEnabled(has_source and has_output and has_selection and valid_names)
+        has_root = bool(self.parent_dir) and bool(self.folder_name_edit.text().strip())
+        has_work = self._has_valid_core_selection() or self._any_optional_enabled()
+        self.export_btn.setEnabled(has_root and has_work)
 
     def _get_selected_layers(self):
         """Get ordered dictionary of selected layers with their new names."""
@@ -954,66 +1191,113 @@ class StaticMappingExportDialog(QDialog):
         ]
         return "\n".join(lines)
 
+    def _confirm_overwrite(self, path):
+        """Confirm overwrite of an existing output file and delete it.
+
+        Returns True to proceed (file removed or absent), False to skip.
+        """
+        if not os.path.exists(path):
+            return True
+        reply = QMessageBox.question(
+            self, "Confirm Overwrite",
+            f"Output file already exists:\n{path}\n\nOverwrite?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No:
+            return False
+        try:
+            os.remove(path)
+            return True
+        except Exception as e:
+            self.log(f"Failed to remove existing file: {e}", "ERROR")
+            return False
+
     def _do_export(self):
-        """Perform the export operation."""
+        """Orchestrate the unified Mapping Export across all enabled sections."""
         selected = self._get_selected_layers()
-        output_path = self.output_path_edit.text()
+        do_core = self._has_valid_core_selection()
 
-        # Check for duplicate new names
-        new_names = list(selected.values())
-        if len(new_names) != len(set(new_names)):
+        if not do_core and not self._any_optional_enabled():
             QMessageBox.warning(
-                self,
-                "Duplicate Names",
-                "Each layer must have a unique new name."
-            )
+                self, "Nothing to Export",
+                "Select layers to export and/or enable an additional export section.")
             return
 
-        # Pre-export check: flag symbol graphics that won't resolve on a
-        # client's machine (custom SVG paths, raster image paths). Must run
-        # before the overwrite confirmation, which deletes the existing file.
-        if not self._check_embedded_graphics(selected):
-            self.log("Export cancelled - unembedded symbol graphics", "WARNING")
+        # Validate the core selection (duplicate names + graphics) up front,
+        # before anything is written.
+        if do_core:
+            new_names = list(selected.values())
+            if len(new_names) != len(set(new_names)):
+                QMessageBox.warning(self, "Duplicate Names",
+                                    "Each layer must have a unique new name.")
+                return
+            # Flag symbol graphics that won't resolve on a client's machine.
+            if not self._check_embedded_graphics(selected):
+                self.log("Export cancelled - unembedded symbol graphics", "WARNING")
+                return
+
+        export_root = os.path.join(self.parent_dir, self.folder_name_edit.text().strip())
+        try:
+            os.makedirs(export_root, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Cannot Create Folder",
+                                 f"Could not create export folder:\n{export_root}\n\n{e}")
             return
 
-        # Confirm if output exists
-        if os.path.exists(output_path):
-            reply = QMessageBox.question(
-                self,
-                "Confirm Overwrite",
-                f"Output file already exists:\n{output_path}\n\nOverwrite?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            if reply == QMessageBox.No:
-                return
-            # Delete existing file to start fresh
-            try:
-                os.remove(output_path)
-            except Exception as e:
-                self.log(f"Failed to remove existing file: {e}", "ERROR")
-                return
+        self._current_export_root = export_root
+
+        self.log("=" * 50, "INFO")
+        self.log("STARTING MAPPING EXPORT", "INFO")
+        self.log(f"Output folder: {export_root}", "INFO")
+        self.log("=" * 50, "INFO")
+
+        # Lock the run button for the whole run (re-enabled in _finish_export).
+        self.export_btn.setEnabled(False)
+
+        # 1. Core layer export -> Mapping.gpkg (synchronous)
+        if do_core:
+            self._run_core_export(selected, export_root)
+
+        # 2. Mapsheet grid -> Mapsheets.gpkg (synchronous)
+        if self.mapsheet_group.isChecked():
+            self._run_mapsheet_section(export_root)
+
+        # 3. Other layers / rasters -> Imagery.gpkg (synchronous)
+        if self.rasters_group.isChecked():
+            self._run_raster_section(export_root)
+
+        # 4. Print layouts -> Layouts/ (synchronous)
+        if self.layouts_group.isChecked():
+            self._run_layouts_section(export_root)
+
+        # 5. Photos / samples (async workers, chained one at a time). The
+        # structural section + final summary run once the queue drains.
+        self._photo_queue = self._build_photo_queue(export_root)
+        if self._photo_queue:
+            self._start_next_photo_job()
+        else:
+            self._finish_export(export_root)
+
+    def _run_core_export(self, selected, export_root):
+        """Run the styled vector-layer export into Mapping.gpkg."""
+        output_path = os.path.join(export_root, "Mapping.gpkg")
+        if not self._confirm_overwrite(output_path):
+            self.log("Mapping layer export skipped (overwrite declined)", "WARNING")
+            return
 
         remove_unused = self.remove_unused_cb.isChecked()
         remove_empty = self.remove_empty_fields_cb.isChecked()
 
-        self.log("=" * 50, "INFO")
-        self.log("STARTING EXPORT", "INFO")
-        self.log(f"Exporting {len(selected)} layers", "INFO")
+        self.log(f"Exporting {len(selected)} layers -> Mapping.gpkg", "INFO")
         self.log(f"Remove unused symbology: {'ON' if remove_unused else 'OFF'}", "INFO")
         self.log(f"Remove empty fields: {'ON' if remove_empty else 'OFF'}", "INFO")
         self.log(f"Reference scale (global): {self.global_scale_combo.currentText()}", "INFO")
-        self.log("=" * 50, "INFO")
 
         exporter = LayerExporter(self.log)
-
         success_count = 0
         fail_count = 0
-
         for layer_name, new_name in selected.items():
             scale_text = self.layer_scale_combos[layer_name].currentText()
             ref_scale = None if scale_text == SCALE_NO_CHANGE else int(scale_text.split(":")[1])
-
             try:
                 if exporter.export_layer(self.source_gpkg, layer_name, output_path, new_name,
                                          remove_unused=remove_unused,
@@ -1025,30 +1309,167 @@ class StaticMappingExportDialog(QDialog):
             except Exception as e:
                 self.log(f"Exception exporting {layer_name}: {e}", "ERROR")
                 fail_count += 1
-
-        self.log("=" * 50, "INFO")
-        self.log("EXPORT COMPLETE", "INFO")
-        self.log(f"Successful: {success_count} | Failed: {fail_count}",
+        self.log(f"Mapping layers: {success_count} exported, {fail_count} failed",
                  "SUCCESS" if fail_count == 0 else "WARNING")
-        self.log(f"Output: {output_path}", "INFO")
+
+    def _run_mapsheet_section(self, export_root):
+        """Export the selected/auto-detected mapsheet layer to Mapsheets.gpkg."""
+        layer = combo_current_layer(self.mapsheet_combo) or find_mapsheet_layer()
+        if layer is None:
+            self.log("Mapsheet export skipped - no mapsheet layer found", "WARNING")
+            return
+        output_path = os.path.join(export_root, "Mapsheets.gpkg")
+        if not self._confirm_overwrite(output_path):
+            self.log("Mapsheet export skipped (overwrite declined)", "WARNING")
+            return
+        self.log(f"Exporting mapsheet grid '{layer.name()}' -> Mapsheets.gpkg", "INFO")
+        export_mapsheet_to_gpkg(layer, output_path, self.log)
+
+    def _collect_raster_sources(self):
+        """Return [(name, source)] for every ticked raster in the list."""
+        sources = []
+        for i in range(self.raster_list.count()):
+            item = self.raster_list.item(i)
+            if item.checkState() == Qt.Checked:
+                # Display text for files is "name  (file.tif)"; keep the name.
+                name = item.text().split("  (")[0]
+                sources.append((name, item.data(Qt.UserRole)))
+        return sources
+
+    def _run_raster_section(self, export_root):
+        """Export the ticked rasters to Imagery.gpkg."""
+        sources = self._collect_raster_sources()
+        if not sources:
+            self.log("Raster export skipped - no rasters ticked", "WARNING")
+            return
+        output_path = os.path.join(export_root, "Imagery.gpkg")
+        if not self._confirm_overwrite(output_path):
+            self.log("Raster export skipped (overwrite declined)", "WARNING")
+            return
+        target_crs = QgsProject.instance().crs() if self.raster_reproject_cb.isChecked() else None
+        self.log(f"Exporting {len(sources)} raster(s) -> Imagery.gpkg", "INFO")
+        ok, fail = export_rasters_to_gpkg(sources, output_path, target_crs, self.log)
+        self.log(f"Rasters: {ok} exported, {fail} failed",
+                 "SUCCESS" if fail == 0 else "WARNING")
+
+    def _collect_layouts(self):
+        """Return the names of every ticked layout in the list."""
+        names = []
+        if not self.layout_list.isEnabled():
+            return names
+        for i in range(self.layout_list.count()):
+            item = self.layout_list.item(i)
+            if item.checkState() == Qt.Checked:
+                names.append(item.text())
+        return names
+
+    def _run_layouts_section(self, export_root):
+        """Export the ticked print layouts to Layouts/."""
+        names = self._collect_layouts()
+        if not names:
+            self.log("Layout export skipped - no layouts ticked", "WARNING")
+            return
+        do_pdf = self.layout_pdf_cb.isChecked()
+        do_tiff = self.layout_tiff_cb.isChecked()
+        do_png = self.layout_png_cb.isChecked()
+        if not (do_pdf or do_tiff or do_png):
+            self.log("Layout export skipped - no format selected", "WARNING")
+            return
+        out_dir = os.path.join(export_root, "Layouts")
+        dpi = self.layout_dpi_spin.value()
+        self.log(f"Exporting {len(names)} layout(s) @ {dpi} DPI -> Layouts/", "INFO")
+        ok, fail = export_layouts(names, out_dir, dpi=dpi, do_pdf=do_pdf,
+                                  do_tiff=do_tiff, do_png=do_png, log=self.log)
+        self.log(f"Layouts: {ok} exported, {fail} failed",
+                 "SUCCESS" if fail == 0 else "WARNING")
+
+    def _build_photo_queue(self, export_root):
+        """Build the queue of photo-export workers for the enabled sections."""
+        queue = []
+        if self.photos_group.isChecked():
+            layer = combo_current_layer(self.photos_combo)
+            if layer is None:
+                self.log("Field photos skipped - no photo layer selected", "WARNING")
+            else:
+                feats = select_photo_features(layer, sample_only=False)
+                if not feats:
+                    self.log("Field photos skipped - layer has no features", "WARNING")
+                else:
+                    queue.append(("field photos -> Photos/",
+                                  build_field_photo_worker(layer, feats, export_root)))
+        if self.samples_group.isChecked():
+            layer = combo_current_layer(self.samples_combo)
+            if layer is None:
+                self.log("Sample photos skipped - no photo layer selected", "WARNING")
+            else:
+                feats = select_photo_features(layer, sample_only=True)
+                if not feats:
+                    self.log("Sample photos skipped - no Type='Sample' features", "WARNING")
+                else:
+                    rename = self.samples_rename_cb.isChecked()
+                    queue.append(("sample photos -> Samples/",
+                                  build_sample_photo_worker(layer, feats, export_root, rename)))
+        return queue
+
+    def _start_next_photo_job(self):
+        """Start the next queued photo worker, or finish if the queue is empty."""
+        if not self._photo_queue:
+            self._finish_export(self._current_export_root)
+            return
+        label, worker = self._photo_queue.pop(0)
+        self.log(f"Exporting {label}...", "INFO")
+        self._active_worker = worker
+        worker.log_message.connect(lambda m: self.log(m, "INFO"))
+        worker.finished.connect(self._on_photo_section_finished)
+        worker.start()
+
+    def _on_photo_section_finished(self, success, message):
+        """Handle one photo worker completing; advance the queue."""
+        self.log(message, "SUCCESS" if success else "ERROR")
+        if self._active_worker is not None:
+            self._retired_workers.append(self._active_worker)
+        self._active_worker = None
+        self._start_next_photo_job()
+
+    def _finish_export(self, export_root):
+        """Run the structural section, log the summary, re-enable the button."""
+        structural_launched = False
+        if self.structural_group.isChecked() and self.structural_group.isEnabled():
+            prefix = project_name(self.source_gpkg)
+            structural_launched = launch_stereonet_export(
+                self.stereonet_core, os.path.join(export_root, "Structural"),
+                prefix, self.log)
+
+        self.log("=" * 50, "INFO")
+        self.log("MAPPING EXPORT COMPLETE", "INFO")
+        self.log(f"Output folder: {export_root}", "INFO")
         self.log("=" * 50, "INFO")
 
-        if fail_count == 0:
-            QMessageBox.information(
-                self,
-                "Export Complete",
-                f"Successfully exported {success_count} layers to:\n{output_path}"
-            )
-        else:
-            QMessageBox.warning(
-                self,
-                "Export Complete with Errors",
-                f"Exported {success_count} layers.\n{fail_count} layer(s) failed.\n\nCheck the log for details."
-            )
+        self.export_btn.setEnabled(True)
+        self._update_export_button()
+
+        msg = f"Export finished.\n\nOutput folder:\n{export_root}"
+        if structural_launched:
+            msg += ("\n\nTo finish the structural export, choose a format in the "
+                    "Stereonet Export tab and click 'Export Files'.")
+        QMessageBox.information(self, "Mapping Export Complete", msg)
+
+    def closeEvent(self, event):
+        """Block close until any running photo worker finishes cleanly."""
+        worker = getattr(self, "_active_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.wait()
+        super().closeEvent(event)
 
 
-def run_static_mapping_export(iface):
-    """Launch the Static Mapping Export dialog."""
-    dialog = StaticMappingExportDialog(iface.mainWindow())
+def run_static_mapping_export(iface, stereonet_core=None):
+    """Launch the Mapping Export dialog."""
+    dialog = StaticMappingExportDialog(iface.mainWindow(), stereonet_core=stereonet_core)
     dialog.exec()
     return dialog
+
+
+# Aliases for the renamed tool (kept alongside the original names so existing
+# imports keep working).
+MappingExportDialog = StaticMappingExportDialog
+run_mapping_export = run_static_mapping_export

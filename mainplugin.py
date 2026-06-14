@@ -681,7 +681,7 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Append Mapping Data", None,
                         feature_info.INFO_APPEND_DATA, self.run_appenddata)
         grp.addSeparator()
-        grp.addFeature("Static Mapping Export", None,
+        grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
         lay.addWidget(grp)
         lay.addStretch()
@@ -806,7 +806,7 @@ class LinearGeosciencePluginMain:
 
     def run_static_mapping_export(self):
         from .static_mapping_export import run_static_mapping_export
-        run_static_mapping_export(self.iface)
+        run_static_mapping_export(self.iface, stereonet_core=self.stereonet_core)
 
     def run_adddomainlayer(self):
         from .script_adddomainlayer import run
