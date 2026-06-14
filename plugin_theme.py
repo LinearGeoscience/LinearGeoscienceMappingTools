@@ -48,6 +48,9 @@ RECONCILE = "#34A853"
 RECONCILE_HOVER = "#41B662"
 RECONCILE_PRESSED = "#2E9648"
 
+QFIELD_TINT = "#EDF1F5"
+ACCENT_TINT = "#FFF3E0"
+
 BG_PRIMARY = "#F8F9FA"
 BG_SIDEBAR = "#FFFFFF"
 BG_CARD = "#FFFFFF"
@@ -127,8 +130,8 @@ def nav_button_style():
     """
 
 
-def quick_access_button_style():
-    """Quick-access launch button in sidebar (outlined green card)."""
+def _outlined_button_style(border_color, text_color, border_hover, hover_bg):
+    """Outlined-card sidebar button (white bg, coloured 1px border + bold text)."""
     s = _s()
     pad_v = s.dimension(8)
     pad_h = s.dimension(10)
@@ -138,8 +141,8 @@ def quick_access_button_style():
         QPushButton {{
             text-align: left;
             background-color: {BG_CARD};
-            border: 1px solid {PRIMARY};
-            color: {PRIMARY_DARK};
+            border: 1px solid {border_color};
+            color: {text_color};
             font-weight: bold;
             padding: {pad_v}px {pad_h}px;
             border-radius: {br}px;
@@ -147,13 +150,18 @@ def quick_access_button_style():
             font-family: {FONT_FAMILY};
         }}
         QPushButton:hover {{
-            background-color: {SELECTED_BG};
-            border-color: {PRIMARY_DARK};
+            background-color: {hover_bg};
+            border-color: {border_hover};
         }}
         QPushButton:pressed {{
             background-color: {BORDER};
         }}
     """
+
+
+def quick_access_button_style():
+    """Quick-access launch button in sidebar (outlined green card)."""
+    return _outlined_button_style(PRIMARY, PRIMARY_DARK, PRIMARY_DARK, SELECTED_BG)
 
 
 def action_button_style(primary=True):
@@ -239,96 +247,18 @@ def group_box_style():
 
 
 def template_button_style():
-    """Orange 'Setup Mapping Template' button at sidebar bottom."""
-    s = _s()
-    pad_v = s.dimension(10)
-    pad_h = s.dimension(12)
-    br = radius_md()
-    margin = s.dimension(8)
-    fs = font_md()
-    return f"""
-        QPushButton {{
-            text-align: center;
-            background-color: {ACCENT};
-            border: 2px solid {ACCENT_PRESSED};
-            padding: {pad_v}px {pad_h}px;
-            border-radius: {br}px;
-            color: white;
-            font-weight: bold;
-            font-size: {fs}px;
-            font-family: {FONT_FAMILY};
-            margin: {margin}px;
-        }}
-        QPushButton:hover {{
-            background-color: {ACCENT_HOVER};
-            border: 2px solid {ACCENT};
-        }}
-        QPushButton:pressed {{
-            background-color: {ACCENT_PRESSED};
-        }}
-    """
+    """Orange outlined 'Setup Mapping Template' button (matches Quick Access style)."""
+    return _outlined_button_style(ACCENT, ACCENT_PRESSED, ACCENT_PRESSED, ACCENT_TINT)
 
 
 def qfield_button_style():
-    """Slate-blue 'Export for QField' button at sidebar bottom (above template)."""
-    s = _s()
-    pad_v = s.dimension(10)
-    pad_h = s.dimension(12)
-    br = radius_md()
-    margin = s.dimension(8)
-    fs = font_md()
-    return f"""
-        QPushButton {{
-            text-align: center;
-            background-color: {QFIELD};
-            border: 2px solid {QFIELD_PRESSED};
-            padding: {pad_v}px {pad_h}px;
-            border-radius: {br}px;
-            color: white;
-            font-weight: bold;
-            font-size: {fs}px;
-            font-family: {FONT_FAMILY};
-            margin: {margin}px;
-        }}
-        QPushButton:hover {{
-            background-color: {QFIELD_HOVER};
-            border: 2px solid {QFIELD};
-        }}
-        QPushButton:pressed {{
-            background-color: {QFIELD_PRESSED};
-        }}
-    """
+    """Slate-blue outlined 'Export for QField' button (matches Quick Access style)."""
+    return _outlined_button_style(QFIELD, QFIELD, QFIELD_PRESSED, QFIELD_TINT)
 
 
 def reconcile_button_style():
-    """Brand-green 'Reconcile / Merge' button at sidebar bottom (below QField export)."""
-    s = _s()
-    pad_v = s.dimension(10)
-    pad_h = s.dimension(12)
-    br = radius_md()
-    margin = s.dimension(8)
-    fs = font_md()
-    return f"""
-        QPushButton {{
-            text-align: center;
-            background-color: {RECONCILE};
-            border: 2px solid {RECONCILE_PRESSED};
-            padding: {pad_v}px {pad_h}px;
-            border-radius: {br}px;
-            color: white;
-            font-weight: bold;
-            font-size: {fs}px;
-            font-family: {FONT_FAMILY};
-            margin: {margin}px;
-        }}
-        QPushButton:hover {{
-            background-color: {RECONCILE_HOVER};
-            border: 2px solid {RECONCILE};
-        }}
-        QPushButton:pressed {{
-            background-color: {RECONCILE_PRESSED};
-        }}
-    """
+    """Brand-green outlined 'Reconcile / Merge' button (matches Quick Access style)."""
+    return _outlined_button_style(RECONCILE, RECONCILE_PRESSED, RECONCILE_PRESSED, SELECTED_BG)
 
 
 def separator_style():
