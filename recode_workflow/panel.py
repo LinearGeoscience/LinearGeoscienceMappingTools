@@ -212,7 +212,7 @@ class RecodeWorkflowWizard(QDialog):
 
         # Update nav button visibility
         self._back_btn.setEnabled(idx > 0)
-        self._next_btn.setEnabled(idx < 2)
+        self._next_btn.setEnabled(idx < self._stack.count() - 1)
 
     def _on_sidebar_clicked(self, idx):
         self._go_to_page(idx)
@@ -224,7 +224,7 @@ class RecodeWorkflowWizard(QDialog):
 
     def _on_next(self):
         cur = self._stack.currentIndex()
-        if cur < 2:
+        if cur < self._stack.count() - 1:
             self._go_to_page(cur + 1)
 
     # ─── signals from pages ───────────────────────────────────────

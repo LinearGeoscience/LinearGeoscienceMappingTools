@@ -365,9 +365,27 @@ class UpdateTablesPage(QWidget):
             else:
                 key_col = target_cols[0]  # Use first column as dedup key
                 if key_col in self._incoming_df.columns:
-                    existing_keys = set(self._current_df[key_col].astype(str))
+                    # Normalise both sides the same way so '1', ' 1' and '01'
+                    # compare consistently and rows aren't silently dropped or
+                    # duplicated by stray whitespace.
+                    def _norm_key(series):
+                        return series.astype(str).str.strip()
+
+                    existing_keys = set(_norm_key(self._current_df[key_col]))
+                    incoming_keys = _norm_key(self._incoming_df[key_col])
+
+                    # Surface duplicate keys within the incoming CSV itself —
+                    # otherwise the later concat keeps them all with no warning.
+                    internal_dups = incoming_keys[incoming_keys.duplicated()].unique()
+                    if len(internal_dups) > 0:
+                        self.log_message.emit(
+                            f"⚠ CSV has {len(internal_dups)} duplicate key(s) "
+                            f"in '{key_col}': "
+                            f"{', '.join(map(str, internal_dups[:10]))}"
+                            + (" …" if len(internal_dups) > 10 else ""))
+
                     new_rows = self._incoming_df[
-                        ~self._incoming_df[key_col].astype(str).isin(existing_keys)
+                        ~incoming_keys.isin(existing_keys)
                     ]
                     if len(new_rows) > 0:
                         new_aligned = new_rows.reindex(columns=target_cols)

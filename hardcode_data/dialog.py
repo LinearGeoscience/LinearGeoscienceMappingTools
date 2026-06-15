@@ -65,8 +65,9 @@ def _display(value):
 class HardcodeDataDialog(QDialog):
     """Tabbed preview-and-commit dialog for the combined tool."""
 
-    def __init__(self, parent=None):
+    def __init__(self, iface=None, parent=None):
         super().__init__(parent)
+        self.iface = iface
         self.scale = get_scale_manager()
         self.setWindowTitle("Hardcode Data & Update Legends")
         self.setMinimumSize(*self.scale.dialog_size(1100, 760))
@@ -361,7 +362,8 @@ class HardcodeDataDialog(QDialog):
         bottom_lay.addWidget(self._build_changes_table(report), 1)
 
         if report.uuid_report and report.uuid_report.duplicates:
-            bottom_lay.addWidget(self._build_duplicates_section(report))
+            bottom_lay.addWidget(
+                self._build_duplicates_section(layer_name, report))
         if report.missing_codes:
             bottom_lay.addWidget(self._build_missing_codes_section(
                 layer_name, report))
@@ -469,11 +471,10 @@ class HardcodeDataDialog(QDialog):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
-    def _build_duplicates_section(self, report):
+    def _build_duplicates_section(self, layer_name, report):
         uuid_rep = report.uuid_report
         section = CollapsibleSection(
-            f"Duplicate UUIDs in '{uuid_rep.field_name}' (report only — "
-            "not modified)", expanded=False)
+            f"Duplicate UUIDs in '{uuid_rep.field_name}'", expanded=False)
         section.set_status("warning",
                            f"{len(uuid_rep.duplicates)} values")
         text = QTextEdit()
@@ -484,7 +485,41 @@ class HardcodeDataDialog(QDialog):
         text.setPlainText("\n".join(lines))
         text.setMaximumHeight(self.scale.dimension(120))
         section.content_layout().addWidget(text)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        resolve_btn = QPushButton("Resolve Duplicates…")
+        resolve_btn.setStyleSheet(theme.action_button_style(primary=False))
+        resolve_btn.clicked.connect(
+            lambda _c, name=layer_name: self._resolve_duplicates(name))
+        btn_row.addWidget(resolve_btn)
+        section.content_layout().addLayout(btn_row)
         return section
+
+    def _resolve_duplicates(self, layer_name):
+        """Open the interactive resolver for one layer's duplicate UUIDs."""
+        report = self._reports.get(layer_name)
+        layer = self._snapshot_layers.get(layer_name)
+        if report is None or layer is None or not report.uuid_report:
+            return
+        duplicates = report.uuid_report.duplicates
+        if not duplicates:
+            return
+
+        try:
+            from .duplicate_resolver import DuplicateUuidResolverDialog
+        except ImportError:
+            from duplicate_resolver import DuplicateUuidResolverDialog
+
+        dlg = DuplicateUuidResolverDialog(
+            self.iface, layer, report.uuid_report.field_name,
+            duplicates, parent=self)
+        dlg.exec()
+
+        # If anything was resolved, re-analyse so the tabs/summary reflect the
+        # live edits (resolved groups drop out of the duplicate report).
+        if getattr(dlg, "resolved_count", 0) > 0:
+            self._generate_preview()
 
     def _build_missing_codes_section(self, layer_name, report):
         lookup = LAYER_CONFIGS[layer_name]['legend']['lookup_table']
