@@ -309,7 +309,7 @@ class BackgroundLoader(QThread):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Photo panel: rounded-corner rendering failed: {e}",
-                'Linear Geoscience', Qgis.Warning
+                'Linear Geoscience', Qgis.MessageLevel.Warning
             )
             return image
 

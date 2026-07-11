@@ -9,7 +9,7 @@ import re
 import json
 from datetime import datetime, date, time
 from qgis.PyQt.QtCore import QVariant, QDateTime, QDate, QTime
-from qgis.core import QgsFeatureRequest
+from qgis.core import Qgis, QgsFeatureRequest
 
 # Bundled fuzzywuzzy for better UUID field detection
 try:
@@ -398,7 +398,7 @@ def analyze_unique_values(layer, field_name, max_unique=1000):
 
     # Only fetch the one attribute, no geometry - much faster on large layers
     request = (QgsFeatureRequest()
-               .setFlags(QgsFeatureRequest.NoGeometry)
+               .setFlags(Qgis.FeatureRequestFlag.NoGeometry)
                .setSubsetOfAttributes([field_idx]))
 
     for feature in layer.getFeatures(request):

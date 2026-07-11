@@ -3,7 +3,7 @@
 Dock Widget UI for Map Cleaning Toolkit - Clipping Panel
 Tabbed interface for clipping operations and spline settings
 """
-from qgis.core import QgsProject, QgsWkbTypes
+from qgis.core import Qgis, QgsProject
 from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -150,7 +150,7 @@ class ClipperDockWidget(QDockWidget):
         self.layer_combo = QComboBox()
         populate_layer_combo(
             self.layer_combo,
-            layer_candidates(geometry=QgsWkbTypes.PolygonGeometry))
+            layer_candidates(geometry=Qgis.GeometryType.Polygon))
         self.layer_combo.currentIndexChanged.connect(self._on_layer_combo_changed)
 
         # A plain combo (unlike QgsMapLayerComboBox) does not auto-track the
@@ -1071,7 +1071,7 @@ class ClipperDockWidget(QDockWidget):
         prev_id = self.layer_combo.currentData()
         populate_layer_combo(
             self.layer_combo,
-            layer_candidates(geometry=QgsWkbTypes.PolygonGeometry),
+            layer_candidates(geometry=Qgis.GeometryType.Polygon),
             select_layer_id=prev_id)
         if self.layer_combo.currentData() != prev_id:
             self.on_layer_changed(self.get_current_layer())

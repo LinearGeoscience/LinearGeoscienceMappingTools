@@ -54,7 +54,7 @@ class UIScaleManager:
                 QgsMessageLog.logMessage(
                     "No QApplication instance found, using default scale factor of 1.0",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
 
@@ -67,7 +67,7 @@ class UIScaleManager:
                 QgsMessageLog.logMessage(
                     "No primary screen found, using default scale factor of 1.0",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
 
@@ -86,14 +86,14 @@ class UIScaleManager:
                 QgsMessageLog.logMessage(
                     f"Scale factor {self.scale_factor:.2f} below minimum, clamping to {self.MIN_SCALE_FACTOR}",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 self.scale_factor = self.MIN_SCALE_FACTOR
             elif self.scale_factor > self.MAX_SCALE_FACTOR:
                 QgsMessageLog.logMessage(
                     f"Scale factor {self.scale_factor:.2f} above maximum, clamping to {self.MAX_SCALE_FACTOR}",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 self.scale_factor = self.MAX_SCALE_FACTOR
 
@@ -109,7 +109,7 @@ class UIScaleManager:
             QgsMessageLog.logMessage(
                 f"Error detecting screen DPI: {str(e)}. Using scale factor of 1.0",
                 "LinearGeoscience",
-                Qgis.Critical
+                Qgis.MessageLevel.Critical
             )
 
     def _log_scaling_info(self):
@@ -120,7 +120,7 @@ class UIScaleManager:
             f"Scale Factor: {self.scale_factor:.2f}, "
             f"Device Pixel Ratio: {self.device_pixel_ratio:.2f}",
             "LinearGeoscience",
-            Qgis.Info
+            Qgis.MessageLevel.Info
         )
 
     def dimension(self, base_pixels):
@@ -276,7 +276,7 @@ class UIScaleManager:
             QgsMessageLog.logMessage(
                 f"Display scaling changed from {old_factor:.2f} to {self.scale_factor:.2f}",
                 "LinearGeoscience",
-                Qgis.Info
+                Qgis.MessageLevel.Info
             )
             return True
         return False

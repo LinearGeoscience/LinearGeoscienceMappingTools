@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton,
                                  QCheckBox)
 from qgis.core import (QgsProject, QgsCoordinateReferenceSystem, QgsVectorLayer,
                        QgsDataSourceUri, QgsCoordinateTransformContext,
-                       QgsVectorFileWriter, QgsWkbTypes, QgsMessageLog, Qgis)
+                       QgsVectorFileWriter, QgsMessageLog, Qgis)
 from qgis.gui import QgsProjectionSelectionWidget
 
 
@@ -436,7 +436,7 @@ class TemplateLoaderDialog(QDialog):
                 except Exception as track_exc:
                     QgsMessageLog.logMessage(
                         f"Reconcile registration failed: {track_exc}",
-                        'Linear Geoscience', Qgis.Warning)
+                        'Linear Geoscience', Qgis.MessageLevel.Warning)
                     tracking_note = f"\n\nChange tracking could not be set up: {track_exc}"
 
             self.status_label.setText("Template created successfully!")
@@ -494,7 +494,7 @@ class TemplateLoaderDialog(QDialog):
 
         except Exception as e:
             # Non-critical error
-            QgsMessageLog.logMessage(f"Warning: Could not load layers into project: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Warning: Could not load layers into project: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
 def run_template_loader():
@@ -532,7 +532,7 @@ def run_template_loader():
         import traceback
         QgsMessageLog.logMessage(
             f"run_template_loader failed: {e}\n{traceback.format_exc()}",
-            'Linear Geoscience', Qgis.Critical
+            'Linear Geoscience', Qgis.MessageLevel.Critical
         )
         iface.messageBar().pushCritical(
             "Linear Geoscience",

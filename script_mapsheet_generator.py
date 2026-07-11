@@ -10,7 +10,7 @@ from qgis.PyQt.QtWidgets import (QWidget, QDockWidget, QComboBox, QVBoxLayout, Q
 from qgis.PyQt.QtCore import Qt, QVariant, pyqtSignal
 from qgis.core import (QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
                        QgsField, QgsFields, QgsVectorLayer, QgsRectangle,
-                       QgsWkbTypes, QgsMapLayerType, QgsSymbol, QgsRendererCategory,
+                       QgsSymbol, QgsRendererCategory,
                        QgsCategorizedSymbolRenderer, QgsPalLayerSettings,
                        QgsTextFormat, QgsTextBufferSettings, QgsVectorLayerSimpleLabeling,
                        Qgis, QgsMessageLog)
@@ -65,7 +65,7 @@ class PolygonDrawMapTool(QgsMapTool):
 
     def __init__(self, canvas):
         super().__init__(canvas)
-        self.rubber_band = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self.rubber_band = QgsRubberBand(canvas, Qgis.GeometryType.Polygon)
         self.rubber_band.setColor(QColor(255, 0, 0, 100))
         self.rubber_band.setWidth(2)
         self.points = []
@@ -82,7 +82,7 @@ class PolygonDrawMapTool(QgsMapTool):
                 polygon = QgsGeometry.fromPolygonXY([ring])
                 self.polygon_completed.emit(polygon)
             self.points = []
-            self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+            self.rubber_band.reset(Qgis.GeometryType.Polygon)
 
     def canvasMoveEvent(self, event):
         if self.points:
@@ -90,7 +90,7 @@ class PolygonDrawMapTool(QgsMapTool):
             self._update_rubber_band(point)
 
     def _update_rubber_band(self, current_point=None):
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(Qgis.GeometryType.Polygon)
         points = list(self.points)
         if current_point:
             points.append(current_point)
@@ -98,7 +98,7 @@ class PolygonDrawMapTool(QgsMapTool):
             self.rubber_band.addPoint(pt, i == len(points) - 1)
 
     def deactivate(self):
-        self.rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.rubber_band.reset(Qgis.GeometryType.Polygon)
         self.points = []
         super().deactivate()
 
@@ -142,22 +142,22 @@ class FinalMapSheetPanel(QDockWidget):
             QgsProject.instance().layersRemoved.connect(self._on_layers_changed)
 
             self.setup_ui()
-            QgsMessageLog.logMessage("Panel initialized", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Panel initialized", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error initializing panel: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error initializing panel: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def on_layers_removed(self, layer_ids):
         """Handle event when layers are removed from the project"""
         try:
             if self.preview_layer_id in layer_ids:
-                QgsMessageLog.logMessage(f"Preview layer was removed externally (ID: {self.preview_layer_id})", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Preview layer was removed externally (ID: {self.preview_layer_id})", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 self.preview_layer = None
                 self.preview_layer_id = None
                 self._disable_preview_buttons()
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error in layers removed handler: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error in layers removed handler: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def _on_layers_changed(self, *args):
         """Refresh all layer combos when project layers change."""
@@ -167,7 +167,7 @@ class FinalMapSheetPanel(QDockWidget):
             self.populate_reference_layers()
             self.populate_merge_layers()
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error refreshing layer combos: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error refreshing layer combos: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def calculate_dimensions(self):
         """Calculate real-world dimensions for each scale and sheet size"""
@@ -186,10 +186,10 @@ class FinalMapSheetPanel(QDockWidget):
                     height_m = (height_cm / 100) * scale_factor
                     self.dimensions[sheet_name][scale] = (width_m, height_m)
 
-            QgsMessageLog.logMessage("Mapsheet dimensions calculated for all scales and sizes", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Mapsheet dimensions calculated for all scales and sizes", 'Linear Geoscience', Qgis.MessageLevel.Info)
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error calculating dimensions: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error calculating dimensions: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def setup_ui(self):
         """Create the panel UI with tabbed layout"""
@@ -217,11 +217,11 @@ class FinalMapSheetPanel(QDockWidget):
             self.setup_merge_section(layout)
 
             self.setWidget(main_widget)
-            QgsMessageLog.logMessage("UI setup complete", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("UI setup complete", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error setting up UI: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error setting up UI: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def _setup_sheet_config(self, layout):
         """Set up shared sheet configuration controls above tabs."""
@@ -507,8 +507,8 @@ class FinalMapSheetPanel(QDockWidget):
         required_fields = ['name', 'sheet_size', 'scale'] if require_mapsheet_fields else []
 
         for layer in QgsProject.instance().mapLayers().values():
-            if layer.type() == QgsMapLayerType.VectorLayer:
-                if layer.geometryType() == QgsWkbTypes.PolygonGeometry:
+            if layer.type() == Qgis.LayerType.Vector:
+                if layer.geometryType() == Qgis.GeometryType.Polygon:
                     if require_mapsheet_fields:
                         layer_fields = [f.name() for f in layer.fields()]
                         if not all(f in layer_fields for f in required_fields):
@@ -536,7 +536,7 @@ class FinalMapSheetPanel(QDockWidget):
         try:
             self._populate_polygon_combo(self.layer_combo)
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error populating layers: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error populating layers: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def populate_existing_mapsheet_layers(self, *args):
         """Populate the existing mapsheet layer combo (layers with mapsheet fields)"""
@@ -547,7 +547,7 @@ class FinalMapSheetPanel(QDockWidget):
                 add_placeholder="-- Select Mapsheet Layer --"
             )
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error populating existing mapsheet layers: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error populating existing mapsheet layers: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def populate_reference_layers(self, *args):
         """Populate the reference layer combo with polygon layers"""
@@ -557,7 +557,7 @@ class FinalMapSheetPanel(QDockWidget):
                 add_placeholder="-- None (optional) --"
             )
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error populating reference layers: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error populating reference layers: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def populate_merge_layers(self, *args):
         """Populate the master and source layer combos for merging"""
@@ -573,7 +573,7 @@ class FinalMapSheetPanel(QDockWidget):
                 add_placeholder="-- Select Source Layer --"
             )
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error populating merge layers: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error populating merge layers: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     # ---- Getters ----
 
@@ -583,7 +583,7 @@ class FinalMapSheetPanel(QDockWidget):
             if (self.input_layer_id != input_layer.id() or
                     self.combined_input_geometry is None):
 
-                QgsMessageLog.logMessage("Calculating combined input geometry...", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage("Calculating combined input geometry...", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 start_time = time.time()
 
                 geometries = []
@@ -612,13 +612,13 @@ class FinalMapSheetPanel(QDockWidget):
                     self.combined_input_geometry = combined
 
                 self.input_layer_id = input_layer.id()
-                QgsMessageLog.logMessage(f"Combined geometry calculated in {time.time() - start_time:.2f}s", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Combined geometry calculated in {time.time() - start_time:.2f}s", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             return self.combined_input_geometry
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error getting combined geometry: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error getting combined geometry: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return None
 
     def update_scale_combo(self):
@@ -642,15 +642,15 @@ class FinalMapSheetPanel(QDockWidget):
                     self.scale_combo.setCurrentIndex(0)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error updating scale combo: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error updating scale combo: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def get_selected_layer(self):
         """Get the selected input layer"""
         try:
             return self._combo_layer(self.layer_combo)
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error getting selected layer: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error getting selected layer: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return None
 
     def get_selected_sheet_size(self):
@@ -658,7 +658,7 @@ class FinalMapSheetPanel(QDockWidget):
         try:
             return self.size_combo.currentText()
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error getting selected sheet size: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error getting selected sheet size: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return None
 
     def get_selected_scale(self):
@@ -669,7 +669,7 @@ class FinalMapSheetPanel(QDockWidget):
                 return None
             return self.scale_combo.currentText()
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error getting selected scale: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error getting selected scale: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return None
 
     def get_orientation_is_landscape(self):
@@ -755,7 +755,7 @@ class FinalMapSheetPanel(QDockWidget):
     def _remove_previous_preview(self):
         """Remove existing preview layer if present."""
         if self.check_preview_layer_exists():
-            QgsMessageLog.logMessage(f"Removing previous preview layer (ID: {self.preview_layer_id})", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Removing previous preview layer (ID: {self.preview_layer_id})", 'Linear Geoscience', Qgis.MessageLevel.Info)
             QgsProject.instance().removeMapLayer(self.preview_layer_id)
             self.preview_layer = None
             self.preview_layer_id = None
@@ -792,7 +792,7 @@ class FinalMapSheetPanel(QDockWidget):
                     group_values.add(feature['group'])
 
             for i, group_id in enumerate(sorted(group_values)):
-                symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.PolygonGeometry)
+                symbol = QgsSymbol.defaultSymbol(Qgis.GeometryType.Polygon)
                 symbol.symbolLayer(0).setStrokeColor(QColor(80, 80, 80))
                 symbol.symbolLayer(0).setFillColor(QColor(0, 0, 0, 0))
                 symbol.symbolLayer(0).setStrokeWidth(0.15)
@@ -804,7 +804,7 @@ class FinalMapSheetPanel(QDockWidget):
                 renderer = QgsCategorizedSymbolRenderer('group', categories)
                 layer.setRenderer(renderer)
             else:
-                symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.PolygonGeometry)
+                symbol = QgsSymbol.defaultSymbol(Qgis.GeometryType.Polygon)
                 symbol.symbolLayer(0).setStrokeColor(QColor(80, 80, 80))
                 symbol.symbolLayer(0).setFillColor(QColor(0, 0, 0, 0))
                 symbol.symbolLayer(0).setStrokeWidth(0.15)
@@ -815,19 +815,19 @@ class FinalMapSheetPanel(QDockWidget):
             label_settings.fieldName = 'name'
 
             try:
-                label_settings.placement = QgsPalLayerSettings.Placement.OverPoint
+                label_settings.placement = Qgis.LabelPlacement.OverPoint
             except AttributeError:
                 try:
-                    label_settings.placement = QgsPalLayerSettings.OverPoint
+                    label_settings.placement = Qgis.LabelPlacement.OverPoint
                 except AttributeError:
-                    label_settings.placement = QgsPalLayerSettings.AroundPoint
+                    label_settings.placement = Qgis.LabelPlacement.AroundPoint
 
             label_settings.xOffset = 0
             label_settings.yOffset = 0
             try:
-                label_settings.offsetType = QgsPalLayerSettings.OffsetType.FromPoint
+                label_settings.offsetType = Qgis.LabelOffsetType.FromPoint
             except AttributeError:
-                label_settings.offsetType = QgsPalLayerSettings.FromPoint
+                label_settings.offsetType = Qgis.LabelOffsetType.FromPoint
 
             label_format = QgsTextFormat()
             font = label_format.font()
@@ -849,14 +849,14 @@ class FinalMapSheetPanel(QDockWidget):
             layer.triggerRepaint()
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error applying styling: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error applying styling: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     # ---- Add Sheet ----
 
     def add_mapsheet_dialog(self):
         """Show orientation dialog then add a mapsheet."""
-        QgsMessageLog.logMessage("========== ADD MAPSHEET CLICKED ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== ADD MAPSHEET CLICKED ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             if not self.check_preview_layer_exists():
                 self.status_label.setText("Error: Preview layer not found")
@@ -884,8 +884,8 @@ class FinalMapSheetPanel(QDockWidget):
                 self.add_mapsheet(landscape=landscape_radio.isChecked())
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error in add mapsheet dialog: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error in add mapsheet dialog: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def add_mapsheet(self, landscape=True):
         """Add a new mapsheet to the preview layer at the center of the current map view."""
@@ -967,15 +967,15 @@ class FinalMapSheetPanel(QDockWidget):
             self.status_label.setText(f"Added {orientation_text.lower()} mapsheet at center of view")
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error adding mapsheet: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error adding mapsheet: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error adding mapsheet: {str(e)}")
 
     # ---- Tab 1: Generate from Input Layer ----
 
     def generate_preview(self):
         """Generate a preview of mapsheets from the input layer."""
-        QgsMessageLog.logMessage("========== GENERATE PREVIEW CLICKED ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== GENERATE PREVIEW CLICKED ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             input_layer = self.get_selected_layer()
             if not input_layer:
@@ -995,7 +995,7 @@ class FinalMapSheetPanel(QDockWidget):
             overlap_percent = self.overlap_spin.value()
             landscape = self.get_orientation_is_landscape()
 
-            QgsMessageLog.logMessage(f"Generating preview: Layer={input_layer.name()}, Size={sheet_size}, Scale={scale}, Overlap={overlap_percent}%, Orientation={'Landscape' if landscape else 'Portrait'}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Generating preview: Layer={input_layer.name()}, Size={sheet_size}, Scale={scale}, Overlap={overlap_percent}%, Orientation={'Landscape' if landscape else 'Portrait'}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             self.status_label.setText("Generating preview...")
 
             # Clear geometry cache if layer changed
@@ -1033,11 +1033,11 @@ class FinalMapSheetPanel(QDockWidget):
             self.status_label.setText(
                 f"Preview generated: {count} mapsheets ({processing_time:.2f}s)"
             )
-            QgsMessageLog.logMessage(f"Preview generated with {count} mapsheets in {processing_time:.2f}s", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Preview generated with {count} mapsheets in {processing_time:.2f}s", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error generating preview: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error generating preview: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error: {str(e)}")
 
     # ---- Tab 2: Draw Base Polygons ----
@@ -1062,8 +1062,8 @@ class FinalMapSheetPanel(QDockWidget):
                 self.draw_button.setText('Draw Polygon on Map')
                 self.draw_status_label.setText('')
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error toggling draw mode: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error toggling draw mode: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def on_polygon_drawn(self, geometry):
         """Handle a completed drawn polygon."""
@@ -1079,7 +1079,7 @@ class FinalMapSheetPanel(QDockWidget):
                 f"Polygon {idx} added. Continue drawing or stop."
             )
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error handling drawn polygon: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error handling drawn polygon: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def remove_drawn_polygon(self):
         """Remove the selected polygon from the drawn list."""
@@ -1094,7 +1094,7 @@ class FinalMapSheetPanel(QDockWidget):
                     orient = self.drawn_polygons[i]['orientation']
                     item.setText(f"Polygon {i + 1} ({orient})")
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error removing drawn polygon: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error removing drawn polygon: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def clear_drawn_polygons(self):
         """Clear all drawn polygons."""
@@ -1104,7 +1104,7 @@ class FinalMapSheetPanel(QDockWidget):
 
     def generate_preview_from_drawn(self):
         """Generate mapsheet preview from drawn base polygons."""
-        QgsMessageLog.logMessage("========== GENERATE FROM DRAWN POLYGONS ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== GENERATE FROM DRAWN POLYGONS ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             if not self.drawn_polygons:
                 self.draw_status_label.setText("No polygons drawn yet")
@@ -1162,18 +1162,18 @@ class FinalMapSheetPanel(QDockWidget):
                 f"Preview generated: {count} mapsheets from {len(self.drawn_polygons)} "
                 f"polygons ({processing_time:.2f}s)"
             )
-            QgsMessageLog.logMessage(f"Generated {count} mapsheets from drawn polygons in {processing_time:.2f}s", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Generated {count} mapsheets from drawn polygons in {processing_time:.2f}s", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error generating preview from drawn polygons: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error generating preview from drawn polygons: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error: {str(e)}")
 
     # ---- Tab 3: Modify Existing ----
 
     def load_existing_layer(self):
         """Load an existing mapsheet layer as an editable preview."""
-        QgsMessageLog.logMessage("========== LOAD EXISTING LAYER ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== LOAD EXISTING LAYER ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             idx = self.existing_layer_combo.currentIndex()
             if idx <= 0:
@@ -1223,11 +1223,11 @@ class FinalMapSheetPanel(QDockWidget):
             self.status_label.setText(
                 f"Loaded {len(features_to_add)} mapsheets from '{source_layer.name()}'"
             )
-            QgsMessageLog.logMessage(f"Loaded {len(features_to_add)} features from '{source_layer.name()}'", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Loaded {len(features_to_add)} features from '{source_layer.name()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error loading existing layer: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error loading existing layer: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error: {str(e)}")
 
     # ---- Core grid generation ----
@@ -1301,24 +1301,24 @@ class FinalMapSheetPanel(QDockWidget):
                                     overlap_percent=10, landscape=True):
         """Calculate mapsheet arrangement using a uniform grid."""
         try:
-            QgsMessageLog.logMessage(f"Calculating uniform mapsheets ({'landscape' if landscape else 'portrait'})", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Calculating uniform mapsheets ({'landscape' if landscape else 'portrait'})", 'Linear Geoscience', Qgis.MessageLevel.Info)
             start_time = time.time()
 
             combined_geometry = self.get_combined_input_geometry(input_layer)
             if not combined_geometry:
-                QgsMessageLog.logMessage("Could not get combined input geometry", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage("Could not get combined input geometry", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return []
 
             mapsheets, _ = self._generate_grid_for_geometry(
                 combined_geometry, sheet_size, scale, overlap_percent, landscape
             )
 
-            QgsMessageLog.logMessage(f"Generated {len(mapsheets)} uniform mapsheets in {time.time() - start_time:.2f}s", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Generated {len(mapsheets)} uniform mapsheets in {time.time() - start_time:.2f}s", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return mapsheets
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error calculating uniform mapsheets: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error calculating uniform mapsheets: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             raise
 
     # ---- Metrics ----
@@ -1398,8 +1398,8 @@ class FinalMapSheetPanel(QDockWidget):
             self._color_metric_label(self.wasted_area_label, wasted_area_pct, 20, 40, False)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error calculating metrics: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error calculating metrics: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def _color_metric_label(self, label, value, good_threshold, medium_threshold, higher_is_better):
         """Apply color coding to a metric label."""
@@ -1421,7 +1421,7 @@ class FinalMapSheetPanel(QDockWidget):
 
     def update_metrics(self):
         """Update metrics after manual edits."""
-        QgsMessageLog.logMessage("========== UPDATE METRICS CLICKED ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== UPDATE METRICS CLICKED ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             if not self.check_preview_layer_exists():
                 self.status_label.setText("Error: Preview layer not found")
@@ -1438,11 +1438,11 @@ class FinalMapSheetPanel(QDockWidget):
             self.status_label.setText(
                 f"Metrics updated: {sheet_count} mapsheets ({processing_time:.2f}s)"
             )
-            QgsMessageLog.logMessage(f"Metrics updated for {sheet_count} mapsheets in {processing_time:.2f}s", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Metrics updated for {sheet_count} mapsheets in {processing_time:.2f}s", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error updating metrics: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error updating metrics: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error updating metrics: {str(e)}")
 
     # ---- Merge ----
@@ -1472,13 +1472,13 @@ class FinalMapSheetPanel(QDockWidget):
             return highest_number
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error getting highest mapsheet number: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error getting highest mapsheet number: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return 0
 
     def merge_mapsheet_layers(self):
         """Merge source layer into master layer with sequential numbering"""
-        QgsMessageLog.logMessage("========== MERGE MAPSHEET LAYERS ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== MERGE MAPSHEET LAYERS ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             master_index = self.master_layer_combo.currentIndex()
             source_index = self.source_layer_combo.currentIndex()
@@ -1504,7 +1504,7 @@ class FinalMapSheetPanel(QDockWidget):
                 return
 
             highest_number = self.get_highest_mapsheet_number(master_layer)
-            QgsMessageLog.logMessage(f"Starting numbering from: {highest_number + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Starting numbering from: {highest_number + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             source_features = list(source_layer.getFeatures())
             if not source_features:
@@ -1559,18 +1559,18 @@ class FinalMapSheetPanel(QDockWidget):
                 f"You can now delete the source layer '{source_layer.name()}' if no longer needed."
             )
 
-            QgsMessageLog.logMessage(f"Merged {len(features_to_add)} features to master layer", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Merged {len(features_to_add)} features to master layer", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error merging layers: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error merging layers: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             QMessageBox.critical(self, "Error", f"Failed to merge layers: {str(e)}")
 
     # ---- Finalize ----
 
     def create_mapsheets(self):
         """Create the final mapsheet layer with properly sequenced names."""
-        QgsMessageLog.logMessage("========== FINALIZE MAPSHEETS CLICKED ==========", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("========== FINALIZE MAPSHEETS CLICKED ==========", 'Linear Geoscience', Qgis.MessageLevel.Info)
         try:
             if not self.check_preview_layer_exists():
                 self.status_label.setText("Error: Preview layer not found")
@@ -1640,7 +1640,7 @@ class FinalMapSheetPanel(QDockWidget):
             self._disable_preview_buttons()
 
             try:
-                success_level = Qgis.Success
+                success_level = Qgis.MessageLevel.Success
             except AttributeError:
                 success_level = 3
 
@@ -1650,11 +1650,11 @@ class FinalMapSheetPanel(QDockWidget):
                 f"(sorted by top-left corner position)",
                 level=success_level
             )
-            QgsMessageLog.logMessage(f"Created final mapsheet layer with {len(final_features)} sheets", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Created final mapsheet layer with {len(final_features)} sheets", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error creating mapsheets: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error creating mapsheets: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.status_label.setText(f"Error creating mapsheets: {str(e)}")
 
     def closeEvent(self, event):
@@ -1673,21 +1673,21 @@ class FinalMapSheetPanel(QDockWidget):
 # Function to run the panel
 def run_final_mapsheet_panel():
     try:
-        QgsMessageLog.logMessage("Starting Final MapSheet Generator", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Starting Final MapSheet Generator", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Check if panel already exists, close it
         for dock in iface.mainWindow().findChildren(QDockWidget, "MapSheet Generator"):
-            QgsMessageLog.logMessage("Removing existing panel", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Removing existing panel", 'Linear Geoscience', Qgis.MessageLevel.Info)
             iface.removeDockWidget(dock)
             dock.deleteLater()
 
         # Create and show the panel
-        QgsMessageLog.logMessage("Creating new panel", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Creating new panel", 'Linear Geoscience', Qgis.MessageLevel.Info)
         panel = FinalMapSheetPanel(iface.mainWindow())
         iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, panel)
         panel.show()
 
-        QgsMessageLog.logMessage("Final MapSheet Generator panel created", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Final MapSheet Generator panel created", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Store persistent reference on iface to prevent GC; clean up on close
         panel.destroyed.connect(lambda: setattr(iface, "_mapsheet_panel", None))
@@ -1696,8 +1696,8 @@ def run_final_mapsheet_panel():
         return panel
 
     except Exception as e:
-        QgsMessageLog.logMessage(f"Failed to create panel: {str(e)}", 'Linear Geoscience', Qgis.Warning)
-        QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage(f"Failed to create panel: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+        QgsMessageLog.logMessage(traceback.format_exc(), 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return None
 
 

@@ -112,7 +112,7 @@ def clean_csv_uri_to_path(uri: str) -> Optional[str]:
         QgsMessageLog.logMessage(
             f"Failed to URL-decode CSV path: {uri}",
             "LGS QField Exporter",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
 
     # Step 4: Normalize path separators for current OS
@@ -228,6 +228,6 @@ def normalize_project_file_paths(project_file: Path) -> bool:
         QgsMessageLog.logMessage(
             f"Failed to normalize paths in project file: {e}",
             "LGS QField Exporter",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
         return False

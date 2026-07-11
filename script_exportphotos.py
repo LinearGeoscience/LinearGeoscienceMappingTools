@@ -31,7 +31,7 @@ from qgis.PyQt.QtGui import QFont, QColor
 from qgis.core import (QgsProject, QgsVectorLayer, QgsVectorFileWriter, QgsFeature,
                        QgsSymbol, QgsSingleSymbolRenderer, QgsSimpleMarkerSymbolLayer,
                        QgsPalLayerSettings, QgsVectorLayerSimpleLabeling,
-                       QgsTextBufferSettings, QgsMessageLog, Qgis, QgsWkbTypes)
+                       QgsTextBufferSettings, QgsMessageLog, Qgis)
 import os
 import shutil
 import datetime
@@ -341,7 +341,7 @@ class PhotoPackageWorker(QThread):
             options
         )
 
-        if error[0] != QgsVectorFileWriter.NoError:
+        if error[0] != QgsVectorFileWriter.WriterError.NoError:
             raise Exception(f"Failed to write GeoPackage: {error[1]}")
 
         self.log_message.emit(f"GeoPackage created: {gpkg_path}")
@@ -436,7 +436,7 @@ class PhotoPackageWorker(QThread):
 
         symbol = QgsSymbol.defaultSymbol(layer.geometryType())
         marker = QgsSimpleMarkerSymbolLayer()
-        marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+        marker.setShape(Qgis.MarkerShape.Circle)
         marker.setSize(4.5)
         marker.setColor(QColor(255, 255, 255))   # white fill
         marker.setStrokeColor(charcoal)          # thin charcoal ring
@@ -802,7 +802,7 @@ class PhotoExportDialog(QDialog):
         """Repopulate the layer combo for the current export mode and load the selection"""
         if self.is_package_mode:
             # Package mode needs a spatial points layer
-            candidates = layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+            candidates = layer_candidates(geometry=Qgis.GeometryType.Point,
                                           required_fields=[self.PHOTO_PATH_FIELD])
             target_name = self.PHOTO_POINTS_NAME
         else:
@@ -849,9 +849,9 @@ class PhotoExportDialog(QDialog):
         self.layer_info_label.setText(f"✓ Layer: {self.current_layer.name()} ({feature_count} features) | {field_status}")
         self.layer_info_label.setStyleSheet("font-weight: bold; color: green;")
 
-        QgsMessageLog.logMessage(f"Field detection - SampleID: {'Found' if has_sampleid_field else 'Not found'}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"All fields: {field_names}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Looking for field: '{self.SAMPLEID_FIELD}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Field detection - SampleID: {'Found' if has_sampleid_field else 'Not found'}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"All fields: {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Looking for field: '{self.SAMPLEID_FIELD}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Check if Favourite field exists and update radio button accordingly
         if self.FAVOURITE_FIELD not in field_names:
@@ -867,38 +867,38 @@ class PhotoExportDialog(QDialog):
         self.all_features = list(self.current_layer.getFeatures())
 
         # Force initial preview update
-        QgsMessageLog.logMessage("Forcing initial preview update...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Forcing initial preview update...", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
         # Also add debugging for radio button connections
-        QgsMessageLog.logMessage(f"Radio buttons connected: All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Radio buttons connected: All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Add explicit check after a moment to ensure UI is ready
         try:
             QTimer.singleShot(100, self.delayed_preview_update)
         except NameError:
-            QgsMessageLog.logMessage("QTimer not available, skipping delayed update", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("QTimer not available, skipping delayed update", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Fallback: call delayed update directly
             self.delayed_preview_update()
 
     def delayed_preview_update(self):
         """Delayed preview update to ensure everything is initialized"""
-        QgsMessageLog.logMessage("=== DELAYED PREVIEW UPDATE ===", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Delayed check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("=== DELAYED PREVIEW UPDATE ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Delayed check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
     def manual_preview_update(self):
         """Manual preview update triggered by button"""
-        QgsMessageLog.logMessage("=== MANUAL PREVIEW UPDATE TRIGGERED ===", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Manual check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("=== MANUAL PREVIEW UPDATE TRIGGERED ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Manual check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
     def on_radio_changed(self):
         """Debug wrapper for radio button changes"""
         sender = self.sender()
         if sender.isChecked():  # Only respond to the button being checked, not unchecked
-            QgsMessageLog.logMessage(f"Radio button changed to: {sender.text()}", 'Linear Geoscience', Qgis.Info)
-            QgsMessageLog.logMessage(f"Current state - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Radio button changed to: {sender.text()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"Current state - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             self.update_preview()
 
     def get_filtered_features(self):

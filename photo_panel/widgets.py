@@ -291,7 +291,7 @@ class PhotoThumbnail(QFrame):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Photo panel: zoom to location failed: {e}",
-                'Linear Geoscience', Qgis.Warning
+                'Linear Geoscience', Qgis.MessageLevel.Warning
             )
             QMessageBox.warning(self, "Error", f"Could not zoom to location: {str(e)}")
 

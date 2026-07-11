@@ -48,15 +48,15 @@ def create_domain_polygon_layer(iface):
     """
     try:
         # Inform the user that the layer creation has started
-        iface.messageBar().pushMessage("Info", "Creating 'Domain' layer...", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Creating 'Domain' layer...", level=Qgis.MessageLevel.Info)
 
         # 1) Retrieve the current project CRS
         project = QgsProject.instance()
         project_crs = project.crs()
 
         # Log the project's CRS
-        QgsMessageLog.logMessage(f"Project CRS: {project_crs.authid()}", 'Linear Geoscience', Qgis.Info)
-        iface.messageBar().pushMessage("Info", f"Project CRS: {project_crs.authid()}", level=Qgis.Info)
+        QgsMessageLog.logMessage(f"Project CRS: {project_crs.authid()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        iface.messageBar().pushMessage("Info", f"Project CRS: {project_crs.authid()}", level=Qgis.MessageLevel.Info)
 
         # 2) Memory layer URI with dynamic CRS based on project CRS
         layer_uri = f"Polygon?crs={project_crs.authid()}"
@@ -76,14 +76,14 @@ def create_domain_polygon_layer(iface):
         QgsProject.instance().addMapLayer(layer)
 
         # Inform the user of successful creation
-        iface.messageBar().pushMessage("Success", f"Layer '{layer.name()}' successfully added with CRS {project_crs.authid()}.", level=Qgis.Success)
-        QgsMessageLog.logMessage(f"Layer '{layer.name()}' successfully added with CRS {project_crs.authid()}.", 'Linear Geoscience', Qgis.Info)
+        iface.messageBar().pushMessage("Success", f"Layer '{layer.name()}' successfully added with CRS {project_crs.authid()}.", level=Qgis.MessageLevel.Success)
+        QgsMessageLog.logMessage(f"Layer '{layer.name()}' successfully added with CRS {project_crs.authid()}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     except Exception as e:
         # Inform the user of any errors encountered
         error_msg = f"Failed to create 'Domain' layer: {e}"
-        iface.messageBar().pushMessage("Error", error_msg, level=Qgis.Critical)
-        QgsMessageLog.logMessage(error_msg, 'Linear Geoscience', Qgis.Warning)
+        iface.messageBar().pushMessage("Error", error_msg, level=Qgis.MessageLevel.Critical)
+        QgsMessageLog.logMessage(error_msg, 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 def run(iface):
     """Entry point called from mainplugin.py."""

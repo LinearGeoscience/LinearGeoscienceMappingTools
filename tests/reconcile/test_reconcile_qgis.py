@@ -38,7 +38,8 @@ import checkout          # noqa: E402
 import reconcile         # noqa: E402
 import tombstones        # noqa: E402
 
-from qgis.core import (QgsVectorLayer, QgsFeature, QgsGeometry,  # noqa: E402
+from qgis.core import (
+    Qgis,QgsVectorLayer, QgsFeature, QgsGeometry,  # noqa: E402
                        QgsPointXY, QgsWkbTypes)
 
 LAYER = "1 - FieldNotebook"
@@ -120,7 +121,7 @@ def _find_polygon_layer(gpkg):
     for name in ["2 - Overlay", "3 - Linework", "4 - Basemap"]:
         lyr = QgsVectorLayer(f"{gpkg}|layername={name}", name, "ogr")
         if lyr.isValid() and QgsWkbTypes.geometryType(lyr.wkbType()) == \
-                QgsWkbTypes.PolygonGeometry:
+                Qgis.GeometryType.Polygon:
             return name
     return None
 

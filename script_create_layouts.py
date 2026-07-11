@@ -14,9 +14,9 @@ from qgis.core import (QgsProject, QgsPrintLayout, QgsReadWriteContext,
                        QgsLayoutItemMap, QgsLayoutItemMapGrid, QgsRectangle,
                        QgsLayoutItemLabel, QgsLayoutItemScaleBar,
                        QgsLayoutItemLegend, QgsLayoutExporter,
-                       QgsWkbTypes, QgsMapLayerType, QgsMessageLog, Qgis,
+                       QgsMessageLog, Qgis,
                        QgsMapLayerLegendUtils, QgsLayerTreeGroup,
-                       QgsCategorizedSymbolRenderer, QgsUnitTypes)
+                       QgsCategorizedSymbolRenderer)
 from qgis.utils import iface
 
 try:
@@ -87,7 +87,7 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
     def _log(msg):
         if log:
             log(msg)
-        QgsMessageLog.logMessage(msg, LOG_TAG, Qgis.Info)
+        QgsMessageLog.logMessage(msg, LOG_TAG, Qgis.MessageLevel.Info)
 
     total = len(layout_names)
     export_success = 0
@@ -118,7 +118,7 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
                     pass
                 result = exporter.exportToPdf(
                     os.path.join(out_dir, f"{safe_name}.pdf"), pdf_settings)
-                if result != QgsLayoutExporter.Success:
+                if result != QgsLayoutExporter.ExportResult.Success:
                     ok = False
                     _log(f"PDF export failed for '{name}': error code {result}")
 
@@ -128,7 +128,7 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
                 tiff_settings.generateWorldFile = True
                 result = exporter.exportToImage(
                     os.path.join(out_dir, f"{safe_name}.tif"), tiff_settings)
-                if result != QgsLayoutExporter.Success:
+                if result != QgsLayoutExporter.ExportResult.Success:
                     ok = False
                     _log(f"GeoTIFF export failed for '{name}': error code {result}")
 
@@ -138,7 +138,7 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
                 png_settings.generateWorldFile = True
                 result = exporter.exportToImage(
                     os.path.join(out_dir, f"{safe_name}.png"), png_settings)
-                if result != QgsLayoutExporter.Success:
+                if result != QgsLayoutExporter.ExportResult.Success:
                     ok = False
                     _log(f"PNG export failed for '{name}': error code {result}")
 
@@ -341,7 +341,7 @@ class LegendTextEditorDialog(QDialog):
             self.tree.addTopLevelItem(layer_item)
 
             # Feature/symbol children (vector layers only)
-            if layer.type() == QgsMapLayerType.VectorLayer and layer.renderer():
+            if layer.type() == Qgis.LayerType.Vector and layer.renderer():
                 feature_mappings = layer_mapping.get('features', {})
                 try:
                     symbol_items = layer.renderer().legendSymbolItems()
@@ -459,7 +459,7 @@ class LegendFieldConfigDialog(QDialog):
             if self._sections:
                 QgsMessageLog.logMessage(
                     f"Pre-filled {len(self._sections)} auto-detected legend "
-                    f"section(s).", LOG_TAG, Qgis.Info)
+                    f"section(s).", LOG_TAG, Qgis.MessageLevel.Info)
 
         layout = QVBoxLayout(self)
 
@@ -585,7 +585,7 @@ class LegendFieldConfigDialog(QDialog):
         self._layer_combo.clear()
         for layer in sorted(QgsProject.instance().mapLayers().values(),
                             key=lambda l: l.name()):
-            if (layer.type() == QgsMapLayerType.VectorLayer
+            if (layer.type() == Qgis.LayerType.Vector
                     and layer.isSpatial()):
                 self._layer_combo.addItem(layer_display_name(layer), layer.id())
         self._layer_combo.blockSignals(False)
@@ -687,7 +687,7 @@ class LegendFieldConfigDialog(QDialog):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Could not scan populated fields for '{layer.name()}': {e}",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
 
         groups = []
         for section in self._layer_sections(layer_id):
@@ -845,7 +845,7 @@ class LegendFieldConfigDialog(QDialog):
             self._refresh_vr_list()
             QgsMessageLog.logMessage(
                 f"Auto-detect added {added} legend section(s).",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
     def _save_configs(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -925,7 +925,7 @@ class LegendFieldConfigDialog(QDialog):
     def _spatial_layers():
         return sorted(
             (lyr for lyr in QgsProject.instance().mapLayers().values()
-             if lyr.type() == QgsMapLayerType.VectorLayer and lyr.isSpatial()),
+             if lyr.type() == Qgis.LayerType.Vector and lyr.isSpatial()),
             key=lambda l: l.name())
 
     @staticmethod
@@ -1029,7 +1029,7 @@ class LegendFieldConfigDialog(QDialog):
         tables = [lyr for lyr in
                   sorted(QgsProject.instance().mapLayers().values(),
                          key=lambda l: l.name())
-                  if (lyr.type() == QgsMapLayerType.VectorLayer
+                  if (lyr.type() == Qgis.LayerType.Vector
                       and not lyr.isSpatial())]
         if not tables:
             QMessageBox.information(self, "No Tables",
@@ -1728,8 +1728,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
         polygon_layers = []
         for layer in layers:
-            if layer.type() == QgsMapLayerType.VectorLayer:
-                if layer.geometryType() == QgsWkbTypes.PolygonGeometry:
+            if layer.type() == Qgis.LayerType.Vector:
+                if layer.geometryType() == Qgis.GeometryType.Polygon:
                     polygon_layers.append(layer)
 
         for layer in polygon_layers:
@@ -1804,7 +1804,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 serialize_config(self._current_legend_config()))
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Failed to save legend config: {e}", LOG_TAG, Qgis.Warning)
+                f"Failed to save legend config: {e}", LOG_TAG, Qgis.MessageLevel.Warning)
 
     def _restore_legend_state(self):
         """Restore legend config from the project file."""
@@ -1838,10 +1838,10 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 self.codeTableText.setPlainText(box)
             QgsMessageLog.logMessage(
                 f"Legend config restored from project "
-                f"({len(self._sections)} section(s)).", LOG_TAG, Qgis.Info)
+                f"({len(self._sections)} section(s)).", LOG_TAG, Qgis.MessageLevel.Info)
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Failed to restore legend config: {e}", LOG_TAG, Qgis.Warning)
+                f"Failed to restore legend config: {e}", LOG_TAG, Qgis.MessageLevel.Warning)
         finally:
             self._restoring_state = False
 
@@ -1899,11 +1899,11 @@ class MapLayoutGeneratorPanel(QDockWidget):
             if count:
                 QgsMessageLog.logMessage(
                     f"Legend text mappings updated for {count} layer(s).",
-                    LOG_TAG, Qgis.Info)
+                    LOG_TAG, Qgis.MessageLevel.Info)
             else:
                 QgsMessageLog.logMessage(
                     "Legend text mappings cleared (all set to original).",
-                    LOG_TAG, Qgis.Info)
+                    LOG_TAG, Qgis.MessageLevel.Info)
 
     def openLegendFieldConfig(self):
         """Open the legend sections configuration dialog."""
@@ -1916,7 +1916,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             self._save_legend_state()
             QgsMessageLog.logMessage(
                 f"Legend sections updated: {len(self._sections)} section(s).",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
             # Refresh the text preview when text sections exist
             if any(s['display'] in ('text', 'auto') for s in self._sections):
@@ -2095,16 +2095,16 @@ class MapLayoutGeneratorPanel(QDockWidget):
                     f"No scalebar item found in template for "
                     f"'{layout.name()}' (set Item ID 'scalebar' in Layout "
                     f"Designer to enable auto-resize); skipping scalebar.",
-                    LOG_TAG, Qgis.Warning)
+                    LOG_TAG, Qgis.MessageLevel.Warning)
                 return
             scalebar = bars[0]
 
         # The metres maths only holds for a metre-based map CRS, matching the
         # grid block's guard.
-        if main_map.crs().mapUnits() != QgsUnitTypes.DistanceMeters:
+        if main_map.crs().mapUnits() != Qgis.DistanceUnit.Meters:
             QgsMessageLog.logMessage(
                 f"Map CRS for '{layout.name()}' is not in metres; "
-                f"skipping scalebar auto-resize.", LOG_TAG, Qgis.Warning)
+                f"skipping scalebar auto-resize.", LOG_TAG, Qgis.MessageLevel.Warning)
             return
 
         # Derive target / max drawn lengths from the AUTHORED box width, read
@@ -2117,7 +2117,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QgsMessageLog.logMessage(
                 f"Scalebar box width for '{layout.name()}' looks invalid "
                 f"({box_mm}); using default {target_bar_mm} mm target.",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
         else:
             max_bar_mm = box_mm - self._SCALEBAR_SAFETY_MM
             target_bar_mm = box_mm - self._SCALEBAR_LABEL_ALLOWANCE_MM
@@ -2131,14 +2131,14 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QgsMessageLog.logMessage(
                 f"Could not compute a nice scalebar for '{layout.name()}' "
                 f"at 1:{effective_scale}; leaving template scalebar as-is.",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
             return
 
         # Apply, units-first then magnitudes then counts, then one update().
         if result['unit_label'] == 'km':
-            distance_unit = QgsUnitTypes.DistanceKilometers
+            distance_unit = Qgis.DistanceUnit.Kilometers
         else:
-            distance_unit = QgsUnitTypes.DistanceMeters
+            distance_unit = Qgis.DistanceUnit.Meters
 
         scalebar.setLinkedMap(main_map)
         scalebar.setUnits(distance_unit)
@@ -2153,7 +2153,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             f"Scalebar for '{layout.name()}' at 1:{effective_scale}: "
             f"{result['n_segments']} x {result['units_per_segment']:g} "
             f"{result['unit_label']} (~{result['drawn_mm']:.1f} mm drawn).",
-            LOG_TAG, Qgis.Info)
+            LOG_TAG, Qgis.MessageLevel.Info)
 
     # ── Label auto-population ─────────────────────────────────────────
 
@@ -2181,7 +2181,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                     found_ids.add(item_id)
                     QgsMessageLog.logMessage(
                         f"Label '{item_id}' set to: {label_map[item_id]}",
-                        LOG_TAG, Qgis.Info)
+                        LOG_TAG, Qgis.MessageLevel.Info)
 
         # Log any expected IDs that weren't found in the template
         missing = set(label_map.keys()) - found_ids
@@ -2189,7 +2189,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QgsMessageLog.logMessage(
                 f"Template label IDs not found: {', '.join(sorted(missing))}. "
                 f"Set Item IDs in Layout Designer to enable auto-population.",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
 
     @staticmethod
     def _text_block_font(layout):
@@ -2205,7 +2205,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         if legends:
             try:
                 font = legends[0].style(
-                    QgsLegendStyle.SymbolLabel).textFormat().toQFont()
+                    QgsLegendStyle.Style.SymbolLabel).textFormat().toQFont()
             except Exception:
                 font = None
 
@@ -2241,16 +2241,16 @@ class MapLayoutGeneratorPanel(QDockWidget):
         for item in layout.items():
             if (isinstance(item, QgsLayoutItemLabel)
                     and item.id() == 'code_table'):
-                item.setMode(QgsLayoutItemLabel.ModeFont)
+                item.setMode(QgsLayoutItemLabel.Mode.ModeFont)
                 item.setFont(font)
                 item.setText(text)
                 QgsMessageLog.logMessage(
                     "Legend text placed in template 'code_table' item.",
-                    LOG_TAG, Qgis.Info)
+                    LOG_TAG, Qgis.MessageLevel.Info)
                 return
 
         label = QgsLayoutItemLabel(layout)
-        label.setMode(QgsLayoutItemLabel.ModeFont)
+        label.setMode(QgsLayoutItemLabel.Mode.ModeFont)
         label.setId('code_table')
         label.setFont(font)
         label.setText(text)
@@ -2282,10 +2282,10 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QgsMessageLog.logMessage(
                 "Legend text block overflows the page. Add a 'code_table' "
                 "label item to the template to control placement.",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
 
         QgsMessageLog.logMessage(
-            "Legend text block created below legend.", LOG_TAG, Qgis.Info)
+            "Legend text block created below legend.", LOG_TAG, Qgis.MessageLevel.Info)
 
     # ── Legend automation ─────────────────────────────────────────────
 
@@ -2297,7 +2297,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         if not legends:
             QgsMessageLog.logMessage(
                 "No legend item found in template - skipping legend automation.",
-                LOG_TAG, Qgis.Warning)
+                LOG_TAG, Qgis.MessageLevel.Warning)
             return
 
         legend = legends[0]
@@ -2337,7 +2337,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         if removed_count:
             QgsMessageLog.logMessage(
                 f"Removed {removed_count} layer(s) from legend.",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
         # Apply legend text overrides
         if text_mappings:
@@ -2377,7 +2377,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             # Rename individual feature/symbol labels
             feature_mappings = mapping.get('features', {})
             if (feature_mappings
-                    and layer.type() == QgsMapLayerType.VectorLayer
+                    and layer.type() == Qgis.LayerType.Vector
                     and layer.renderer()):
                 try:
                     symbol_items = layer.renderer().legendSymbolItems()
@@ -2392,12 +2392,12 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 except Exception as e:
                     QgsMessageLog.logMessage(
                         f"Error applying legend text for '{layer.name()}': {e}",
-                        LOG_TAG, Qgis.Warning)
+                        LOG_TAG, Qgis.MessageLevel.Warning)
 
         if renamed_count:
             QgsMessageLog.logMessage(
                 f"Applied {renamed_count} legend text override(s).",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
     def _apply_symbol_sections(self, layout, sections, scan_results):
         """Apply symbol-backed sections as grouped legend node clones.
@@ -2451,7 +2451,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                 f"{symbol_count} legend items, "
                 f"{len(value_to_idx)} mappable values, "
                 f"{len(layer_sections)} section(s).",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
             # Clone before removing — removeChildNode deletes the C++ object
             layer_node_template = layer_node.clone()
@@ -2492,7 +2492,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                                 QgsMessageLog.logMessage(
                                     f"  '{type_val}': {len(missed)} value(s) "
                                     f"not in renderer: {missed[:5]}",
-                                    LOG_TAG, Qgis.Warning)
+                                    LOG_TAG, Qgis.MessageLevel.Warning)
                         if not indices:
                             continue
                         used_indices.update(indices)
@@ -2520,7 +2520,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                             QgsMessageLog.logMessage(
                                 f"  '{title}': {len(missed)} value(s) "
                                 f"not in renderer: {missed[:5]}",
-                                LOG_TAG, Qgis.Warning)
+                                LOG_TAG, Qgis.MessageLevel.Warning)
                     if indices:
                         used_indices.update(indices)
                         clone = layer_node_template.clone()
@@ -2533,7 +2533,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             QgsMessageLog.logMessage(
                 f"  '{layer.name()}': {len(used_indices)} of "
                 f"{symbol_count} entries assigned to sections.",
-                LOG_TAG, Qgis.Info)
+                LOG_TAG, Qgis.MessageLevel.Info)
 
         legend.updateLegend()
         legend.adjustBoxSize()
@@ -2565,7 +2565,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                     QgsMessageLog.logMessage(
                         f"Lookup table '{lookup['table'].get('name')}' not "
                         f"found for section '{section['title']}'.",
-                        LOG_TAG, Qgis.Warning)
+                        LOG_TAG, Qgis.MessageLevel.Warning)
                 else:
                     base, groups = load_lookup_table(
                         table, lookup['key_column'], lookup['value_column'],
@@ -2611,7 +2611,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             if sections:
                 QgsMessageLog.logMessage(
                     f"Preview using {len(sections)} auto-detected "
-                    f"section(s).", LOG_TAG, Qgis.Info)
+                    f"section(s).", LOG_TAG, Qgis.MessageLevel.Info)
         text_like = [s for s in sections if s['display'] in ('text', 'auto')]
         if not text_like:
             QMessageBox.information(
@@ -2664,7 +2664,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         self._save_legend_state()
         QgsMessageLog.logMessage(
             f"Legend text preview generated for {len(text_like)} section(s).",
-            LOG_TAG, Qgis.Info)
+            LOG_TAG, Qgis.MessageLevel.Info)
 
     # ── Export existing layouts ─────────────────────────────────────
 
@@ -2818,7 +2818,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                     and not use_layer_scale):
                 QgsMessageLog.logMessage(
                     "Mapsheets layer has no 'scale' field — using the "
-                    "manual scale setting instead.", LOG_TAG, Qgis.Warning)
+                    "manual scale setting instead.", LOG_TAG, Qgis.MessageLevel.Warning)
 
             buffer_percentage = 0
 
@@ -2854,7 +2854,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         f"No legend sections configured — using "
                         f"{len(sections)} auto-detected section(s): "
                         f"{', '.join(s['title'] for s in sections)}.",
-                        LOG_TAG, Qgis.Info)
+                        LOG_TAG, Qgis.MessageLevel.Info)
             lookup_maps, group_maps = (self._load_lookup_maps(sections)
                                        if sections else ({}, {}))
             per_sheet = self.perSheetCheckbox.isChecked()
@@ -2976,7 +2976,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                             f"No {orientation.lower()} template set for "
                             f"'{polygon_name}' — using the "
                             f"{'portrait' if is_landscape else 'landscape'} "
-                            f"template instead.", LOG_TAG, Qgis.Warning)
+                            f"template instead.", LOG_TAG, Qgis.MessageLevel.Warning)
 
                     # Load the template
                     layout = QgsPrintLayout(QgsProject.instance())
@@ -3007,7 +3007,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
                             QgsMessageLog.logMessage(
                                 f"Sheet '{polygon_name}' has no valid "
                                 f"'scale' value — using the manual scale "
-                                f"setting.", LOG_TAG, Qgis.Warning)
+                                f"setting.", LOG_TAG, Qgis.MessageLevel.Warning)
                     effective_scale = feature_scale or (
                         scale_denominator if use_custom_scale else None)
 
@@ -3044,22 +3044,22 @@ class MapLayoutGeneratorPanel(QDockWidget):
                         grid_interval = self.getGridInterval()
                     if grid_interval is not None:
                         map_units = main_map.crs().mapUnits()
-                        if map_units != QgsUnitTypes.DistanceMeters:
+                        if map_units != Qgis.DistanceUnit.Meters:
                             QgsMessageLog.logMessage(
                                 f"Map CRS for '{layout_name}' is not in "
                                 f"metres; skipping grid spacing.",
-                                LOG_TAG, Qgis.Warning)
+                                LOG_TAG, Qgis.MessageLevel.Warning)
                         else:
                             grids = main_map.grids()
                             if grids.size() > 0:
                                 grid = grids.grid(0)
                                 grid.setIntervalX(grid_interval)
                                 grid.setIntervalY(grid_interval)
-                                grid.setUnits(QgsLayoutItemMapGrid.MapUnit)
+                                grid.setUnits(QgsLayoutItemMapGrid.GridUnit.MapUnit)
                             else:
                                 QgsMessageLog.logMessage(
                                     f"Template for '{layout_name}' has no map grid; "
-                                    f"skipping grid spacing.", LOG_TAG, Qgis.Warning)
+                                    f"skipping grid spacing.", LOG_TAG, Qgis.MessageLevel.Warning)
 
                     # Auto-resize the scalebar's nice-number bars to the
                     # template frame at this map's scale.
@@ -3112,7 +3112,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
                 except Exception as e:
                     QgsMessageLog.logMessage(
-                        f"Error processing feature {i}: {e}", LOG_TAG, Qgis.Warning)
+                        f"Error processing feature {i}: {e}", LOG_TAG, Qgis.MessageLevel.Warning)
                     self.statusLabel.setText(f"Error processing feature {i}: {str(e)}")
                     skipped_count += 1
 

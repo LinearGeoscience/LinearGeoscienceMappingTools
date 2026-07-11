@@ -25,7 +25,7 @@ from qgis.PyQt.QtGui import QPixmap, QDesktopServices, QIcon, QImage
 
 from qgis.core import (
     QgsProject, QgsFeatureRequest, QgsCoordinateTransform,
-    QgsMessageLog, Qgis, QgsWkbTypes
+    QgsMessageLog, Qgis
 )
 
 try:
@@ -62,7 +62,7 @@ def _attr_to_str(value) -> str:
 
 def _photo_layer_candidates():
     """Point layers with the fields PhotoDataWorker requires."""
-    return layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+    return layer_candidates(geometry=Qgis.GeometryType.Point,
                             required_fields=['PhotoFiles', 'PhotoPath'])
 
 
@@ -759,7 +759,7 @@ class PhotoPanel(QDockWidget):
         self.status_label.setText(f"Error loading photos: {error_msg}")
         QgsMessageLog.logMessage(
             f"Photo panel: error loading photo data: {error_msg}",
-            'Linear Geoscience', Qgis.Warning
+            'Linear Geoscience', Qgis.MessageLevel.Warning
         )
         QMessageBox.critical(self, "Error", f"Error loading photos: {error_msg}")
 
@@ -822,7 +822,7 @@ class PhotoPanel(QDockWidget):
             except Exception as e:
                 QgsMessageLog.logMessage(
                     f"Photo panel: extent CRS transform failed: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )
             self.map_extent_filter = extent
             self.iface.messageBar().pushMessage(
@@ -1439,7 +1439,7 @@ class PhotoPanel(QDockWidget):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Photo panel: signal disconnect during shutdown failed: {e}",
-                'Linear Geoscience', Qgis.Warning
+                'Linear Geoscience', Qgis.MessageLevel.Warning
             )
 
 

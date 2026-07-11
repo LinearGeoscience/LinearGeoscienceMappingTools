@@ -705,11 +705,11 @@ class FieldGroupManager(QWidget):
     @staticmethod
     def _lookup_tables():
         """Non-spatial vector layers in the project (lookup tables)."""
-        from qgis.core import QgsProject, QgsMapLayerType
+        from qgis.core import QgsProject, Qgis
         tables = []
         for lyr in sorted(QgsProject.instance().mapLayers().values(),
                           key=lambda l: l.name()):
-            if (lyr.type() == QgsMapLayerType.VectorLayer
+            if (lyr.type() == Qgis.LayerType.Vector
                     and not lyr.isSpatial()):
                 tables.append(lyr)
         return tables

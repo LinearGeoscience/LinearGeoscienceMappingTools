@@ -21,7 +21,7 @@ DEBUG_UUID_PROCESSING = False
 def debug_log(message: str):
     """Log debug message if debugging is enabled"""
     if DEBUG_UUID_PROCESSING:
-        QgsMessageLog.logMessage(f"[DEBUG] {message}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"[DEBUG] {message}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 from typing import Dict, List, Optional
 from qgis.PyQt.QtCore import QThread, pyqtSignal, QVariant
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsVectorFileWriter,
@@ -173,7 +173,7 @@ class WorkerThread(QThread):
                 if master_date_field:
                     master_date_idx = master_layer.fields().lookupField(master_date_field)
                     date_request = (QgsFeatureRequest()
-                                    .setFlags(QgsFeatureRequest.NoGeometry)
+                                    .setFlags(Qgis.FeatureRequestFlag.NoGeometry)
                                     .setSubsetOfAttributes([master_date_idx]))
                     master_dates = []
                     for mf in master_layer.getFeatures(date_request):
@@ -199,7 +199,7 @@ class WorkerThread(QThread):
 
             # Apply global date filter if enabled
             # Preview only needs attributes, never geometry
-            feature_request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+            feature_request = QgsFeatureRequest().setFlags(Qgis.FeatureRequestFlag.NoGeometry)
             date_filter_applied = False
             filter_expression = None
             if self.global_date_filter and self.global_date_filter.get('enabled'):
@@ -519,9 +519,9 @@ class WorkerThread(QThread):
         options.driverName = "GPKG"
         options.layerName = target_layer_name
         if os.path.exists(self.master_gpkg):
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
         else:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
 
         if source_layer.crs().isValid():
             options.destinationCrs = source_layer.crs()
@@ -538,7 +538,7 @@ class WorkerThread(QThread):
             options
         )
 
-        if writer is None or writer.hasError() != QgsVectorFileWriter.NoError:
+        if writer is None or writer.hasError() != QgsVectorFileWriter.WriterError.NoError:
             error_msg = writer.errorMessage() if writer is not None else "writer not created"
             self.update_progress.emit(progress,
                 f"Error creating layer {target_layer_name}: {error_msg}")

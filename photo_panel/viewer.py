@@ -367,7 +367,7 @@ class PhotoViewer(QWidget):
         self.image_view.show_message(f"Could not load image:\n{os.path.basename(path)}")
         QgsMessageLog.logMessage(
             f"Photo panel: failed to load '{path}': {error}",
-            'Linear Geoscience', Qgis.Warning
+            'Linear Geoscience', Qgis.MessageLevel.Warning
         )
 
     def _update_zoom_ui(self) -> None:
@@ -464,5 +464,5 @@ class PhotoViewer(QWidget):
                 QgsMessageLog.logMessage(
                     f"Photo panel: could not open '{self.current_photo}' "
                     f"in system viewer: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )

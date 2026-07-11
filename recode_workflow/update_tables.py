@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsWkbTypes, QgsFeature,
+    QgsProject, QgsVectorLayer, QgsFeature,
     QgsMessageLog, Qgis,
 )
 
@@ -39,7 +39,7 @@ except ImportError:
     from layer_select import layer_display_name
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
 
 
@@ -65,7 +65,7 @@ def _get_non_spatial_layers():
     result = []
     for layer_id, layer in project.mapLayers().items():
         if (isinstance(layer, QgsVectorLayer)
-                and layer.geometryType() == QgsWkbTypes.NullGeometry):
+                and layer.geometryType() == Qgis.GeometryType.Null):
             result.append(layer)
     result.sort(key=lambda l: l.name())
     return result
@@ -467,7 +467,7 @@ class UpdateTablesPage(QWidget):
                 layer.rollBack()
                 err_msg = "; ".join(errors) if errors else "Unknown error"
                 self.log_message.emit(f"Commit failed: {err_msg}")
-                _log(f"Commit failed for '{layer.name()}': {err_msg}", Qgis.Critical)
+                _log(f"Commit failed for '{layer.name()}': {err_msg}", Qgis.MessageLevel.Critical)
                 QMessageBox.warning(self, "Error",
                                     f"Failed to commit changes:\n{err_msg}")
                 self.status_changed.emit("not_started")
@@ -476,6 +476,6 @@ class UpdateTablesPage(QWidget):
             if layer.isEditable():
                 layer.rollBack()
             self.log_message.emit(f"Error: {e}")
-            _log(f"Error updating '{layer.name()}': {e}", Qgis.Critical)
+            _log(f"Error updating '{layer.name()}': {e}", Qgis.MessageLevel.Critical)
             QMessageBox.warning(self, "Error", f"An error occurred:\n{e}")
             self.status_changed.emit("not_started")

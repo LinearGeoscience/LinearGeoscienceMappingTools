@@ -35,7 +35,6 @@ from qgis.core import (
     QgsProject,
     QgsVectorLayer,
     QgsFieldProxyModel,
-    QgsMapLayerProxyModel,
     QgsSettings,
     QgsMessageLog,
     Qgis
@@ -366,7 +365,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_selection.topLevelItemCount()):
             item = self.category_tree_selection.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Selection] All categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Selection] All categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_all_categories_selection(self):
         """Deselect all categories in the selection tree."""
@@ -375,7 +374,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_selection.topLevelItemCount()):
             item = self.category_tree_selection.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Selection] All categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Selection] All categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def select_highlighted_categories_selection(self):
         """Select highlighted categories in the selection tree."""
@@ -383,7 +382,7 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_selection.selectedItems():
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Selection] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Selection] Highlighted categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_highlighted_categories_selection(self):
         """Deselect highlighted categories in the selection tree."""
@@ -391,7 +390,7 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_selection.selectedItems():
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Selection] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Selection] Highlighted categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def select_all_categories_domains(self):
         """Select all categories in the domains tree."""
@@ -400,7 +399,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_domains.topLevelItemCount()):
             item = self.category_tree_domains.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Domains] All categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Domains] All categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_all_categories_domains(self):
         """Deselect all categories in the domains tree."""
@@ -409,7 +408,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_domains.topLevelItemCount()):
             item = self.category_tree_domains.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Domains] All categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Domains] All categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def select_highlighted_categories_domains(self):
         """Select highlighted categories in the domains tree."""
@@ -417,7 +416,7 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_domains.selectedItems():
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Domains] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Domains] Highlighted categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_highlighted_categories_domains(self):
         """Deselect highlighted categories in the domains tree."""
@@ -425,7 +424,7 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_domains.selectedItems():
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Domains] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Domains] Highlighted categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def select_all_categories_live_view(self):
         """Select all categories in the live view tree."""
@@ -434,7 +433,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_live_view.topLevelItemCount()):
             item = self.category_tree_live_view.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Live View] All categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Live View] All categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_all_categories_live_view(self):
         """Deselect all categories in the live view tree."""
@@ -443,7 +442,7 @@ class StereonetPluginCore:
         for i in range(self.category_tree_live_view.topLevelItemCount()):
             item = self.category_tree_live_view.topLevelItem(i)
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Live View] All categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Live View] All categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def select_highlighted_categories_live_view(self):
         """Select highlighted categories in the live view tree."""
@@ -451,7 +450,7 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_live_view.selectedItems():
             item.setCheckState(0, Qt.CheckState.Checked)
-        QgsMessageLog.logMessage("[Live View] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Live View] Highlighted categories selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def deselect_highlighted_categories_live_view(self):
         """Deselect highlighted categories in the live view tree."""
@@ -459,14 +458,14 @@ class StereonetPluginCore:
             return
         for item in self.category_tree_live_view.selectedItems():
             item.setCheckState(0, Qt.CheckState.Unchecked)
-        QgsMessageLog.logMessage("[Live View] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("[Live View] Highlighted categories deselected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # =========================================================================
     # GUI INITIALIZATION AND SETUP METHODS
     # =========================================================================
 
     def initGui(self):
-        QgsMessageLog.logMessage("Initializing Stereonet Plugin GUI...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Initializing Stereonet Plugin GUI...", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         self.dock = QDockWidget("Stereonet", self.iface.mainWindow())
         self.dock.setObjectName("StereonetDock")
@@ -551,7 +550,7 @@ class StereonetPluginCore:
         # Add the intersection controls
         self.setup_intersection_controls()
 
-        QgsMessageLog.logMessage("Stereonet GUI init done. Datasets tab moved to third position.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Stereonet GUI init done. Datasets tab moved to third position.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Auto-run refresh
         self.manual_refresh()
@@ -1514,7 +1513,7 @@ class StereonetPluginCore:
 
     def setup_config_tab(self):
         """This is kept for backward compatibility only"""
-        QgsMessageLog.logMessage("Configuration tab has been merged with Datasets tab", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Configuration tab has been merged with Datasets tab", 'Linear Geoscience', Qgis.MessageLevel.Info)
         pass
 
 
@@ -1626,7 +1625,7 @@ class StereonetPluginCore:
 
         self.export_file_widget = QgsFileWidget()
         self.export_file_widget.setFilter("CSV Files (*.csv)")
-        self.export_file_widget.setStorageMode(QgsFileWidget.SaveFile)
+        self.export_file_widget.setStorageMode(QgsFileWidget.StorageMode.SaveFile)
         export_layout.addWidget(self.export_file_widget)
 
         export_btn = QPushButton("Export")
@@ -1642,7 +1641,7 @@ class StereonetPluginCore:
 
         self.import_file_widget = QgsFileWidget()
         self.import_file_widget.setFilter("CSV Files (*.csv)")
-        self.import_file_widget.setStorageMode(QgsFileWidget.GetFile)
+        self.import_file_widget.setStorageMode(QgsFileWidget.StorageMode.GetFile)
         import_layout.addWidget(self.import_file_widget)
 
         import_btn = QPushButton("Import")
@@ -1891,7 +1890,7 @@ class StereonetPluginCore:
                     }}
                 """)
             
-            QgsMessageLog.logMessage(f"Updated color for {code} to {color_hex}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Updated color for {code} to {color_hex}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             
             # Save colors to settings
             self.save_structure_colors()
@@ -1930,7 +1929,7 @@ class StereonetPluginCore:
                     }}
                 """)
             
-            QgsMessageLog.logMessage("All colors reset to defaults", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("All colors reset to defaults", 'Linear Geoscience', Qgis.MessageLevel.Info)
             
             # Save the reset colors to settings
             self.save_structure_colors()
@@ -1945,7 +1944,7 @@ class StereonetPluginCore:
             settings.setValue(code, color)
         
         settings.endGroup()
-        QgsMessageLog.logMessage("Structure colors saved to settings", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Structure colors saved to settings", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def load_structure_colors(self):
@@ -1964,7 +1963,7 @@ class StereonetPluginCore:
                 self.structure_colors[key] = settings.value(key)
 
         settings.endGroup()
-        QgsMessageLog.logMessage("Structure colors loaded from settings", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Structure colors loaded from settings", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     # =========================================================================
@@ -1977,7 +1976,7 @@ class StereonetPluginCore:
         settings.beginGroup("LinearGeosciencePlugin/CodeGroups")
         settings.setValue("groups", json.dumps(self.code_groups))
         settings.endGroup()
-        QgsMessageLog.logMessage("Code groups saved to settings", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Code groups saved to settings", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def load_code_groups(self):
@@ -2220,7 +2219,7 @@ class StereonetPluginCore:
                 self.code_groups[old_group].remove(code)
                 QgsMessageLog.logMessage(
                     f"Moved '{code}' from group '{old_group}' to '{name}'",
-                    'Linear Geoscience', Qgis.Info)
+                    'Linear Geoscience', Qgis.MessageLevel.Info)
                 if not self.code_groups[old_group]:
                     self._drop_group_entry(old_group)
 
@@ -2351,7 +2350,7 @@ class StereonetPluginCore:
         output_group.setLayout(output_layout)
 
         self.export_dir_widget = QgsFileWidget()
-        self.export_dir_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.export_dir_widget.setStorageMode(QgsFileWidget.StorageMode.GetDirectory)
         output_layout.addWidget(QLabel("Output Directory:"))
         output_layout.addWidget(self.export_dir_widget)
 
@@ -2574,7 +2573,7 @@ class StereonetPluginCore:
         if self.live_view_by_extent_checkbox.isChecked():
             # Set up map canvas extent change monitoring
             self.setup_map_canvas_monitoring()
-            QgsMessageLog.logMessage("Live View monitoring: Map extent changes", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View monitoring: Map extent changes", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         elif self.live_view_by_selection_checkbox.isChecked():
             # Set up selection change monitoring for all enabled datasets
@@ -2585,9 +2584,9 @@ class StereonetPluginCore:
                         try:
                             layer.selectionChanged.connect(self.on_selection_changed)
                             self._selection_signal_layers.append(layer)
-                            QgsMessageLog.logMessage(f"Live View monitoring: Selection changes for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+                            QgsMessageLog.logMessage(f"Live View monitoring: Selection changes for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
                         except Exception:
-                            QgsMessageLog.logMessage(f"Warning: Could not connect to selection changes for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Warning)
+                            QgsMessageLog.logMessage(f"Warning: Could not connect to selection changes for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
     def setup_map_canvas_monitoring(self):
@@ -2688,10 +2687,10 @@ class StereonetPluginCore:
     def field_detect(self, dataset_idx, layer):
         """Handle layer changes and auto-detect fields - improved version"""
         if not layer:
-            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: No layer selected", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: No layer selected", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
-        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Skip the all-or-nothing check and try to directly update the field combos
         # Even if combos exist but aren't fully initialized, this will attempt to populate them
@@ -2700,7 +2699,7 @@ class StereonetPluginCore:
 
     def populate_field_combo_boxes(self, dataset_idx, layer=None):
         """Populate the field combo boxes for a specific dataset, including coordinates."""
-        QgsMessageLog.logMessage(f"Attempting to populate fields for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Attempting to populate fields for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Get combo boxes references from config
         config = self.dataset_configs[dataset_idx]
@@ -2715,11 +2714,11 @@ class StereonetPluginCore:
 
         # Check that combo box widgets exist
         if not all(combo is not None for combo in all_combos):
-            QgsMessageLog.logMessage(f"Error: One or more QComboBox widgets for dataset {dataset_idx + 1} were not created correctly.", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error: One or more QComboBox widgets for dataset {dataset_idx + 1} were not created correctly.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Clear all combo boxes safely
-        QgsMessageLog.logMessage(f"Clearing existing items for dataset {dataset_idx + 1} combos...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Clearing existing items for dataset {dataset_idx + 1} combos...", 'Linear Geoscience', Qgis.MessageLevel.Info)
         for combo in all_combos:
             combo.blockSignals(True)
             combo.clear()
@@ -2730,22 +2729,22 @@ class StereonetPluginCore:
 
         # If no layer is provided and we can't find one, exit
         if not layer:
-            QgsMessageLog.logMessage(f"No valid layer selected for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"No valid layer selected for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field names from the valid layer
         try:
             field_names = [f.name() for f in layer.fields()]
             if not field_names:
-                QgsMessageLog.logMessage(f"Warning: Layer '{layer.name()}' has no fields.", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Warning: Layer '{layer.name()}' has no fields.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
-            QgsMessageLog.logMessage(f"Fields found in layer '{layer.name()}': {field_names}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Fields found in layer '{layer.name()}': {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         except Exception as e:
-            QgsMessageLog.logMessage(f"Critical Error: Could not get fields from layer '{layer.name()}': {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Critical Error: Could not get fields from layer '{layer.name()}': {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Populate combos with field names
-        QgsMessageLog.logMessage(f"Populating dataset {dataset_idx + 1} combos with fields...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Populating dataset {dataset_idx + 1} combos with fields...", 'Linear Geoscience', Qgis.MessageLevel.Info)
         for combo in all_combos:
             combo.blockSignals(True)
             # Skip adding "" again for coord fields as it was added during clear
@@ -2768,9 +2767,9 @@ class StereonetPluginCore:
                     combo.setCurrentIndex(index)
                     combo.blockSignals(False)
                     selected_fields[field_key] = field_name
-                    QgsMessageLog.logMessage(f"  Auto-selected '{field_name}' for {field_key}", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"  Auto-selected '{field_name}' for {field_key}", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     return True
-            QgsMessageLog.logMessage(f"  Could not auto-select for {field_key}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"  Could not auto-select for {field_key}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return False
 
         try_set_field(dip_combo, ["Dip", "DIP", "dip", "Angle", "angle"], 'dip')
@@ -2788,7 +2787,7 @@ class StereonetPluginCore:
         try_set_field(northing_combo, ["Northing", "NORTHING", "north", "Y", "y", "YCOORD", "ycoord", "Y_Coord"],
                       'northing')
 
-        QgsMessageLog.logMessage(f"Finished populating fields for dataset {dataset_idx + 1}. Auto-selected: {selected_fields}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Finished populating fields for dataset {dataset_idx + 1}. Auto-selected: {selected_fields}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def populate_field_combos_for_dataset(self, dataset_idx, layer):
@@ -2796,14 +2795,14 @@ class StereonetPluginCore:
         # Safety check
         if not self.dataset_configs[dataset_idx]["dip_combo"] or not self.dataset_configs[dataset_idx][
             "dipdir_combo"] or not self.dataset_configs[dataset_idx]["subtype_combo"]:
-            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Field combos not properly initialized", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Field combos not properly initialized", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Invalid layer", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Invalid layer", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Populating field combos for layer '{layer.name()}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Populating field combos for layer '{layer.name()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Set the layer for each combo
         self.dataset_configs[dataset_idx]["dip_combo"].setLayer(layer)
@@ -2812,27 +2811,27 @@ class StereonetPluginCore:
 
         # Auto-select fields based on common names
         fields = [f.name() for f in layer.fields()]
-        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Available fields: {fields}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Available fields: {fields}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Auto-select Dip field
         for field_name in ["Dip", "DIP", "dip", "Angle", "angle"]:
             if field_name in fields:
                 self.dataset_configs[dataset_idx]["dip_combo"].setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Dip", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Dip", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
         # Auto-select DipDirection field
         for field_name in ["DipDirection", "DIPDIRECTION", "dipdir", "DipDir", "Azimuth", "azimuth"]:
             if field_name in fields:
                 self.dataset_configs[dataset_idx]["dipdir_combo"].setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for DipDirection", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for DipDirection", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
         # Auto-select Structure code field
         for field_name in ["Subtype1", "SUBTYPE", "Subtype", "subtype", "StructureCode", "Code"]:
             if field_name in fields:
                 self.dataset_configs[dataset_idx]["subtype_combo"].setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Structure Code", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Structure Code", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
 
@@ -2845,7 +2844,7 @@ class StereonetPluginCore:
 
     def populate_fields_for_layer_auto(self, layer):
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage("No valid layer in new approach; skipping field population.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("No valid layer in new approach; skipping field population.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         self.dip_column_combo.clear()
@@ -2853,7 +2852,7 @@ class StereonetPluginCore:
         self.subtype_column_combo.clear()
 
         fields = [f.name() for f in layer.fields()]
-        QgsMessageLog.logMessage(f"Auto approach sees {len(fields)} fields -> {fields}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Auto approach sees {len(fields)} fields -> {fields}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         for f in fields:
             self.dip_column_combo.addItem(f)
@@ -3096,7 +3095,7 @@ class StereonetPluginCore:
             except Exception:
                 QgsMessageLog.logMessage(
                     f"Export: could not read codes from layer for dataset "
-                    f"{dataset_idx + 1}", 'Linear Geoscience', Qgis.Warning)
+                    f"{dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
         # Create tree items: classified codes first (checked); unclassified
         # codes flagged red and unchecked at the bottom — they can't be
@@ -3131,21 +3130,21 @@ class StereonetPluginCore:
 
     def manually_populate_fields(self, dataset_idx, field_names=None):
         """Manually populate the field combo boxes"""
-        QgsMessageLog.logMessage(f"Starting manual field population for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Starting manual field population for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Get the layer
         layer = self.dataset_configs[dataset_idx]["layer_combo"].currentLayer()
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage(f"No valid layer selected for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"No valid layer selected for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return False
 
-        QgsMessageLog.logMessage(f"Using layer: {layer.name()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Using layer: {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Get field names if not provided
         if field_names is None:
             field_names = [f.name() for f in layer.fields()]
 
-        QgsMessageLog.logMessage(f"Fields found: {field_names}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Fields found: {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Create new standard QComboBox widgets (more reliable than QgsFieldComboBox)
         dip_combo = QComboBox()
@@ -3162,31 +3161,31 @@ class StereonetPluginCore:
         for field_name in ["Dip", "DIP", "dip", "Angle", "angle"]:
             if field_name in field_names:
                 dip_combo.setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Selected '{field_name}' for Dip field", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Selected '{field_name}' for Dip field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
         for field_name in ["DipDirection", "DIPDIRECTION", "dipdir", "DipDir", "Azimuth", "azimuth"]:
             if field_name in field_names:
                 dipdir_combo.setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Selected '{field_name}' for DipDirection field", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Selected '{field_name}' for DipDirection field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
         for field_name in ["Subtype1", "SUBTYPE", "Subtype", "subtype", "StructureCode", "Code"]:
             if field_name in field_names:
                 subtype_combo.setCurrentText(field_name)
-                QgsMessageLog.logMessage(f"Selected '{field_name}' for Structure Code field", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Selected '{field_name}' for Structure Code field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 break
 
         # Get the appropriate panel
         panel = self.dataset1_panel if dataset_idx == 0 else self.dataset2_panel
         if not panel:
-            QgsMessageLog.logMessage(f"Could not find panel for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Could not find panel for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return False
 
         # Get the layout
         layout = panel.layout()
         if not layout:
-            QgsMessageLog.logMessage(f"Could not find layout for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Could not find layout for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return False
 
         # Find the label indices
@@ -3204,7 +3203,7 @@ class StereonetPluginCore:
                 elif widget.text() == "Structure Code Field:":
                     subtype_label_idx = i
 
-        QgsMessageLog.logMessage(f"Found labels at indices: Dip={dip_label_idx}, DipDir={dipdir_label_idx}, Subtype={subtype_label_idx}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Found labels at indices: Dip={dip_label_idx}, DipDir={dipdir_label_idx}, Subtype={subtype_label_idx}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Replace the existing field combo boxes with our new ones
         if dip_label_idx >= 0 and dip_label_idx + 1 < layout.count():
@@ -3216,7 +3215,7 @@ class StereonetPluginCore:
                     old_widget.deleteLater()
                     layout.insertWidget(dip_label_idx + 1, dip_combo)
                     self.dataset_configs[dataset_idx]["dip_combo"] = dip_combo
-                    QgsMessageLog.logMessage("Replaced Dip combo box", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage("Replaced Dip combo box", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if dipdir_label_idx >= 0 and dipdir_label_idx + 1 < layout.count():
             old_item = layout.itemAt(dipdir_label_idx + 1)
@@ -3227,7 +3226,7 @@ class StereonetPluginCore:
                     old_widget.deleteLater()
                     layout.insertWidget(dipdir_label_idx + 1, dipdir_combo)
                     self.dataset_configs[dataset_idx]["dipdir_combo"] = dipdir_combo
-                    QgsMessageLog.logMessage("Replaced DipDirection combo box", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage("Replaced DipDirection combo box", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if subtype_label_idx >= 0 and subtype_label_idx + 1 < layout.count():
             old_item = layout.itemAt(subtype_label_idx + 1)
@@ -3238,7 +3237,7 @@ class StereonetPluginCore:
                     old_widget.deleteLater()
                     layout.insertWidget(subtype_label_idx + 1, subtype_combo)
                     self.dataset_configs[dataset_idx]["subtype_combo"] = subtype_combo
-                    QgsMessageLog.logMessage("Replaced Subtype combo box", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage("Replaced Subtype combo box", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Update backward compatibility references if this is dataset 0
         if dataset_idx == 0:
@@ -3246,7 +3245,7 @@ class StereonetPluginCore:
             self.dipdir_column_combo = dipdir_combo
             self.subtype_column_combo = subtype_combo
 
-        QgsMessageLog.logMessage(f"Field combo boxes successfully replaced for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Field combo boxes successfully replaced for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         return True
 
 
@@ -3261,7 +3260,7 @@ class StereonetPluginCore:
 
         layer = self.get_layer(dataset_index)
         if not layer:
-            QgsMessageLog.logMessage(f"update_data_selection: No valid layer selected for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"update_data_selection: No valid layer selected for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field selection combo boxes
@@ -3273,7 +3272,7 @@ class StereonetPluginCore:
 
         # Check if required combo boxes exist
         if not all([dip_combo, dipdir_combo, subtype_combo, easting_combo, northing_combo]):
-            QgsMessageLog.logMessage(f"Configuration error: One or more field combo boxes are missing for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Configuration error: One or more field combo boxes are missing for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Maybe show a warning message to the user
             # QMessageBox.critical(self.iface.mainWindow(), "Config Error", f"Field selectors not properly initialized for Dataset {dataset_index + 1}. Check plugin setup.")
             return
@@ -3289,12 +3288,12 @@ class StereonetPluginCore:
         if not easting_field: easting_field = None
         if not northing_field: northing_field = None
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1}] Using fields: Dip='{dip_field}', DipDir='{dipdir_field}', Subtype='{subtype_field}', Easting='{easting_field}', Northing='{northing_field}'", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1}] Using fields: Dip='{dip_field}', DipDir='{dipdir_field}', Subtype='{subtype_field}', Easting='{easting_field}', Northing='{northing_field}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
         # --- END MODIFIED ---
 
         # Check if essential fields are selected
         if not all([dip_field, dipdir_field, subtype_field]):
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Essential fields (Dip, DipDir, Subtype) not selected.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Essential fields (Dip, DipDir, Subtype) not selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             # Optionally inform the user they need to select these fields
             # QMessageBox.warning(self.iface.mainWindow(), "Fields Missing", f"Please select Dip, Dip Direction, and Structure Code fields for Dataset {dataset_index + 1}.")
             return
@@ -3313,26 +3312,26 @@ class StereonetPluginCore:
                 missing_fields_str = ", ".join(filter(None, missing_fields))
                 if missing_fields_str:  # Check if there are actually missing fields after filtering None
                     QgsMessageLog.logMessage(
-                        f"[Dataset {dataset_index + 1}] Selected fields not found in layer '{layer.name()}': {missing_fields_str}", 'Linear Geoscience', Qgis.Warning)
+                        f"[Dataset {dataset_index + 1}] Selected fields not found in layer '{layer.name()}': {missing_fields_str}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                     QMessageBox.warning(self.iface.mainWindow(), "Field Not Found",
                                         f"The following selected field(s) are not in layer '{layer.name()}': {missing_fields_str}. Please reselect.")
                     return  # Stop processing if essential fields are missing
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error validating fields for layer '{layer.name()}': {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error validating fields for layer '{layer.name()}': {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Decide whether to use selected features or all features
         if use_all_features:
             feature_iterator = layer.getFeatures()
             QgsMessageLog.logMessage(
-                f"update_data_selection: Processing ALL {layer.featureCount()} features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+                f"update_data_selection: Processing ALL {layer.featureCount()} features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         elif layer.selectedFeatureCount() > 0:
             feature_iterator = layer.selectedFeatures()
             QgsMessageLog.logMessage(
-                f"update_data_selection: Processing {layer.selectedFeatureCount()} selected features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+                f"update_data_selection: Processing {layer.selectedFeatureCount()} selected features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             QgsMessageLog.logMessage(
-                f"update_data_selection: No features selected in {layer.name()} for Dataset {dataset_index + 1}. Select features to include them.", 'Linear Geoscience', Qgis.Info)
+                f"update_data_selection: No features selected in {layer.name()} for Dataset {dataset_index + 1}. Select features to include them.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             # Clear previous data and exit if only processing selected features
             self.subtype_dict_selection[dataset_index].clear()
             self.category_structure_map_selection[dataset_index].clear()
@@ -3424,13 +3423,13 @@ class StereonetPluginCore:
             added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Selection] Processed {processed_points_count} features, added {added_points_count} valid data points.", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Selection] Found {found_categories} categories from selection.", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Selection] Processed {processed_points_count} features, added {added_points_count} valid data points.", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Selection] Found {found_categories} categories from selection.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if out_of_range_count:
             range_msg = (f"{out_of_range_count} measurement(s) in Dataset {dataset_index + 1} have dip outside "
                          f"0-90 or dip direction outside 0-360; they are plotted as-is - check field mapping.")
-            QgsMessageLog.logMessage(range_msg, 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(range_msg, 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.iface.messageBar().pushWarning("Stereonet", range_msg)
 
         if added_points_count == 0 and processed_points_count > 0:
@@ -3448,7 +3447,7 @@ class StereonetPluginCore:
 
         layer = self.get_layer(dataset_index)
         if not layer:
-            QgsMessageLog.logMessage(f"update_data_domains: No layer chosen for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"update_data_domains: No layer chosen for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field names from combo boxes
@@ -3458,7 +3457,7 @@ class StereonetPluginCore:
         domain_combo = self.dataset_configs[dataset_index]["domain_combo"]  # Get domain combo
 
         if not all([dip_combo, dipdir_combo, subtype_combo, domain_combo]):
-            QgsMessageLog.logMessage(f"Missing combo boxes for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Missing combo boxes for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         dip_field = dip_combo.currentText()
@@ -3469,21 +3468,21 @@ class StereonetPluginCore:
         # If no domain field is selected, default to "StructuralDomain" for backwards compatibility
         if not domain_field:
             domain_field = "StructuralDomain"
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] No domain field selected, defaulting to 'StructuralDomain'", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] No domain field selected, defaulting to 'StructuralDomain'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if not all([dip_field, dipdir_field, subtype_field]):
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Empty field names selected", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Empty field names selected", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         fields = [f.name() for f in layer.fields()]
         for req in [dip_field, dipdir_field, subtype_field]:
             if req not in fields:
-                QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Missing field '{req}' in layer.", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Missing field '{req}' in layer.", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 return
 
         # Check if the selected domain field exists in the layer
         if domain_field not in fields:
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Selected domain field '{domain_field}' not found in layer.", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Selected domain field '{domain_field}' not found in layer.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Continue without domain grouping if the field doesn't exist
             domain_field = None
 
@@ -3493,7 +3492,7 @@ class StereonetPluginCore:
             domain_field_index = layer.fields().indexOf(domain_field)
 
         feats = list(layer.getFeatures())
-        QgsMessageLog.logMessage(f"update_data_domains: {len(feats)} features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"update_data_domains: {len(feats)} features in {layer.name()} for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         found_categories = 0
         out_of_range_count = 0
@@ -3559,7 +3558,7 @@ class StereonetPluginCore:
                             dom_val = str(dom_val)
                     except Exception as e:
                         # If anything goes wrong with getting display value, fall back to raw value
-                        QgsMessageLog.logMessage(f"Warning: Could not get display value for {domain_field}: {e}", 'Linear Geoscience', Qgis.Warning)
+                        QgsMessageLog.logMessage(f"Warning: Could not get display value for {domain_field}: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                         dom_val = str(dom_val)
             else:
                 dom_val = "NoDomain"
@@ -3601,14 +3600,14 @@ class StereonetPluginCore:
 
             self.subtype_dict_domains[dataset_index][cat_name].append(data_dict)
 
-        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Found {found_categories} categories from domain classification.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Found {found_categories} categories from domain classification.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         if domain_field:
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Used domain field: '{domain_field}'", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Domains] Used domain field: '{domain_field}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if out_of_range_count:
             range_msg = (f"{out_of_range_count} measurement(s) in Dataset {dataset_index + 1} have dip outside "
                          f"0-90 or dip direction outside 0-360; they are plotted as-is - check field mapping.")
-            QgsMessageLog.logMessage(range_msg, 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(range_msg, 'Linear Geoscience', Qgis.MessageLevel.Warning)
             self.iface.messageBar().pushWarning("Stereonet", range_msg)
 
 
@@ -3769,7 +3768,7 @@ class StereonetPluginCore:
                     QgsMessageLog.logMessage(
                         f"Group '{group_name}': skipped {', '.join(skipped)} "
                         f"(structure type differs from group)",
-                        'Linear Geoscience', Qgis.Warning)
+                        'Linear Geoscience', Qgis.MessageLevel.Warning)
                 if not same_type:
                     continue
 
@@ -3871,7 +3870,7 @@ class StereonetPluginCore:
                     QgsMessageLog.logMessage(
                         f"Group '{group_name}': skipped {', '.join(skipped)} "
                         f"(structure type differs from group)",
-                        'Linear Geoscience', Qgis.Warning)
+                        'Linear Geoscience', Qgis.MessageLevel.Warning)
                 if not same_type:
                     continue
 
@@ -3955,7 +3954,7 @@ class StereonetPluginCore:
         if not self.category_tree_domains:
             return
 
-        QgsMessageLog.logMessage(f"Sorting domains tree by: {sort_by}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Sorting domains tree by: {sort_by}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Disable sorting temporarily to avoid interference
         self.category_tree_domains.setSortingEnabled(False)
@@ -4072,7 +4071,7 @@ class StereonetPluginCore:
         # Don't re-enable sorting - keep the custom sort order
         # (If we re-enable, Qt will auto-sort by column 0 text which starts with CODE)
 
-        QgsMessageLog.logMessage(f"Sorted {len(items_data)} items by {sort_by}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Sorted {len(items_data)} items by {sort_by}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     ########################################################################
@@ -4086,7 +4085,7 @@ class StereonetPluginCore:
 
         layer = self.get_layer(dataset_index)
         if not layer:
-            QgsMessageLog.logMessage(f"update_data_live_view: No valid layer selected for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"update_data_live_view: No valid layer selected for Dataset {dataset_index + 1}.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field selection combo boxes
@@ -4095,7 +4094,7 @@ class StereonetPluginCore:
         subtype_combo = self.dataset_configs[dataset_index].get("subtype_combo")
 
         if not all([dip_combo, dipdir_combo, subtype_combo]):
-            QgsMessageLog.logMessage(f"Configuration error: One or more field combo boxes are missing for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Configuration error: One or more field combo boxes are missing for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Get selected field names
@@ -4104,7 +4103,7 @@ class StereonetPluginCore:
         subtype_field = subtype_combo.currentText()
 
         if not all([dip_field, dipdir_field, subtype_field]):
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Live View] Essential fields not selected.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Live View] Essential fields not selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Transform extent to layer CRS if needed
@@ -4116,7 +4115,7 @@ class StereonetPluginCore:
             try:
                 transformed_extent = transform.transformBoundingBox(canvas_extent)
             except Exception:
-                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
         else:
             transformed_extent = canvas_extent
@@ -4199,15 +4198,15 @@ class StereonetPluginCore:
             added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Live View] Processed {processed_points_count} features, added {added_points_count} valid data points.", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Live View] Found {found_categories} categories from visible features.", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Live View] Processed {processed_points_count} features, added {added_points_count} valid data points.", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1} Live View] Found {found_categories} categories from visible features.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if out_of_range_count:
             # Log only (no message bar) - live view refreshes on every map pan
             QgsMessageLog.logMessage(
                 f"[Dataset {dataset_index + 1} Live View] {out_of_range_count} measurement(s) have dip outside "
                 f"0-90 or dip direction outside 0-360; they are plotted as-is - check field mapping.",
-                'Linear Geoscience', Qgis.Warning)
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
     def rebuild_category_tree_live_view(self):
@@ -4219,7 +4218,7 @@ class StereonetPluginCore:
         if not self.category_tree_live_view:
             return False
 
-        QgsMessageLog.logMessage("Rebuilding live view category tree with all available categories...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Rebuilding live view category tree with all available categories...", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Store current check states, plot modes and analysis toggles before clearing
         current_check_states = {}
@@ -4337,7 +4336,7 @@ class StereonetPluginCore:
                     QgsMessageLog.logMessage(
                         f"Group '{group_name}': skipped {', '.join(skipped)} "
                         f"(structure type differs from group)",
-                        'Linear Geoscience', Qgis.Warning)
+                        'Linear Geoscience', Qgis.MessageLevel.Warning)
                 if not same_type:
                     continue
 
@@ -4414,7 +4413,7 @@ class StereonetPluginCore:
         total_categories = len(all_categories)
         enabled_datasets = sum(1 for i in range(2) if self.dataset_configs[i]["enabled"])
 
-        QgsMessageLog.logMessage(f"Live view rebuilt with {total_categories} categories from {enabled_datasets} enabled datasets", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Live view rebuilt with {total_categories} categories from {enabled_datasets} enabled datasets", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         return any_data
 
@@ -4429,7 +4428,7 @@ class StereonetPluginCore:
         if not self.category_tree_live_view:
             return False
 
-        QgsMessageLog.logMessage("Rebuilding live view category tree with domain categories...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Rebuilding live view category tree with domain categories...", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Preserve analysis toggles across the rebuild
         saved_analysis = self._capture_tree_analysis_states(self.category_tree_live_view)
@@ -4447,17 +4446,17 @@ class StereonetPluginCore:
 
         for dataset_idx in range(2):
             if not self.dataset_configs[dataset_idx]["enabled"]:
-                QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Not enabled, skipping", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Not enabled, skipping", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 continue
 
             # Check if domain field is configured
             domain_combo = self.dataset_configs[dataset_idx].get("domain_combo")
             if not domain_combo or not domain_combo.currentText():
-                QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domain field not configured, skipping", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domain field not configured, skipping", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 continue
 
-            QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domain field configured: '{domain_combo.currentText()}'", 'Linear Geoscience', Qgis.Info)
-            QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domains dict has {len(self.category_structure_map_domains[dataset_idx])} entries", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domain field configured: '{domain_combo.currentText()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_idx + 1}] Domains dict has {len(self.category_structure_map_domains[dataset_idx])} entries", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Get all domain categories from the Domains tab
             for domain_code in self.category_structure_map_domains[dataset_idx]:
@@ -4465,7 +4464,7 @@ class StereonetPluginCore:
                 all_domain_categories[(domain_code, dataset_idx)] = struct_type
 
                 if len(all_domain_categories) <= 5:  # Only log first 5
-                    QgsMessageLog.logMessage(f"    Added domain category: '{domain_code}' ({struct_type})", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"    Added domain category: '{domain_code}' ({struct_type})", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
                 # Initialize empty data list in live view
                 self.subtype_dict_live_view[dataset_idx][domain_code] = []
@@ -4507,7 +4506,7 @@ class StereonetPluginCore:
                 QgsMessageLog.logMessage(
                     f"Group '{group_name}': skipped {', '.join(skipped)} "
                     f"(structure type differs from group)",
-                    'Linear Geoscience', Qgis.Warning)
+                    'Linear Geoscience', Qgis.MessageLevel.Warning)
             if not same_type:
                 continue
 
@@ -4566,14 +4565,14 @@ class StereonetPluginCore:
         total_categories = len(all_domain_categories)
         enabled_datasets = sum(1 for i in range(2) if self.dataset_configs[i]["enabled"])
 
-        QgsMessageLog.logMessage(f"Live view domain mode rebuilt with {total_categories} domain categories from {enabled_datasets} enabled datasets", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Live view domain mode rebuilt with {total_categories} domain categories from {enabled_datasets} enabled datasets", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # If no domain categories found, warn user
         if total_categories == 0:
-            QgsMessageLog.logMessage("WARNING: No domain categories found. Please:", 'Linear Geoscience', Qgis.Warning)
-            QgsMessageLog.logMessage("  1. Ensure domain field is configured in Configuration tab", 'Linear Geoscience', Qgis.Info)
-            QgsMessageLog.logMessage("  2. Go to Domains tab and click 'Refresh Domains' button", 'Linear Geoscience', Qgis.Info)
-            QgsMessageLog.logMessage("  3. Then enable domain mode in Live View", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("WARNING: No domain categories found. Please:", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+            QgsMessageLog.logMessage("  1. Ensure domain field is configured in Configuration tab", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage("  2. Go to Domains tab and click 'Refresh Domains' button", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage("  3. Then enable domain mode in Live View", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         return any_data
 
@@ -4700,7 +4699,7 @@ class StereonetPluginCore:
 
     def update_plot(self):
         if not self.categories_tabwidget:
-            QgsMessageLog.logMessage("update_plot: categories tab not built yet.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("update_plot: categories tab not built yet.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Determine which data source to use
@@ -4920,7 +4919,7 @@ class StereonetPluginCore:
         self.pick_handler.set_plot(pick_registry)
         self.plot_stack.setCurrentWidget(self.plot_canvas)
         self.plot_canvas.draw_idle()
-        QgsMessageLog.logMessage("Plot updated successfully with legend properly positioned.", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Plot updated successfully with legend properly positioned.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def _collect_render_settings(self, profile):
@@ -5028,7 +5027,7 @@ class StereonetPluginCore:
                 QgsMessageLog.logMessage(
                     f"Stereonet: {offset} plotted point(s) but {len(entries)} "
                     "measurement(s) in a category - picking disabled for it",
-                    'Linear Geoscience', Qgis.Warning)
+                    'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
             for art, art_entries in groups:
                 art.set_picker(True)
@@ -5587,7 +5586,7 @@ class StereonetPluginCore:
         try:
             fig.savefig(save_path, format='svg', bbox_inches='tight',
                         transparent=settings.transparent)
-            QgsMessageLog.logMessage(f"Stereonet saved as SVG: {save_path}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Stereonet saved as SVG: {save_path}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             QMessageBox.information(
                 self.iface.mainWindow(),
                 "Export Successful",
@@ -5660,7 +5659,7 @@ class StereonetPluginCore:
                 except Exception:
                     QgsMessageLog.logMessage(
                         f"Legend: failed reading value-relation table for "
-                        f"field '{field_name}'", 'Linear Geoscience', Qgis.Warning)
+                        f"field '{field_name}'", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
             elif widget_type == 'ValueMap':
                 # cfg['map'] is a list of {description: value} dicts in
@@ -6162,7 +6161,7 @@ class StereonetPluginCore:
                 stats["datasets_unconfigured"] += 1
                 QgsMessageLog.logMessage(
                     f"Export: dataset {ds + 1} skipped (dip/dipdir/code "
-                    "fields not configured)", 'Linear Geoscience', Qgis.Warning)
+                    "fields not configured)", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 continue
             domain_field = field_of('domain_combo')
             ds_info[ds] = {
@@ -6217,7 +6216,7 @@ class StereonetPluginCore:
             QgsMessageLog.logMessage(
                 "Export: skipped unclassified codes: "
                 + ", ".join(sorted(stats["unknown_codes"])),
-                'Linear Geoscience', Qgis.Warning)
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
         return per_code, ds_info, stats
 
     def _export_no_match_message(self, stats):
@@ -6242,7 +6241,7 @@ class StereonetPluginCore:
                          "dip / dip-direction / code fields not configured "
                          "in the Datasets tab.")
         message = "\n".join(parts)
-        QgsMessageLog.logMessage(message, 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage(message, 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return message
 
     def export_leapfrog(self):
@@ -6388,7 +6387,7 @@ class StereonetPluginCore:
         (transparent copies go through QImage to preserve the alpha channel).
         """
         if not self.last_plotted_data:
-            QgsMessageLog.logMessage("No data plotted yet. Cannot copy high-res image.", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("No data plotted yet. Cannot copy high-res image.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Create blank figure to avoid errors
             fig = plt.figure(figsize=(5, 5), dpi=300)
             try:
@@ -6434,12 +6433,12 @@ class StereonetPluginCore:
             image = QImage()
             image.loadFromData(buf.getvalue(), 'PNG')
             QApplication.clipboard().setImage(image, QClipboard.Mode.Clipboard)
-            QgsMessageLog.logMessage("High-res image (300 dpi) with transparent background copied to clipboard.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("High-res image (300 dpi) with transparent background copied to clipboard.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             pixmap = QPixmap()
             pixmap.loadFromData(buf.getvalue(), 'PNG')
             QApplication.clipboard().setPixmap(pixmap, QClipboard.Mode.Clipboard)
-            QgsMessageLog.logMessage("High-res image (300 dpi) copied to clipboard.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("High-res image (300 dpi) copied to clipboard.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     # =========================================================================
@@ -6468,7 +6467,7 @@ class StereonetPluginCore:
         self.live_view_enabled = (state == Qt.CheckState.Checked)
 
         if self.live_view_enabled:
-            QgsMessageLog.logMessage("Live View mode enabled", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode enabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
             # Switch to Live View tab
             if self.categories_tabwidget:
                 self.categories_tabwidget.setCurrentIndex(2)  # Live View is tab index 2
@@ -6493,7 +6492,7 @@ class StereonetPluginCore:
             self.update_live_view_data()
 
         else:
-            QgsMessageLog.logMessage("Live View mode disabled", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode disabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
             # Hide info label and disable options
             self.live_view_info_label.setVisible(False)
             self.live_view_by_extent_checkbox.setEnabled(False)
@@ -6535,20 +6534,20 @@ class StereonetPluginCore:
             self.live_view_by_selection_checkbox.blockSignals(True)
             self.live_view_by_selection_checkbox.setChecked(False)
             self.live_view_by_selection_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: By Map Extent", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: By Map Extent", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         elif sender == self.live_view_by_selection_checkbox and state == Qt.CheckState.Checked:
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(False)
             self.live_view_by_extent_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: By Selection", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: By Selection", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # If both are unchecked, default back to extent mode
         if not self.live_view_by_extent_checkbox.isChecked() and not self.live_view_by_selection_checkbox.isChecked():
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(True)
             self.live_view_by_extent_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: Defaulted back to By Map Extent", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: Defaulted back to By Map Extent", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Update monitoring and data
         self.setup_live_view_monitoring()
@@ -6596,7 +6595,7 @@ class StereonetPluginCore:
         self._selection_signal_layers = []
         QgsMessageLog.logMessage(
             "Stereonet: severed stale selection-signal connections from a "
-            "previous plugin instance", 'Linear Geoscience', Qgis.Info)
+            "previous plugin instance", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     def initialize_live_view_categories(self):
         """Initialize live view with ALL available categories from both
@@ -6616,7 +6615,7 @@ class StereonetPluginCore:
             self.live_view_by_selection_checkbox.blockSignals(True)
             self.live_view_by_selection_checkbox.setChecked(False)
             self.live_view_by_selection_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: By Map Extent", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: By Map Extent", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Update monitoring and data
             self.setup_live_view_monitoring()
@@ -6626,7 +6625,7 @@ class StereonetPluginCore:
             self.live_view_by_selection_checkbox.blockSignals(True)
             self.live_view_by_selection_checkbox.setChecked(True)
             self.live_view_by_selection_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: Switched to By Selection", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: Switched to By Selection", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Update monitoring and data
             self.setup_live_view_monitoring()
@@ -6643,7 +6642,7 @@ class StereonetPluginCore:
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(False)
             self.live_view_by_extent_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: By Selection", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: By Selection", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Update monitoring and data
             self.setup_live_view_monitoring()
@@ -6653,7 +6652,7 @@ class StereonetPluginCore:
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(True)
             self.live_view_by_extent_checkbox.blockSignals(False)
-            QgsMessageLog.logMessage("Live View mode: Switched to By Map Extent", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: Switched to By Map Extent", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Update monitoring and data
             self.setup_live_view_monitoring()
@@ -6666,7 +6665,7 @@ class StereonetPluginCore:
             return
 
         if state == Qt.CheckState.Checked:
-            QgsMessageLog.logMessage("Live View mode: By Domain", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: By Domain", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Rebuild category tree with domain categories
             self.rebuild_category_tree_live_view_domains()
@@ -6676,7 +6675,7 @@ class StereonetPluginCore:
                 self.subtype_dict_live_view[i].clear()
             self.update_plot()
         else:
-            QgsMessageLog.logMessage("Live View mode: Domain disabled", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Live View mode: Domain disabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Rebuild category tree with regular categories
             self.rebuild_category_tree_live_view()
@@ -6720,10 +6719,10 @@ class StereonetPluginCore:
     def update_live_view_data(self):
         """Update live view data based on current mode and checked categories"""
         if not self.live_view_enabled:
-            QgsMessageLog.logMessage("update_live_view_data: Live view not enabled", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("update_live_view_data: Live view not enabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
-        QgsMessageLog.logMessage("=== update_live_view_data called ===", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("=== update_live_view_data called ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Get list of checked categories (group members live one level down;
         # their per-code keys are what the update_single_category_* fns need)
@@ -6738,12 +6737,12 @@ class StereonetPluginCore:
                         cdata = child.data(0, Qt.ItemDataRole.UserRole)
                         if child.checkState(0) == Qt.CheckState.Checked and isinstance(cdata, tuple):
                             checked_categories.append((cdata[0], cdata[1]))
-                            QgsMessageLog.logMessage(f"  Checked category: '{cdata[0]}' [Dataset {cdata[1] + 1}] (group '{data['group']}')", 'Linear Geoscience', Qgis.Info)
+                            QgsMessageLog.logMessage(f"  Checked category: '{cdata[0]}' [Dataset {cdata[1] + 1}] (group '{data['group']}')", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 elif item.checkState(0) == Qt.CheckState.Checked:
                     if isinstance(data, tuple):
                         code_str, dataset_idx = data
                         checked_categories.append((code_str, dataset_idx))
-                        QgsMessageLog.logMessage(f"  Checked category: '{code_str}' [Dataset {dataset_idx + 1}]", 'Linear Geoscience', Qgis.Info)
+                        QgsMessageLog.logMessage(f"  Checked category: '{code_str}' [Dataset {dataset_idx + 1}]", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Combined mode: tree rows carry merged keys with ds 0 — fan each one
         # out to every enabled dataset, resolving per-dataset key variants
@@ -6758,10 +6757,10 @@ class StereonetPluginCore:
                         expanded.append((resolved, ds))
             checked_categories = expanded
 
-        QgsMessageLog.logMessage(f"  Total checked categories: {len(checked_categories)}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"  Total checked categories: {len(checked_categories)}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if len(checked_categories) == 0:
-            QgsMessageLog.logMessage("  WARNING: No categories are checked!", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("  WARNING: No categories are checked!", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Clear data only for checked categories
@@ -6772,22 +6771,22 @@ class StereonetPluginCore:
         # Update data based on current mode
         # Check if domain mode is enabled
         is_domain_mode = self.live_view_by_domain_checkbox.isChecked()
-        QgsMessageLog.logMessage(f"  Domain mode: {is_domain_mode}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"  Extent mode: {self.live_view_by_extent_checkbox.isChecked()}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"  Selection mode: {self.live_view_by_selection_checkbox.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"  Domain mode: {is_domain_mode}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"  Extent mode: {self.live_view_by_extent_checkbox.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"  Selection mode: {self.live_view_by_selection_checkbox.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if self.live_view_by_extent_checkbox.isChecked():
             # Update by map extent (with or without domain filtering)
             if self.map_canvas:
                 canvas_extent = self.map_canvas.extent()
-                QgsMessageLog.logMessage(f"  Using map extent: {canvas_extent}", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"  Using map extent: {canvas_extent}", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 for code_str, dataset_idx in checked_categories:
                     if self.dataset_configs[dataset_idx]["enabled"]:
                         if is_domain_mode:
-                            QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_domain_extent for '{code_str}'", 'Linear Geoscience', Qgis.Info)
+                            QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_domain_extent for '{code_str}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                             self.update_single_category_live_view_by_domain_extent(dataset_idx, code_str, canvas_extent)
                         else:
-                            QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_extent for '{code_str}'", 'Linear Geoscience', Qgis.Info)
+                            QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_extent for '{code_str}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                             self.update_single_category_live_view_by_extent(dataset_idx, code_str, canvas_extent)
 
         elif self.live_view_by_selection_checkbox.isChecked():
@@ -6795,23 +6794,23 @@ class StereonetPluginCore:
             for code_str, dataset_idx in checked_categories:
                 if self.dataset_configs[dataset_idx]["enabled"]:
                     if is_domain_mode:
-                        QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_domain_selection for '{code_str}'", 'Linear Geoscience', Qgis.Info)
+                        QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_domain_selection for '{code_str}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                         self.update_single_category_live_view_by_domain_selection(dataset_idx, code_str)
                     else:
-                        QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_selection for '{code_str}'", 'Linear Geoscience', Qgis.Info)
+                        QgsMessageLog.logMessage(f"  Calling update_single_category_live_view_by_selection for '{code_str}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                         self.update_single_category_live_view_by_selection(dataset_idx, code_str)
 
         # Update plot if live view is active
         if self.categories_tabwidget and self.categories_tabwidget.currentIndex() == 2:
             self.update_plot()
 
-        QgsMessageLog.logMessage(f"=== update_live_view_data complete: {len(checked_categories)} checked categories ===", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"=== update_live_view_data complete: {len(checked_categories)} checked categories ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Debug: Show what data we have
         for dataset_idx in range(2):
             for cat_code, data_list in self.subtype_dict_live_view[dataset_idx].items():
                 if len(data_list) > 0:
-                    QgsMessageLog.logMessage(f"  Dataset {dataset_idx + 1}, '{cat_code}': {len(data_list)} data points", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"  Dataset {dataset_idx + 1}, '{cat_code}': {len(data_list)} data points", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def on_selection_changed(self):
@@ -6831,7 +6830,7 @@ class StereonetPluginCore:
         if not active:
             return
 
-        QgsMessageLog.logMessage("Selection changed - updating live view", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Selection changed - updating live view", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_live_view_data()
 
 
@@ -6839,7 +6838,7 @@ class StereonetPluginCore:
         """Update live view data for a single category based on current selection"""
         layer = self.get_layer(dataset_index)
         if not layer or layer.selectedFeatureCount() == 0:
-            QgsMessageLog.logMessage(f"No selection in dataset {dataset_index + 1} for category {target_code}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"No selection in dataset {dataset_index + 1} for category {target_code}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field selection combo boxes
@@ -6926,7 +6925,7 @@ class StereonetPluginCore:
                 added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Live View - Selection] Added {added_points_count} points for category '{target_code}'", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Live View - Selection] Added {added_points_count} points for category '{target_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def update_single_category_live_view_by_extent(self, dataset_index, target_code, canvas_extent):
@@ -6962,7 +6961,7 @@ class StereonetPluginCore:
             try:
                 transformed_extent = transform.transformBoundingBox(canvas_extent)
             except Exception:
-                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
         else:
             transformed_extent = canvas_extent
@@ -7038,7 +7037,7 @@ class StereonetPluginCore:
                 added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Live View - Extent] Added {added_points_count} points for category '{target_code}'", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Live View - Extent] Added {added_points_count} points for category '{target_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def update_single_category_live_view_by_domain_extent(self, dataset_index, target_domain_code, canvas_extent):
@@ -7051,7 +7050,7 @@ class StereonetPluginCore:
 
         # Parse the domain category: "CODE - DomainValue (Dataset)" or "CODE - DomainValue"
         if " - " not in target_domain_code:
-            QgsMessageLog.logMessage(f"Invalid domain category format: {target_domain_code}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Invalid domain category format: {target_domain_code}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         target_code, target_domain = target_domain_code.split(" - ", 1)
@@ -7076,13 +7075,13 @@ class StereonetPluginCore:
         domain_field = domain_combo.currentText()
 
         if not all([dip_field, dipdir_field, subtype_field, domain_field]):
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field not configured for domain mode", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field not configured for domain mode", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Check if domain field exists
         fields = [f.name() for f in layer.fields()]
         if domain_field not in fields:
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field '{domain_field}' not found in layer", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field '{domain_field}' not found in layer", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Get the field index for the domain field
@@ -7097,7 +7096,7 @@ class StereonetPluginCore:
             try:
                 transformed_extent = transform.transformBoundingBox(canvas_extent)
             except Exception:
-                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Failed to transform extent for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
         else:
             transformed_extent = canvas_extent
@@ -7111,7 +7110,7 @@ class StereonetPluginCore:
         domain_mismatch_count = 0
         found_domains_for_code = set()  # Track what domain values we find for this code
 
-        QgsMessageLog.logMessage(f"    DEBUG: Looking for code='{target_code}', domain='{target_domain}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"    DEBUG: Looking for code='{target_code}', domain='{target_domain}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Process features within the current extent
         for f in layer.getFeatures(request):
@@ -7138,7 +7137,7 @@ class StereonetPluginCore:
             # Only process if this matches our target code
             if unified != target_code:
                 if processed_count <= 5:  # Only log first 5 mismatches
-                    QgsMessageLog.logMessage(f"    DEBUG: Code mismatch - found '{unified}', need '{target_code}'", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"    DEBUG: Code mismatch - found '{unified}', need '{target_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 code_mismatch_count += 1
                 continue
 
@@ -7176,7 +7175,7 @@ class StereonetPluginCore:
             if domain_display != target_domain:
                 found_domains_for_code.add(domain_display)  # Track what we found
                 if processed_count <= 5:  # Only log first 5 mismatches
-                    QgsMessageLog.logMessage(f"    DEBUG: Domain mismatch - found '{domain_display}', need '{target_domain}'", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"    DEBUG: Domain mismatch - found '{domain_display}', need '{target_domain}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 domain_mismatch_count += 1
                 continue
 
@@ -7222,22 +7221,22 @@ class StereonetPluginCore:
                 added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Live View - Domain Extent] Added {added_points_count} points for category '{target_domain_code}'", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"    DEBUG: Processed {processed_count} features, {code_mismatch_count} code mismatches, {domain_mismatch_count} domain mismatches", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Live View - Domain Extent] Added {added_points_count} points for category '{target_domain_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"    DEBUG: Processed {processed_count} features, {code_mismatch_count} code mismatches, {domain_mismatch_count} domain mismatches", 'Linear Geoscience', Qgis.MessageLevel.Info)
         if found_domains_for_code:
-            QgsMessageLog.logMessage(f"    DEBUG: Found these domain values for code '{target_code}': {sorted(found_domains_for_code)}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"    DEBUG: Found these domain values for code '{target_code}': {sorted(found_domains_for_code)}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def update_single_category_live_view_by_domain_selection(self, dataset_index, target_domain_code):
         """Update live view data for a single domain category based on current selection"""
         layer = self.get_layer(dataset_index)
         if not layer or layer.selectedFeatureCount() == 0:
-            QgsMessageLog.logMessage(f"No selection in dataset {dataset_index + 1} for category {target_domain_code}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"No selection in dataset {dataset_index + 1} for category {target_domain_code}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Parse the domain category: "CODE - DomainValue (Dataset)" or "CODE - DomainValue"
         if " - " not in target_domain_code:
-            QgsMessageLog.logMessage(f"Invalid domain category format: {target_domain_code}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Invalid domain category format: {target_domain_code}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         target_code, target_domain = target_domain_code.split(" - ", 1)
@@ -7262,13 +7261,13 @@ class StereonetPluginCore:
         domain_field = domain_combo.currentText()
 
         if not all([dip_field, dipdir_field, subtype_field, domain_field]):
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field not configured for domain mode", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field not configured for domain mode", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Check if domain field exists
         fields = [f.name() for f in layer.fields()]
         if domain_field not in fields:
-            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field '{domain_field}' not found in layer", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"[Dataset {dataset_index + 1}] Domain field '{domain_field}' not found in layer", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
         # Get the field index for the domain field
@@ -7280,7 +7279,7 @@ class StereonetPluginCore:
         domain_mismatch_count = 0
         found_domains_for_code = set()  # Track what domain values we find for this code
 
-        QgsMessageLog.logMessage(f"    DEBUG: Looking for code='{target_code}', domain='{target_domain}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"    DEBUG: Looking for code='{target_code}', domain='{target_domain}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Process only selected features
         for f in layer.selectedFeatures():
@@ -7307,7 +7306,7 @@ class StereonetPluginCore:
             # Only process if this matches our target code
             if unified != target_code:
                 if processed_count <= 5:  # Only log first 5 mismatches
-                    QgsMessageLog.logMessage(f"    DEBUG: Code mismatch - found '{unified}', need '{target_code}'", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"    DEBUG: Code mismatch - found '{unified}', need '{target_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 code_mismatch_count += 1
                 continue
 
@@ -7345,7 +7344,7 @@ class StereonetPluginCore:
             if domain_display != target_domain:
                 found_domains_for_code.add(domain_display)  # Track what we found
                 if processed_count <= 5:  # Only log first 5 mismatches
-                    QgsMessageLog.logMessage(f"    DEBUG: Domain mismatch - found '{domain_display}', need '{target_domain}'", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"    DEBUG: Domain mismatch - found '{domain_display}', need '{target_domain}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 domain_mismatch_count += 1
                 continue
 
@@ -7391,20 +7390,20 @@ class StereonetPluginCore:
                 added_points_count += 1
 
         QgsMessageLog.logMessage(
-            f"[Dataset {dataset_index + 1} Live View - Domain Selection] Added {added_points_count} points for category '{target_domain_code}'", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"    DEBUG: Processed {processed_count} features, {code_mismatch_count} code mismatches, {domain_mismatch_count} domain mismatches", 'Linear Geoscience', Qgis.Info)
+            f"[Dataset {dataset_index + 1} Live View - Domain Selection] Added {added_points_count} points for category '{target_domain_code}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"    DEBUG: Processed {processed_count} features, {code_mismatch_count} code mismatches, {domain_mismatch_count} domain mismatches", 'Linear Geoscience', Qgis.MessageLevel.Info)
         if found_domains_for_code:
-            QgsMessageLog.logMessage(f"    DEBUG: Found these domain values for code '{target_code}': {sorted(found_domains_for_code)}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"    DEBUG: Found these domain values for code '{target_code}': {sorted(found_domains_for_code)}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def capture_temporary_dataset(self):
         """Capture current live view data as temporary comparison dataset"""
         if not self.live_view_enabled:
-            QgsMessageLog.logMessage("Cannot capture: Live view mode is not enabled", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("Cannot capture: Live view mode is not enabled", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
         
         # FIRST: Completely clear any existing temporary data to start fresh
-        QgsMessageLog.logMessage("Clearing any existing temporary data before capture...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Clearing any existing temporary data before capture...", 'Linear Geoscience', Qgis.MessageLevel.Info)
         for dataset_idx in range(2):
             # Clear each category's data list explicitly
             for code_str in list(self.temporary_dataset[dataset_idx].keys()):
@@ -7430,7 +7429,7 @@ class StereonetPluginCore:
         self.temp_status_label.setText(f"Temporary dataset captured ({total_points} points)")
         self.temp_status_label.setVisible(True)
         
-        QgsMessageLog.logMessage(f"Captured {total_points} points as temporary comparison dataset", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Captured {total_points} points as temporary comparison dataset", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_plot()
 
 
@@ -7463,11 +7462,11 @@ class StereonetPluginCore:
             for data_list in dataset.values()
         )
         
-        QgsMessageLog.logMessage(f"Cleared temporary comparison dataset: {total_points_before} points removed", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Cleared temporary comparison dataset: {total_points_before} points removed", 'Linear Geoscience', Qgis.MessageLevel.Info)
         if total_points_after > 0:
-            QgsMessageLog.logMessage(f"WARNING: {total_points_after} points still remain after clearing!", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"WARNING: {total_points_after} points still remain after clearing!", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         else:
-            QgsMessageLog.logMessage("Temporary dataset completely cleared - verified empty", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("Temporary dataset completely cleared - verified empty", 'Linear Geoscience', Qgis.MessageLevel.Info)
         
         # Force plot update to remove any lingering temporary markers
         self.update_plot()
@@ -7655,7 +7654,7 @@ class StereonetPluginCore:
 
 
     def unload(self):
-        QgsMessageLog.logMessage("Unloading Stereonet Plugin...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Unloading Stereonet Plugin...", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Stop timers
         for timer_name in ('extent_change_timer', 'plot_update_timer'):
@@ -7791,7 +7790,7 @@ class StereonetPluginCore:
 
         if not hasattr(self, 'layer_maps'):
             self.layer_maps = [{}, {}]
-            QgsMessageLog.logMessage(f"Layer maps not initialized for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Layer maps not initialized for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         if display_name in self.layer_maps[dataset_idx]:
@@ -7799,21 +7798,21 @@ class StereonetPluginCore:
             layer = self.layer_maps[dataset_idx][display_name]
 
             if not layer.isValid():
-                QgsMessageLog.logMessage(f"Selected layer is not valid for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Selected layer is not valid for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 return
 
-            QgsMessageLog.logMessage(f"Selected layer '{layer.name()}' for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Selected layer '{layer.name()}' for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Populate fields
             self.populate_field_combo_boxes(dataset_idx, layer)
         else:
-            QgsMessageLog.logMessage(f"Layer '{display_name}' not found in layer map for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Layer '{display_name}' not found in layer map for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
     def toggle_dataset(self, dataset_index, state):
         """Enable or disable a dataset"""
         self.dataset_configs[dataset_index]["enabled"] = (state == Qt.CheckState.Checked)
-        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} {'enabled' if state == Qt.CheckState.Checked else 'disabled'}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} {'enabled' if state == Qt.CheckState.Checked else 'disabled'}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         
         # Update capture button state - enabled only if live view is active and any datasets are enabled
         if hasattr(self, 'capture_button'):
@@ -7828,7 +7827,7 @@ class StereonetPluginCore:
         self.dataset_configs[dataset_index]["name"] = name
         if hasattr(self, 'active_dataset_combo'):
             self.active_dataset_combo.setItemText(dataset_index, name)
-        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} renamed to '{name}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} renamed to '{name}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def set_dataset_color(self, dataset_index):
@@ -7848,7 +7847,7 @@ class StereonetPluginCore:
                             child.setStyleSheet(f"background-color: {color_hex};")
                             break
 
-            QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} color set to {color_hex}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} color set to {color_hex}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             self.update_plot()
 
 
@@ -8116,7 +8115,7 @@ class StereonetPluginCore:
             else:
                 base_color = fallback_colors[fallback_index % len(fallback_colors)]
                 fallback_index += 1
-                QgsMessageLog.logMessage(f"Using fallback color for unknown code: {base_code}", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Using fallback color for unknown code: {base_code}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Use the global index for color assignment - this ensures every code gets a unique color
             # Apply domain-based color variation with global index
@@ -8165,7 +8164,7 @@ class StereonetPluginCore:
     def set_active_dataset(self, index):
         """Set which dataset is currently active (simplified for combined tab)"""
         self.active_dataset = index
-        QgsMessageLog.logMessage(f"Active dataset set to {index + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Active dataset set to {index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     ########################################################################
     # Plot Tab Setup (Updated)
@@ -8175,13 +8174,13 @@ class StereonetPluginCore:
     def switch_config_dataset(self, index):
         """Switch which dataset is currently active (compatibility method)"""
         self.active_dataset = index
-        QgsMessageLog.logMessage(f"Active dataset set to {index + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Active dataset set to {index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
     def simple_switch_dataset(self, index):
         """Simple handler for dataset selection in config tab"""
         self.active_dataset = index
-        QgsMessageLog.logMessage(f"Switching to dataset {index + 1}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Switching to dataset {index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Update the stacked widget to show the selected dataset's config
         if hasattr(self, 'dataset_stacks'):
@@ -8197,20 +8196,20 @@ class StereonetPluginCore:
     def on_dataset0_layer_changed(self, layer):
         """Direct handler for dataset 0 layer changes"""
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage("Dataset 0: Invalid layer selected", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("Dataset 0: Invalid layer selected", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        QgsMessageLog.logMessage(f"Dataset 0: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset 0: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.populate_field_combos_for_dataset(0, layer)
 
 
     def on_dataset1_layer_changed(self, layer):
         """Direct handler for dataset 1 layer changes"""
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage("Dataset 1: Invalid layer selected", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("Dataset 1: Invalid layer selected", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        QgsMessageLog.logMessage(f"Dataset 1: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset 1: Layer changed to '{layer.name()}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.populate_field_combos_for_dataset(1, layer)
 
 
@@ -8246,7 +8245,7 @@ class StereonetPluginCore:
         # Layer selection
         panel_layout.addWidget(QLabel("Layer:"))
         layer_combo = QgsMapLayerComboBox()
-        layer_combo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+        layer_combo.setFilters(Qgis.LayerFilter.VectorLayer)
 
         # Connect layer change event
         layer_combo.layerChanged.connect(lambda layer: self.populate_field_combo_boxes(dataset_idx, layer))
@@ -8290,10 +8289,10 @@ class StereonetPluginCore:
     def direct_update_fields(self, dataset_idx, layer):
         """Directly update field combo boxes for the specified dataset"""
         if not layer or not layer.isValid():
-            QgsMessageLog.logMessage(f"Invalid layer for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Invalid layer for dataset {dataset_idx + 1}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        QgsMessageLog.logMessage(f"Updating fields for dataset {dataset_idx + 1} with layer: {layer.name()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Updating fields for dataset {dataset_idx + 1} with layer: {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Get combo box references
         dip_combo = self.dataset_configs[dataset_idx]["dip_combo"]
@@ -8302,12 +8301,12 @@ class StereonetPluginCore:
 
         # Check if combo boxes exist
         if not all([dip_combo, dipdir_combo, subtype_combo]):
-            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: One or more combo boxes are missing", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: One or more combo boxes are missing", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # Get field names from layer
         field_names = [f.name() for f in layer.fields()]
-        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Fields found: {field_names}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Fields found: {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Clear and repopulate the combo boxes
         try:
@@ -8321,24 +8320,24 @@ class StereonetPluginCore:
             for field_name in ["Dip", "DIP", "dip", "Angle", "angle"]:
                 if field_name in field_names:
                     dip_combo.setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Dip field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Dip field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
 
             # Try to auto-select DipDirection field
             for field_name in ["DipDirection", "DIPDIRECTION", "dipdir", "DipDir", "Azimuth", "azimuth"]:
                 if field_name in field_names:
                     dipdir_combo.setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for DipDirection field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for DipDirection field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
 
             # Try to auto-select Subtype field
             for field_name in ["Subtype1", "SUBTYPE", "Subtype", "subtype", "StructureCode", "Code"]:
                 if field_name in field_names:
                     subtype_combo.setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Subtype field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Auto-selected '{field_name}' for Subtype field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
         except Exception as e:
-            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Error setting fields: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Dataset {dataset_idx + 1}: Error setting fields: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Fallback to direct population if QGIS API fails
             self.manually_populate_fields(dataset_idx, field_names)
 
@@ -8380,7 +8379,7 @@ class StereonetPluginCore:
         if (not self.dataset_configs[dataset_index]["dip_combo"] or
                 not self.dataset_configs[dataset_index]["dipdir_combo"] or
                 not self.dataset_configs[dataset_index]["subtype_combo"]):
-            QgsMessageLog.logMessage(f"Field combos not initialized for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Field combos not initialized for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return
 
         # First set the layer to populate the combo boxes
@@ -8391,27 +8390,27 @@ class StereonetPluginCore:
         # Auto-detect and select common field names
         if layer and layer.isValid():
             fields = [f.name() for f in layer.fields()]
-            QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} field auto-detection found {len(fields)} fields -> {fields}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} field auto-detection found {len(fields)} fields -> {fields}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
             # Auto-select Dip field
             for field_name in ["Dip", "DIP", "dip", "Angle", "angle"]:
                 if field_name in fields:
                     self.dataset_configs[dataset_index]["dip_combo"].setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for Dip field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for Dip field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
 
             # Auto-select DipDirection field
             for field_name in ["DipDirection", "DIPDIRECTION", "dipdir", "DipDir", "Azimuth", "azimuth"]:
                 if field_name in fields:
                     self.dataset_configs[dataset_index]["dipdir_combo"].setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for DipDirection field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for DipDirection field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
 
             # Auto-select Subtype field
             for field_name in ["Subtype1", "SUBTYPE", "Subtype", "subtype", "StructureCode", "Code"]:
                 if field_name in fields:
                     self.dataset_configs[dataset_index]["subtype_combo"].setCurrentText(field_name)
-                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for Subtype field", 'Linear Geoscience', Qgis.Info)
+                    QgsMessageLog.logMessage(f"Auto-selected {field_name} for Subtype field", 'Linear Geoscience', Qgis.MessageLevel.Info)
                     break
 
         # Update backward compatibility references if this is dataset 0
@@ -8595,7 +8594,7 @@ class StereonetPluginCore:
                                 item.setCheckState(0, Qt.CheckState.Checked)
                                 break
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error selecting newly classified codes: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error selecting newly classified codes: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
     def import_coding_csv(self):
@@ -8704,11 +8703,11 @@ class StereonetPluginCore:
             dataset_index = self.active_dataset
 
         if dataset_index < 0 or dataset_index >= len(self.dataset_configs):
-            QgsMessageLog.logMessage(f"Invalid dataset index: {dataset_index}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Invalid dataset index: {dataset_index}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return None
 
         if self.dataset_configs[dataset_index]["layer_combo"] is None:
-            QgsMessageLog.logMessage(f"Layer combo not initialized for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Layer combo not initialized for dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return None
 
         # Get the display text of the selected layer
@@ -8717,7 +8716,7 @@ class StereonetPluginCore:
 
         # If the combo box is empty or no selection, return None
         if not display_text:
-            QgsMessageLog.logMessage(f"No layer selected for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"No layer selected for Dataset {dataset_index + 1}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             return None
 
         # If we have a layer maps attribute and the selected text is in the map
@@ -8737,7 +8736,7 @@ class StereonetPluginCore:
                 if layer.name() == layer_name:
                     return layer
 
-        QgsMessageLog.logMessage(f"Could not find layer for Dataset {dataset_index + 1} with text: {display_text}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Could not find layer for Dataset {dataset_index + 1} with text: {display_text}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         return None
 
     ########################################################################
@@ -8756,12 +8755,12 @@ class StereonetPluginCore:
 
     def _do_refresh(self, use_all_features=False):
         mode = "Refresh with All" if use_all_features else "Refresh Selection"
-        QgsMessageLog.logMessage(f"=== {mode} Clicked ===", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"=== {mode} Clicked ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Process each enabled dataset
         for i in range(2):
             if self.dataset_configs[i]["enabled"]:
-                QgsMessageLog.logMessage(f"Refreshing Dataset {i + 1}: {self.dataset_configs[i]['name']}", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Refreshing Dataset {i + 1}: {self.dataset_configs[i]['name']}", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 self.update_data_selection(i, use_all_features=use_all_features)
                 self.update_data_domains(i)
 
@@ -8777,10 +8776,10 @@ class StereonetPluginCore:
 
             # Rebuild appropriate category tree based on domain mode
             if self.live_view_by_domain_checkbox and self.live_view_by_domain_checkbox.isChecked():
-                QgsMessageLog.logMessage("Rebuilding live view tree with domain categories (domain mode active)", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage("Rebuilding live view tree with domain categories (domain mode active)", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 self.rebuild_category_tree_live_view_domains()
             else:
-                QgsMessageLog.logMessage("Rebuilding live view tree with regular categories", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage("Rebuilding live view tree with regular categories", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 self.rebuild_category_tree_live_view()
 
         # Check if any data was found
@@ -8793,11 +8792,11 @@ class StereonetPluginCore:
 
         if not any_data_found and self.plot_label:
             self.plot_label.setText("No valid structural data found. Check fields or selection.")
-            QgsMessageLog.logMessage("manual_refresh: No valid data found.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("manual_refresh: No valid data found.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             if self.plot_label:
                 self.plot_label.setText("Categories refreshed. Now hit 'Plot' to update the stereonet.")
-            QgsMessageLog.logMessage("manual_refresh: Categories found and displayed.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage("manual_refresh: Categories found and displayed.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Also refresh the coding table to show new classifications
         if hasattr(self, 'populate_coding_table') and self.coding_table:

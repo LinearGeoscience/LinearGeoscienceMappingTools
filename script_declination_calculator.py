@@ -10,7 +10,8 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QButtonGroup, QProgressDialog, QTextEdit)
 from qgis.PyQt.QtCore import Qt, QDate, QVariant
 from qgis.PyQt.QtGui import QIcon, QAction
-from qgis.core import (QgsProject, QgsVectorLayer, QgsField, edit,
+from qgis.core import (
+    Qgis,QgsProject, QgsVectorLayer, QgsField, edit,
                        QgsCoordinateReferenceSystem, QgsCoordinateTransform,
                        QgsPointXY, QgsWkbTypes)
 from qgis.utils import iface
@@ -343,7 +344,7 @@ class CalculateDeclinationDialog(QDialog):
                 return None, None
 
             # Handle different geometry types
-            if geom.type() == QgsWkbTypes.PointGeometry:
+            if geom.type() == Qgis.GeometryType.Point:
                 if geom.isMultipart():
                     # For multipart geometries, use the first point
                     points = geom.asMultiPoint()

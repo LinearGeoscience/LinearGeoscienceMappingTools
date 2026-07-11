@@ -25,7 +25,7 @@ import os.path
 from qgis.PyQt.QtCore import QSettings, Qt
 from qgis.PyQt.QtGui import QIcon, QAction
 from qgis.PyQt.QtWidgets import QMessageBox, QProgressDialog, QDialog
-from qgis.core import QgsApplication, QgsWkbTypes, QgsMapLayerType, QgsVectorLayer, QgsMessageLog, Qgis
+from qgis.core import QgsApplication, QgsVectorLayer, QgsMessageLog, Qgis
 
 # Import clipping components
 from .clipping.clipper_dockwidget import ClipperDockWidget
@@ -376,9 +376,9 @@ class MapCleaningToolkit(object):
 
         # Enable reshape and add feature tools only for polygon/line layers in edit mode
         enable_tools = False
-        if layer and layer.type() == QgsMapLayerType.VectorLayer:
+        if layer and layer.type() == Qgis.LayerType.Vector:
             try:
-                if layer.geometryType() in [QgsWkbTypes.PolygonGeometry, QgsWkbTypes.LineGeometry]:
+                if layer.geometryType() in [Qgis.GeometryType.Polygon, Qgis.GeometryType.Line]:
                     enable_tools = layer.isEditable()
 
                     # Connect to editing signals
@@ -476,7 +476,7 @@ class MapCleaningToolkit(object):
             self.show_geometry_fixer_results(layer, fix_results)
         else:
             # User cancelled - just log it
-            self.log_geometry_fixer("Geometry fixing cancelled by user", Qgis.Info)
+            self.log_geometry_fixer("Geometry fixing cancelled by user", Qgis.MessageLevel.Info)
 
     def validate_layer_for_geometry_fixer(self, layer):
         """
@@ -493,12 +493,12 @@ class MapCleaningToolkit(object):
             return False, "Layer is not in editing mode.\n\nPlease start editing first (Toggle Editing button)."
 
         geom_type = layer.geometryType()
-        if geom_type != QgsWkbTypes.PolygonGeometry:
+        if geom_type != Qgis.GeometryType.Polygon:
             return False, "This tool only works with polygon layers"
 
         return True, None
 
-    def log_geometry_fixer(self, message, level=Qgis.Info):
+    def log_geometry_fixer(self, message, level=Qgis.MessageLevel.Info):
         """Log message to QGIS message log for geometry fixer."""
         QgsMessageLog.logMessage(message, 'Map Cleaning Toolkit - Geometry Fixer', level)
 

@@ -14,7 +14,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import pyqtSignal
 from qgis.core import (
     QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
-    QgsRectangle, QgsWkbTypes, QgsMessageLog, Qgis,
+    QgsRectangle, QgsMessageLog, Qgis,
     QgsCoordinateTransform,
 )
 
@@ -43,17 +43,17 @@ except ImportError:
 # ── Module-level helpers (moved verbatim from script_plotsymbols.py) ──
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
 
 
 def get_unique_categories(table_layer, key_field):
     """Gather unique non-null values from *key_field* in the table layer."""
     if table_layer is None:
-        _log("Code table not found in project", Qgis.Warning)
+        _log("Code table not found in project", Qgis.MessageLevel.Warning)
         return []
     if key_field not in table_layer.fields().names():
-        _log(f"Field '{key_field}' not found in table '{table_layer.name()}'", Qgis.Warning)
+        _log(f"Field '{key_field}' not found in table '{table_layer.name()}'", Qgis.MessageLevel.Warning)
         return []
     categories = set()
     for feat in table_layer.getFeatures():
@@ -70,9 +70,9 @@ def create_grid_features(layer, origin_x, origin_y, categories, code_field,
     features = []
     x, y = origin_x, origin_y
     for cat in categories:
-        if geom_type == QgsWkbTypes.PointGeometry:
+        if geom_type == Qgis.GeometryType.Point:
             geom = QgsGeometry.fromPointXY(QgsPointXY(x, y))
-        elif geom_type == QgsWkbTypes.LineGeometry:
+        elif geom_type == Qgis.GeometryType.Line:
             geom = QgsGeometry.fromPolylineXY([
                 QgsPointXY(x, y),
                 QgsPointXY(x + feature_size, y),
@@ -279,7 +279,7 @@ class PlotSymbolsPage(QWidget):
         table_layers = []
         for layer in project.mapLayers().values():
             if hasattr(layer, 'geometryType'):
-                if layer.geometryType() == QgsWkbTypes.NullGeometry:
+                if layer.geometryType() == Qgis.GeometryType.Null:
                     table_layers.append(layer)
                 else:
                     geom_layers.append(layer)
@@ -467,7 +467,7 @@ class PlotSymbolsPage(QWidget):
             else:
                 layer_center = canvas_center
 
-            is_line = layer.geometryType() == QgsWkbTypes.LineGeometry
+            is_line = layer.geometryType() == Qgis.GeometryType.Line
             if is_line:
                 block_width = SPACING
             else:

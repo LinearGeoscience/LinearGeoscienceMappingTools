@@ -285,7 +285,7 @@ class DuplicateUuidResolverDialog(QDialog):
             except Exception as exc:  # pragma: no cover - canvas edge cases
                 QgsMessageLog.logMessage(
                     f"duplicate-resolver highlight failed: {exc}",
-                    LOG_TAG, Qgis.Warning)
+                    LOG_TAG, Qgis.MessageLevel.Warning)
 
     # ── navigation ─────────────────────────────────────────────────
 

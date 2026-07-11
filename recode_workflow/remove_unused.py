@@ -31,7 +31,7 @@ except ImportError:
 from .constants import LOG_TAG
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
 
 

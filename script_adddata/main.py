@@ -522,7 +522,7 @@ class GeoPackageAppendTool(QMainWindow):
             master_uuid_idx = master_layer.fields().lookupField(uuid_field_in_master)
             master_date_idx = master_layer.fields().lookupField(common_date_field)
             request = (QgsFeatureRequest()
-                       .setFlags(QgsFeatureRequest.NoGeometry)
+                       .setFlags(Qgis.FeatureRequestFlag.NoGeometry)
                        .setSubsetOfAttributes([master_uuid_idx, master_date_idx]))
             existing_data = {}  # {uuid: date}
             for feature in master_layer.getFeatures(request):
@@ -548,7 +548,7 @@ class GeoPackageAppendTool(QMainWindow):
 
             source_uuid_idx = source_layer.fields().lookupField(uuid_field)
             source_request = (QgsFeatureRequest()
-                              .setFlags(QgsFeatureRequest.NoGeometry)
+                              .setFlags(Qgis.FeatureRequestFlag.NoGeometry)
                               .setSubsetOfAttributes([source_uuid_idx]))
             for feature in source_layer.getFeatures(source_request):
                 total_source_count += 1
@@ -571,7 +571,7 @@ class GeoPackageAppendTool(QMainWindow):
             }
 
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error analyzing duplicates for {layer_name}: {str(e)}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error analyzing duplicates for {layer_name}: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return {
                 'cutoff_date': None,
                 'duplicate_count': 0,

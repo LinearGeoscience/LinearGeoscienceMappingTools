@@ -16,7 +16,7 @@ from qgis.core import (
     QgsCategorizedSymbolRenderer, QgsRuleBasedRenderer,
     QgsSymbol, QgsFeatureRequest, QgsGeometry,
     QgsCoordinateTransform, QgsCsException,
-    QgsMapLayerType, QgsMessageLog, Qgis,
+    QgsMessageLog, Qgis,
 )
 
 try:
@@ -223,7 +223,7 @@ def find_fields_for_table(project, table_name):
 
     results = []
     for lyr in project.mapLayers().values():
-        if lyr.type() != QgsMapLayerType.VectorLayer or not lyr.isSpatial():
+        if lyr.type() != Qgis.LayerType.Vector or not lyr.isSpatial():
             continue
         for field in lyr.fields():
             if field.name().lower().startswith(prefix.lower()):
@@ -273,7 +273,7 @@ def load_lookup_table(table_layer, key_column, value_column,
     if key_idx < 0:
         return {}, {}
 
-    request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+    request = QgsFeatureRequest().setFlags(Qgis.FeatureRequestFlag.NoGeometry)
     lookup = {}
     groups = {}
     for feat in table_layer.getFeatures(request):
@@ -388,7 +388,7 @@ def resolve_section_targets(project, section):
                 QgsMessageLog.logMessage(
                     f"Legend section '{section.get('title')}': target layer "
                     f"'{target.get('layer', {}).get('name')}' not found — "
-                    f"skipped.", LOG_TAG, Qgis.Warning)
+                    f"skipped.", LOG_TAG, Qgis.MessageLevel.Warning)
                 continue
             targets.append((layer, list(target.get('fields', []))))
         return targets
@@ -410,7 +410,7 @@ def resolve_section_targets(project, section):
 
     targets = []
     for lyr in project.mapLayers().values():
-        if (lyr.type() != QgsMapLayerType.VectorLayer
+        if (lyr.type() != Qgis.LayerType.Vector
                 or not lyr.isSpatial()):
             continue
         present = [f for f in fields if lyr.fields().indexOf(f) >= 0]
@@ -493,7 +493,7 @@ def collect_paired_lookups(project, section):
             continue
 
         needed = sorted({idx for pair in pairs for idx in pair})
-        request = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+        request = QgsFeatureRequest().setFlags(Qgis.FeatureRequestFlag.NoGeometry)
         request.setSubsetOfAttributes(needed)
         for feat in layer.getFeatures(request):
             for code_idx, desc_idx in pairs:
@@ -534,10 +534,10 @@ def discover_section_candidates(project):
     """
     spatial_layers = [
         lyr for lyr in project.mapLayers().values()
-        if lyr.type() == QgsMapLayerType.VectorLayer and lyr.isSpatial()]
+        if lyr.type() == Qgis.LayerType.Vector and lyr.isSpatial()]
     tables = sorted(
         (lyr for lyr in project.mapLayers().values()
-         if lyr.type() == QgsMapLayerType.VectorLayer and not lyr.isSpatial()),
+         if lyr.type() == Qgis.LayerType.Vector and not lyr.isSpatial()),
         key=lambda l: l.name())
 
     candidates = []
@@ -691,7 +691,7 @@ def transform_geom_to_layer(sheet_geom, sheet_crs, layer, project):
     except QgsCsException as e:
         QgsMessageLog.logMessage(
             f"CRS transform to '{layer.name()}' failed ({e}); "
-            f"scanning whole layer instead.", LOG_TAG, Qgis.Warning)
+            f"scanning whole layer instead.", LOG_TAG, Qgis.MessageLevel.Warning)
         return None
 
 
@@ -764,7 +764,7 @@ def _scan_layer_combined(layer, flat_fields, subdivided_specs, filter_geom):
         engine = QgsGeometry.createGeometryEngine(filter_geom.constGet())
         engine.prepareGeometry()
     else:
-        request.setFlags(QgsFeatureRequest.NoGeometry)
+        request.setFlags(Qgis.FeatureRequestFlag.NoGeometry)
 
     for feat in layer.getFeatures(request):
         if engine is not None:
@@ -821,7 +821,7 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
                 QgsMessageLog.logMessage(
                     f"Legend section '{section.get('title')}': layer "
                     f"'{section['layer'].get('name')}' not found — skipped.",
-                    LOG_TAG, Qgis.Warning)
+                    LOG_TAG, Qgis.MessageLevel.Warning)
             continue
 
         if section.get('subdivide_by'):

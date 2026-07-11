@@ -308,7 +308,7 @@ class StereonetPickHandler:
         if missing_fid:
             QgsMessageLog.logMessage(
                 f"Stereonet pick: {missing_fid} plotted point(s) have no source feature id",
-                'Linear Geoscience', Qgis.Warning)
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
         if not picks_by_dataset:
             # Points were hit but none could be linked to a feature: leave
@@ -342,7 +342,7 @@ class StereonetPickHandler:
                 QgsMessageLog.logMessage(
                     f"Stereonet pick: layer for dataset {dataset_idx + 1} "
                     "not available, skipping selection",
-                    'Linear Geoscience', Qgis.Warning)
+                    'Linear Geoscience', Qgis.MessageLevel.Warning)
                 continue
             _, merged = layers_with_picks.setdefault(layer.id(), (layer, set()))
             merged.update(fids)
@@ -353,7 +353,7 @@ class StereonetPickHandler:
         try:
             for layer, fids in layers_with_picks.values():
                 if additive:
-                    layer.selectByIds(list(fids), QgsVectorLayer.AddToSelection)
+                    layer.selectByIds(list(fids), Qgis.SelectBehavior.AddToSelection)
                 else:
                     layer.selectByIds(list(fids))
             if not additive:

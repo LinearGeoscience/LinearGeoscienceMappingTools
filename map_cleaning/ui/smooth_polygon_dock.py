@@ -23,8 +23,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QDockWidget
 
 from qgis.core import (
-    QgsMapLayerProxyModel,
-    QgsWkbTypes,
+    Qgis,
     QgsGeometry,
     QgsPointXY,
     QgsProject,
@@ -56,7 +55,7 @@ class SmoothPolygonDock(uicls, basecls):
         self.smoothed_geometry = None
 
         # Rubber band for preview
-        self.preview_rb = QgsRubberBand(self.canvas, QgsWkbTypes.PolygonGeometry)
+        self.preview_rb = QgsRubberBand(self.canvas, Qgis.GeometryType.Polygon)
         self.preview_rb.setColor(QColor(255, 0, 0, 100))
         self.preview_rb.setWidth(2)
 
@@ -71,7 +70,7 @@ class SmoothPolygonDock(uicls, basecls):
     def setup_ui(self):
         """Initialize UI components"""
         # Configure layer combo box to show only polygon layers
-        self.layerComboBox.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.layerComboBox.setFilters(Qgis.LayerFilter.PolygonLayer)
         self.layerComboBox.setAllowEmptyLayer(False)
 
         # Set initial state
@@ -174,7 +173,7 @@ class SmoothPolygonDock(uicls, basecls):
             self.set_status(f"Generating preview (tension={tension}, tolerance={tolerance})...")
 
             # Clear previous preview
-            self.preview_rb.reset(QgsWkbTypes.PolygonGeometry)
+            self.preview_rb.reset(Qgis.GeometryType.Polygon)
 
             # Get polygon geometry
             geom = QgsGeometry(self.original_geometry)
@@ -297,7 +296,7 @@ class SmoothPolygonDock(uicls, basecls):
         """Clear the preview rubber band"""
         rb = getattr(self, "preview_rb", None)
         if rb:
-            rb.reset(QgsWkbTypes.PolygonGeometry)
+            rb.reset(Qgis.GeometryType.Polygon)
         self.smoothed_geometry = None
         if self.current_feature:
             self.set_status("Preview cleared")

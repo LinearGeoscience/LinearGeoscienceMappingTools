@@ -4,6 +4,7 @@ Preview System for Polygon Clipper
 Handles preview layer creation and confirmation dialog
 """
 from qgis.core import (
+    Qgis,
     QgsCategorizedSymbolRenderer,
     QgsFeature,
     QgsField,
@@ -11,7 +12,6 @@ from qgis.core import (
     QgsProject,
     QgsRendererCategory,
     QgsVectorLayer,
-    QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
 from qgis.PyQt.QtGui import QColor
@@ -194,7 +194,7 @@ class PreviewManager:
         source_layer.removeSelection()
 
         # Determine geometry type
-        if source_layer.wkbType() == QgsWkbTypes.MultiPolygon:
+        if source_layer.wkbType() == Qgis.WkbType.MultiPolygon:
             geom_type = "MultiPolygon"
         else:
             geom_type = "Polygon"

@@ -92,7 +92,7 @@ class OfflineConverter(QObject):
             # Export each layer
             for i, layer in enumerate(layers_to_export):
                 if self._cancelled:
-                    log_message("Export cancelled by user", Qgis.Warning)
+                    log_message("Export cancelled by user", Qgis.MessageLevel.Warning)
                     return False
 
                 self.progress_updated.emit(
@@ -135,7 +135,7 @@ class OfflineConverter(QObject):
             return True
 
         except Exception as e:
-            log_message(f"Export failed: {e}", Qgis.Critical)
+            log_message(f"Export failed: {e}", Qgis.MessageLevel.Critical)
             self.finished.emit(False)
             return False
 
@@ -449,7 +449,7 @@ class OfflineConverter(QObject):
 
         except Exception as e:
             self.log_message.emit(f"  ✗ ERROR: {str(e)}")
-            log_message(f"Failed to export layer {layer.name()}: {e}", Qgis.Critical)
+            log_message(f"Failed to export layer {layer.name()}: {e}", Qgis.MessageLevel.Critical)
             self.failed_layers.append({
                 'name': layer.name(),
                 'reason': f'Error: {str(e)}'
@@ -501,7 +501,7 @@ class OfflineConverter(QObject):
 
             if not source_file.exists():
                 self.log_message.emit(f"     File does not exist at: {source_file}")
-                log_message(f"Source file not found: {source_file}", Qgis.Warning)
+                log_message(f"Source file not found: {source_file}", Qgis.MessageLevel.Warning)
                 return None
 
             if not source_file.is_file():
@@ -539,7 +539,7 @@ class OfflineConverter(QObject):
             return Path(new_source.split('|')[0])
 
         except Exception as e:
-            log_message(f"Failed to copy vector layer {layer.name()}: {e}", Qgis.Critical)
+            log_message(f"Failed to copy vector layer {layer.name()}: {e}", Qgis.MessageLevel.Critical)
             return None
 
     def _save_project(self) -> Optional[Path]:
@@ -571,7 +571,7 @@ class OfflineConverter(QObject):
             # Get the original project file
             original_file = Path(self.project.fileName())
             if not original_file.exists():
-                log_message("Original project file not found", Qgis.Critical)
+                log_message("Original project file not found", Qgis.MessageLevel.Critical)
                 return None
 
             project_name = original_file.stem
@@ -582,7 +582,7 @@ class OfflineConverter(QObject):
 
             # If original is .qgz, extract the .qgs file from it
             if is_qgz:
-                log_message("Detected compressed project (.qgz), extracting...", Qgis.Info)
+                log_message("Detected compressed project (.qgz), extracting...", Qgis.MessageLevel.Info)
                 try:
                     with zipfile.ZipFile(str(original_file), 'r') as zip_ref:
                         # The .qgs file inside has the same base name
@@ -594,10 +594,10 @@ class OfflineConverter(QObject):
                                 temp_qgs = Path(temp_dir) / qgs_filename
                                 shutil.copy2(str(temp_qgs), str(project_file))
                         else:
-                            log_message(f"Could not find {qgs_filename} in .qgz archive", Qgis.Critical)
+                            log_message(f"Could not find {qgs_filename} in .qgz archive", Qgis.MessageLevel.Critical)
                             return None
                 except Exception as e:
-                    log_message(f"Failed to extract .qgz file: {e}", Qgis.Critical)
+                    log_message(f"Failed to extract .qgz file: {e}", Qgis.MessageLevel.Critical)
                     return None
             else:
                 # Copy the .qgs file directly
@@ -691,9 +691,9 @@ class OfflineConverter(QObject):
             return project_file
 
         except Exception as e:
-            log_message(f"Failed to save project: {e}", Qgis.Critical)
+            log_message(f"Failed to save project: {e}", Qgis.MessageLevel.Critical)
             import traceback
-            log_message(f"Traceback: {traceback.format_exc()}", Qgis.Critical)
+            log_message(f"Traceback: {traceback.format_exc()}", Qgis.MessageLevel.Critical)
             return None
 
     def _remove_layers_from_tree(self, tree_group, layer_ids_to_remove):
@@ -733,7 +733,7 @@ class OfflineConverter(QObject):
                     shutil.copytree(str(source_dir), str(dest_dir), dirs_exist_ok=True)
                     log_message(f"Copied attachment folder: {dir_name}")
                 except Exception as e:
-                    log_message(f"Failed to copy attachment folder {dir_name}: {e}", Qgis.Warning)
+                    log_message(f"Failed to copy attachment folder {dir_name}: {e}", Qgis.MessageLevel.Warning)
 
     def _display_export_summary(self, total_layers: int):
         """

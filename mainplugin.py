@@ -325,7 +325,7 @@ class LinearGeosciencePluginMain:
                 from qgis.core import QgsMessageLog, Qgis
                 QgsMessageLog.logMessage(
                     f"Map cleaning toolkit unload failed: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )
             self.map_cleaning = None
 
@@ -345,7 +345,7 @@ class LinearGeosciencePluginMain:
                 from qgis.core import QgsMessageLog, Qgis
                 QgsMessageLog.logMessage(
                     f"Photo panel shutdown failed during unload: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )
             self.iface.removeDockWidget(self.photo_panel)
             self.photo_panel.deleteLater()
@@ -875,7 +875,7 @@ class LinearGeosciencePluginMain:
             from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(
                 f"run_loadtemplate failed: {e}\n{traceback.format_exc()}",
-                'Linear Geoscience', Qgis.Critical
+                'Linear Geoscience', Qgis.MessageLevel.Critical
             )
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",

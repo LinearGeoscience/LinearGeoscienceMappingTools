@@ -376,7 +376,7 @@ class ReconcileDialog(QDialog):
                     + "; ".join(report.get("errors", [])))
         except Exception as exc:
             QgsMessageLog.logMessage(f"reconcile migrate failed: {exc}",
-                                     "Linear Geoscience", Qgis.Critical)
+                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
             QMessageBox.critical(self, "Reconcile", f"Migration failed:\n{exc}")
         finally:
             self.migrate_btn.setEnabled(True)
@@ -412,7 +412,7 @@ class ReconcileDialog(QDialog):
                 progress_cb=self._on_progress)
         except Exception as exc:
             QgsMessageLog.logMessage(f"reconcile hardcode failed: {exc}",
-                                     "Linear Geoscience", Qgis.Critical)
+                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
             QMessageBox.critical(self, "Prepare field data",
                                  f"Preparation failed:\n{exc}")
             return
@@ -511,7 +511,7 @@ class ReconcileDialog(QDialog):
             self._populate_tree(self.build)
         except Exception as exc:
             QgsMessageLog.logMessage(f"reconcile preview failed: {exc}",
-                                     "Linear Geoscience", Qgis.Critical)
+                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
             QMessageBox.critical(self, "Reconcile", f"Preview failed:\n{exc}")
         finally:
             self.preview_btn.setEnabled(True)
@@ -712,7 +712,7 @@ class ReconcileDialog(QDialog):
                 return
         except Exception as exc:  # pragma: no cover - defensive UI path
             QgsMessageLog.logMessage(f"reconcile flash lookup failed: {exc}",
-                                     "Linear Geoscience", Qgis.Warning)
+                                     "Linear Geoscience", Qgis.MessageLevel.Warning)
             return
 
         if not (template_geoms or master_geoms):
@@ -781,7 +781,7 @@ class ReconcileDialog(QDialog):
                                        _FLASH_MASTER, clear, 3, 650)
         except Exception as exc:  # pragma: no cover - some canvas states
             QgsMessageLog.logMessage(f"reconcile flash failed: {exc}",
-                                     "Linear Geoscience", Qgis.Warning)
+                                     "Linear Geoscience", Qgis.MessageLevel.Warning)
         self.status.setText(
             f"{layer}: flashed {len(template_geoms)} template + "
             f"{len(master_geoms)} master geometr"
@@ -853,7 +853,7 @@ class ReconcileDialog(QDialog):
                 self.apply_btn.setEnabled(True)
         except Exception as exc:
             QgsMessageLog.logMessage(f"reconcile apply failed: {exc}",
-                                     "Linear Geoscience", Qgis.Critical)
+                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
             QMessageBox.critical(self, "Reconcile", f"Apply failed:\n{exc}")
             self.apply_btn.setEnabled(True)
         finally:

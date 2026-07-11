@@ -15,8 +15,7 @@
 from qgis.core import (
     QgsProject,
     QgsSpatialIndex,
-    Qgis,
-    QgsWkbTypes
+    Qgis
 )
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -58,10 +57,10 @@ class DomainTransferDialog(QDialog):
         polygon_layout = QHBoxLayout()
         polygon_label = QLabel("Domain Polygon Layer:")
         self.polygon_combo = QComboBox()
-        polygons = layer_candidates(geometry=QgsWkbTypes.PolygonGeometry,
+        polygons = layer_candidates(geometry=Qgis.GeometryType.Polygon,
                                     required_fields=['Domain'])
         if not polygons:
-            polygons = layer_candidates(geometry=QgsWkbTypes.PolygonGeometry)
+            polygons = layer_candidates(geometry=Qgis.GeometryType.Polygon)
         populate_layer_combo(self.polygon_combo, polygons, target_name="Domain")
         polygon_layout.addWidget(polygon_label)
         polygon_layout.addWidget(self.polygon_combo)
@@ -71,10 +70,10 @@ class DomainTransferDialog(QDialog):
         point_layout = QHBoxLayout()
         point_label = QLabel("Field Notebook Point Layer:")
         self.point_combo = QComboBox()
-        points = layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+        points = layer_candidates(geometry=Qgis.GeometryType.Point,
                                   required_fields=['StructuralDomain'])
         if not points:
-            points = layer_candidates(geometry=QgsWkbTypes.PointGeometry)
+            points = layer_candidates(geometry=Qgis.GeometryType.Point)
         populate_layer_combo(self.point_combo, points, target_name="1 - FieldNotebook")
         point_layout.addWidget(point_label)
         point_layout.addWidget(self.point_combo)
@@ -113,7 +112,7 @@ def transfer_domain_to_structural(iface):
 
     # If the dialog was cancelled, return
     if not result:
-        iface.messageBar().pushMessage("Info", "Domain transfer cancelled.", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Domain transfer cancelled.", level=Qgis.MessageLevel.Info)
         return
 
     # Get the selected layers
@@ -122,57 +121,57 @@ def transfer_domain_to_structural(iface):
     try:
         # Check if layers were selected
         if not polygon_layer:
-            iface.messageBar().pushMessage("Error", "No polygon layer selected.", level=Qgis.Critical)
+            iface.messageBar().pushMessage("Error", "No polygon layer selected.", level=Qgis.MessageLevel.Critical)
             return
         if not point_layer:
-            iface.messageBar().pushMessage("Error", "No point layer selected.", level=Qgis.Critical)
+            iface.messageBar().pushMessage("Error", "No point layer selected.", level=Qgis.MessageLevel.Critical)
             return
 
         iface.messageBar().pushMessage("Info",
                                        f"Using polygon layer: '{polygon_layer.name()}' and point layer: '{point_layer.name()}'",
-                                       level=Qgis.Info)
+                                       level=Qgis.MessageLevel.Info)
 
         # Check if the layers are valid
         if not point_layer.isValid():
             iface.messageBar().pushMessage("Error", f"Point layer '{point_layer.name()}' is invalid.",
-                                           level=Qgis.Critical)
+                                           level=Qgis.MessageLevel.Critical)
             return
         if not polygon_layer.isValid():
             iface.messageBar().pushMessage("Error", f"Polygon layer '{polygon_layer.name()}' is invalid.",
-                                           level=Qgis.Critical)
+                                           level=Qgis.MessageLevel.Critical)
             return
 
         # Check if 'StructuralDomain' field exists in point layer
         if 'StructuralDomain' not in [field.name() for field in point_layer.fields()]:
             iface.messageBar().pushMessage("Error",
                                            f"'StructuralDomain' field not found in point layer '{point_layer.name()}'.",
-                                           level=Qgis.Critical)
+                                           level=Qgis.MessageLevel.Critical)
             return
 
         # Check if 'Domain' field exists in polygon layer
         if 'Domain' not in [field.name() for field in polygon_layer.fields()]:
             iface.messageBar().pushMessage("Error",
                                            f"'Domain' field not found in polygon layer '{polygon_layer.name()}'.",
-                                           level=Qgis.Critical)
+                                           level=Qgis.MessageLevel.Critical)
             return
 
         # Start an edit session for the point layer
         if not point_layer.isEditable():
             point_layer.startEditing()
             iface.messageBar().pushMessage("Info", f"Started editing session for '{point_layer.name()}'.",
-                                           level=Qgis.Info)
+                                           level=Qgis.MessageLevel.Info)
 
         # Create a spatial index for the polygon layer for efficient spatial queries
-        iface.messageBar().pushMessage("Info", "Creating spatial index for polygon layer...", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Creating spatial index for polygon layer...", level=Qgis.MessageLevel.Info)
         polygon_index = QgsSpatialIndex(polygon_layer.getFeatures())
-        iface.messageBar().pushMessage("Info", "Spatial index created.", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Spatial index created.", level=Qgis.MessageLevel.Info)
 
         # Inform the user that the transfer is starting
-        iface.messageBar().pushMessage("Info", "Starting Domain to StructuralDomain transfer...", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Starting Domain to StructuralDomain transfer...", level=Qgis.MessageLevel.Info)
 
         # Iterate through each point feature
         total_points = point_layer.featureCount()
-        iface.messageBar().pushMessage("Info", f"Processing {total_points} point features...", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", f"Processing {total_points} point features...", level=Qgis.MessageLevel.Info)
 
         processed_points = 0
         updated_points = 0
@@ -204,23 +203,23 @@ def transfer_domain_to_structural(iface):
             # Optionally, provide periodic updates
             if processed_points % 100 == 0:
                 iface.messageBar().pushMessage("Info", f"Processed {processed_points}/{total_points} points...",
-                                               level=Qgis.Info)
+                                               level=Qgis.MessageLevel.Info)
 
         # Save the edits and commit
-        iface.messageBar().pushMessage("Info", "Saving changes to point layer...", level=Qgis.Info)
+        iface.messageBar().pushMessage("Info", "Saving changes to point layer...", level=Qgis.MessageLevel.Info)
         if point_layer.commitChanges():
             iface.messageBar().pushMessage("Success",
                                            f"StructuralDomain field updated successfully! Updated {updated_points} points.",
-                                           level=Qgis.Success)
+                                           level=Qgis.MessageLevel.Success)
         else:
-            iface.messageBar().pushMessage("Error", "Failed to commit changes to the point layer.", level=Qgis.Critical)
+            iface.messageBar().pushMessage("Error", "Failed to commit changes to the point layer.", level=Qgis.MessageLevel.Critical)
 
     except Exception as e:
-        iface.messageBar().pushMessage("Error", f"An unexpected error occurred: {e}", level=Qgis.Critical)
+        iface.messageBar().pushMessage("Error", f"An unexpected error occurred: {e}", level=Qgis.MessageLevel.Critical)
         # If we're in an edit session, roll back changes
         if point_layer and point_layer.isEditable():
             point_layer.rollBack()
-            iface.messageBar().pushMessage("Info", "Changes rolled back due to error.", level=Qgis.Info)
+            iface.messageBar().pushMessage("Info", "Changes rolled back due to error.", level=Qgis.MessageLevel.Info)
 
 
 def run(iface):

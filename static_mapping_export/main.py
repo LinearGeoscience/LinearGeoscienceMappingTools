@@ -230,9 +230,9 @@ class LayerExporter:
         options.fileEncoding = "UTF-8"
 
         if file_exists:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
         else:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
 
         transform_context = QgsCoordinateTransformContext()
 
@@ -243,7 +243,7 @@ class LayerExporter:
             options
         )
 
-        if error[0] != QgsVectorFileWriter.NoError:
+        if error[0] != QgsVectorFileWriter.WriterError.NoError:
             self.log(f"Failed to export layer data: {error[1]}", "ERROR")
             return False
 
@@ -691,7 +691,7 @@ class StaticMappingExportDialog(QDialog):
     # ------------------------------------------------------------------
     def _photo_layer_candidates(self):
         """Point photo layers in the project that carry a PhotoPath field."""
-        return layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+        return layer_candidates(geometry=Qgis.GeometryType.Point,
                                 required_fields=[PHOTO_PATH_FIELD])
 
     def _build_photos_group(self):
@@ -745,7 +745,7 @@ class StaticMappingExportDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("Mapsheet layer:"))
         self.mapsheet_combo = QComboBox()
-        polygons = layer_candidates(geometry=QgsWkbTypes.PolygonGeometry)
+        polygons = layer_candidates(geometry=Qgis.GeometryType.Polygon)
         detected = find_mapsheet_layer()
         populate_layer_combo(
             self.mapsheet_combo, polygons, target_name="Mapsheets",

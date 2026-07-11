@@ -159,11 +159,11 @@ def convert_to_geopackage(layer: QgsVectorLayer, output_dir: Path, layer_name: s
         options
     )
 
-    if error[0] != QgsVectorFileWriter.NoError:
+    if error[0] != QgsVectorFileWriter.WriterError.NoError:
         QgsMessageLog.logMessage(
             f"Failed to convert layer {layer.name()} to GeoPackage: {error[1]}",
             "LGS QField Exporter",
-            Qgis.Critical
+            Qgis.MessageLevel.Critical
         )
         return None
 
@@ -192,26 +192,26 @@ def convert_to_geopackage(layer: QgsVectorLayer, output_dir: Path, layer_name: s
                 QgsMessageLog.logMessage(
                     f"Warning: Could not save style to GeoPackage for {layer.name()}: {msg}",
                     "LGS QField Exporter",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
             else:
                 QgsMessageLog.logMessage(
                     f"Successfully saved style to GeoPackage for {layer.name()}",
                     "LGS QField Exporter",
-                    Qgis.Info
+                    Qgis.MessageLevel.Info
                 )
         else:
             QgsMessageLog.logMessage(
                 f"Warning: Could not load GeoPackage layer to save style: {temp_layer.error().message()}",
                 "LGS QField Exporter",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
     except Exception as e:
         # Don't fail the entire export if style saving fails
         QgsMessageLog.logMessage(
             f"Warning: Failed to save style for {layer.name()}: {e}",
             "LGS QField Exporter",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
 
     return output_path
@@ -235,7 +235,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
         QgsMessageLog.logMessage(
             f"GDAL Python bindings not available - cannot extract raster from GeoPackage for {layer.name()}",
             "LGS QField Exporter",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
         return None
 
@@ -258,7 +258,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
         QgsMessageLog.logMessage(
             f"Attempting to open GPKG raster: {gdal_source}",
             "LGS QField Exporter",
-            Qgis.Info
+            Qgis.MessageLevel.Info
         )
 
         # Open the raster
@@ -268,7 +268,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
             QgsMessageLog.logMessage(
                 f"Failed with GPKG prefix, trying direct: {source}",
                 "LGS QField Exporter",
-                Qgis.Info
+                Qgis.MessageLevel.Info
             )
             src_ds = gdal.Open(source, gdal.GA_ReadOnly)
 
@@ -277,7 +277,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
             QgsMessageLog.logMessage(
                 f"Failed to open GPKG raster. GDAL error: {last_error}",
                 "LGS QField Exporter",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
             return None
 
@@ -287,7 +287,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
         QgsMessageLog.logMessage(
             f"Extracting GPKG raster to: {output_path}",
             "LGS QField Exporter",
-            Qgis.Info
+            Qgis.MessageLevel.Info
         )
 
         # Use gdal.Translate instead of CreateCopy for better handling of large/complex rasters
@@ -305,7 +305,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
             QgsMessageLog.logMessage(
                 f"GDAL Translate failed. Error: {last_error}",
                 "LGS QField Exporter",
-                Qgis.Critical
+                Qgis.MessageLevel.Critical
             )
             return None
 
@@ -317,14 +317,14 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
             QgsMessageLog.logMessage(
                 f"Successfully extracted GPKG raster to: {output_path}",
                 "LGS QField Exporter",
-                Qgis.Info
+                Qgis.MessageLevel.Info
             )
             return output_path
         else:
             QgsMessageLog.logMessage(
                 f"Output file was not created: {output_path}",
                 "LGS QField Exporter",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
             return None
 
@@ -334,7 +334,7 @@ def _extract_gpkg_raster(layer: QgsRasterLayer, output_dir: Path, clean_name: st
         QgsMessageLog.logMessage(
             f"Failed to extract GPKG raster {layer.name()}: {e}\n{error_details}",
             "LGS QField Exporter",
-            Qgis.Critical
+            Qgis.MessageLevel.Critical
         )
         return None
     finally:
@@ -391,7 +391,7 @@ def copy_raster_layer(layer: QgsRasterLayer, output_dir: Path) -> Optional[Path]
         QgsMessageLog.logMessage(
             f"Failed to copy raster layer {layer.name()}: {e}",
             "LGS QField Exporter",
-            Qgis.Critical
+            Qgis.MessageLevel.Critical
         )
         return None
 
@@ -444,7 +444,7 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
         QgsMessageLog.logMessage(
             f"GDAL Python bindings not available - cannot convert raster {layer.name()}",
             "LGS QField Exporter",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
         return None
 
@@ -462,7 +462,7 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
             QgsMessageLog.logMessage(
                 f"Failed to open raster for conversion. GDAL error: {last_error}",
                 "LGS QField Exporter",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
             return None
 
@@ -479,7 +479,7 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
             QgsMessageLog.logMessage(
                 f"GDAL Translate failed for {layer.name()}. Error: {last_error}",
                 "LGS QField Exporter",
-                Qgis.Critical
+                Qgis.MessageLevel.Critical
             )
             return None
 
@@ -491,14 +491,14 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
             QgsMessageLog.logMessage(
                 f"Successfully converted {layer.name()} to GeoTIFF: {output_path}",
                 "LGS QField Exporter",
-                Qgis.Info
+                Qgis.MessageLevel.Info
             )
             return output_path
         else:
             QgsMessageLog.logMessage(
                 f"Output file was not created: {output_path}",
                 "LGS QField Exporter",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
             return None
 
@@ -508,7 +508,7 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
         QgsMessageLog.logMessage(
             f"Failed to convert raster {layer.name()}: {e}\n{error_details}",
             "LGS QField Exporter",
-            Qgis.Critical
+            Qgis.MessageLevel.Critical
         )
         return None
     finally:
@@ -516,7 +516,7 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
         src_ds = None
 
 
-def log_message(message: str, level: Qgis.MessageLevel = Qgis.Info):
+def log_message(message: str, level: Qgis.MessageLevel = Qgis.MessageLevel.Info):
     """
     Log a message to the QGIS message log.
 

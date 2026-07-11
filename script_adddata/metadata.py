@@ -26,8 +26,8 @@ except ImportError:
 # Try to import QGIS logging
 try:
     from qgis.core import QgsMessageLog, Qgis
-    _LOG_INFO = Qgis.Info
-    _LOG_WARNING = Qgis.Warning
+    _LOG_INFO = Qgis.MessageLevel.Info
+    _LOG_WARNING = Qgis.MessageLevel.Warning
     QGIS_LOGGING_AVAILABLE = True
 except ImportError:
     _LOG_INFO = 0

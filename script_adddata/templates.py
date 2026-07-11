@@ -44,9 +44,9 @@ class TemplateManager:
         if not os.path.exists(metadata_folder):
             try:
                 os.makedirs(metadata_folder)
-                QgsMessageLog.logMessage(f"Created metadata folder: {metadata_folder}", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Created metadata folder: {metadata_folder}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             except OSError as e:
-                QgsMessageLog.logMessage(f"Warning: Could not create metadata folder: {e}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Warning: Could not create metadata folder: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
                 # Fallback to master directory
                 return master_dir
 
@@ -70,8 +70,8 @@ class TemplateManager:
                         data['templates'] = {}
                     return data
             except (json.JSONDecodeError, IOError) as e:
-                QgsMessageLog.logMessage(f"Warning: Could not load templates file: {e}", 'Linear Geoscience', Qgis.Warning)
-                QgsMessageLog.logMessage("Creating new templates file", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"Warning: Could not load templates file: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+                QgsMessageLog.logMessage("Creating new templates file", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Create new structure
         return {
@@ -89,7 +89,7 @@ class TemplateManager:
             with open(self.templates_json_path, 'w', encoding='utf-8') as f:
                 json.dump(self.templates_data, f, indent=2, ensure_ascii=False)
         except IOError as e:
-            QgsMessageLog.logMessage(f"Error saving templates file: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error saving templates file: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             raise
 
     def save_template(self, template_name: str, source_layer: str,
@@ -129,7 +129,7 @@ class TemplateManager:
             self._save_templates()
             return True
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error saving template: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error saving template: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return False
 
     def load_template(self, template_name: str) -> Optional[Dict]:
@@ -181,7 +181,7 @@ class TemplateManager:
                 return True
             return False
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error deleting template: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error deleting template: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return False
 
     def export_template_to_file(self, template_name: str, file_path: str) -> bool:
@@ -204,7 +204,7 @@ class TemplateManager:
                 json.dump(template_data, f, indent=2, ensure_ascii=False)
             return True
         except IOError as e:
-            QgsMessageLog.logMessage(f"Error exporting template: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error exporting template: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return False
 
     def import_template_from_file(self, file_path: str, template_name: Optional[str] = None) -> bool:
@@ -233,5 +233,5 @@ class TemplateManager:
 
             return self.save_template(name, source_layer, target_layer, recoding)
         except (IOError, json.JSONDecodeError) as e:
-            QgsMessageLog.logMessage(f"Error importing template: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error importing template: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return False

@@ -9,7 +9,7 @@ layer by name, and resolve combo selections back to layers by ID.
 
 import os
 
-from qgis.core import QgsProject, QgsMapLayerType, QgsWkbTypes, QgsMessageLog, Qgis
+from qgis.core import QgsProject, QgsMessageLog, Qgis
 
 try:
     from thefuzz import fuzz
@@ -96,17 +96,17 @@ def layer_candidates(geometry=None, required_fields=None, non_spatial=False,
                      predicate=None):
     """Vector layers from the project, filtered and sorted by name.
 
-    geometry: a QgsWkbTypes.GeometryType to require (Point/Line/Polygon).
+    geometry: a Qgis.GeometryType to require (Point/Line/Polygon).
     non_spatial: require NullGeometry (attribute-only tables).
     required_fields: field names that must all exist on the layer.
     predicate: extra callable(layer) -> bool filter.
     """
     result = []
     for layer in QgsProject.instance().mapLayers().values():
-        if layer.type() != QgsMapLayerType.VectorLayer:
+        if layer.type() != Qgis.LayerType.Vector:
             continue
         if non_spatial:
-            if layer.geometryType() != QgsWkbTypes.NullGeometry:
+            if layer.geometryType() != Qgis.GeometryType.Null:
                 continue
         elif geometry is not None:
             if layer.geometryType() != geometry:
@@ -153,7 +153,7 @@ def populate_layer_combo(combo, layers, placeholder=None, target_name=None,
                 QgsMessageLog.logMessage(
                     f"Auto-matched layer '{layers[index].name()}' for "
                     f"'{target_name}' (score {score})",
-                    'Linear Geoscience', Qgis.Info)
+                    'Linear Geoscience', Qgis.MessageLevel.Info)
                 return layers[index]
     finally:
         combo.blockSignals(blocked)

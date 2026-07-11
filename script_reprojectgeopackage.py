@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton,
 from qgis.core import (QgsProject, QgsCoordinateReferenceSystem, QgsVectorLayer,
                        QgsDataSourceUri, QgsCoordinateTransformContext,
                        QgsVectorFileWriter, QgsRasterLayer, QgsRasterPipe,
-                       QgsRasterFileWriter, QgsProcessingFeedback, QgsWkbTypes)
+                       QgsRasterFileWriter, QgsProcessingFeedback)
 from qgis.gui import QgsProjectionSelectionWidget
 
 
@@ -332,7 +332,7 @@ class GeoPackageReprojectDialog(QDialog):
                 error = result
                 error_message = "Unknown error"
 
-            if error != QgsVectorFileWriter.NoError:
+            if error != QgsVectorFileWriter.WriterError.NoError:
                 raise Exception(f"Error creating GeoPackage: {error_message}")
 
             # Remove temporary layer
@@ -523,7 +523,7 @@ class GeoPackageReprojectDialog(QDialog):
             if target_crs and target_crs.isValid():
                 # We need to reproject - use QgsVectorFileWriter with proper geometry handling
                 options = QgsVectorFileWriter.SaveVectorOptions()
-                options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+                options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
                 options.layerName = layer_name
                 options.driverName = "GPKG"
                 options.fileEncoding = "UTF-8"
@@ -558,7 +558,7 @@ class GeoPackageReprojectDialog(QDialog):
                     error = result
                     error_message = "Unknown error"
 
-                if error != QgsVectorFileWriter.NoError:
+                if error != QgsVectorFileWriter.WriterError.NoError:
                     raise Exception(f"Error writing layer: {error_message}")
 
                 # Update spatial_ref_sys tables

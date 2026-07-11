@@ -13,6 +13,7 @@
 
 from qgis.PyQt.QtCore import QCoreApplication, QSettings
 from qgis.core import (
+    Qgis,
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
@@ -23,17 +24,16 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
-    QgsWkbTypes,
 )
 from ..core.spline_interp import interpolate_closed_ring
 
 SINGLE_POLYGON_TYPES = (
-    QgsWkbTypes.Polygon,
-    QgsWkbTypes.PolygonM,
-    QgsWkbTypes.PolygonZ,
-    QgsWkbTypes.PolygonZM,
-    QgsWkbTypes.Polygon25D,
-    QgsWkbTypes.PolygonGeometry,
+    Qgis.WkbType.Polygon,
+    Qgis.WkbType.PolygonM,
+    Qgis.WkbType.PolygonZ,
+    Qgis.WkbType.PolygonZM,
+    Qgis.WkbType.Polygon25D,
+    Qgis.GeometryType.Polygon,
 )
 
 from ..core.utils import DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS, SETTINGS_NAME
@@ -105,14 +105,14 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
 
         self.addParameter(
             QgsProcessingParameterFeatureSource(
-                self.INPUT, self.tr("Input layer"), [QgsProcessing.TypeVectorPolygon]
+                self.INPUT, self.tr("Input layer"), [Qgis.ProcessingSourceType.VectorPolygon]
             )
         )
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.TENSION,
                 self.tr("Tension parameter"),
-                QgsProcessingParameterNumber.Double,
+                Qgis.ProcessingNumberParameterType.Double,
                 tension,
             )
         )
@@ -120,7 +120,7 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.TOLERANCE,
                 self.tr("Tolerance parameter"),
-                QgsProcessingParameterNumber.Double,
+                Qgis.ProcessingNumberParameterType.Double,
                 tolerance,
             )
         )
@@ -128,7 +128,7 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.MAX_SEGMENTS,
                 self.tr("Max number of spline segments between vertices"),
-                QgsProcessingParameterNumber.Integer,
+                Qgis.ProcessingNumberParameterType.Integer,
                 max_segments,
             )
         )
@@ -178,7 +178,7 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
 
             if cur_geom.isNull() or cur_geom.isEmpty():
                 feedback.pushInfo(f"  Skipping null/empty geometry")
-                sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                 continue
 
             try:
@@ -187,7 +187,7 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
                     feedback.pushInfo(f"  WARNING: Multipart geometry detected - processing first part only")
                     polygons = cur_geom.asMultiPolygon()
                     if not polygons:
-                        sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                        sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                         continue
                     polygon = polygons[0]  # Take first polygon
                 else:
@@ -195,14 +195,14 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
 
                 if not polygon:
                     feedback.pushInfo(f"  Skipping - cannot extract polygon")
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                    sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                     continue
 
                 # Process exterior ring
                 exterior_ring = polygon[0]
                 if len(exterior_ring) < 4:
                     feedback.pushInfo(f"  Skipping - exterior ring has too few vertices ({len(exterior_ring)})")
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                    sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                     continue
 
                 feedback.pushInfo(f"  Exterior ring: {len(exterior_ring)} vertices")
@@ -238,20 +238,20 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
                 # Validate geometry
                 if not spline_geom.isGeosValid():
                     feedback.pushInfo(f"  WARNING: Invalid geometry after smoothing, using original")
-                    sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                    sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                     continue
 
                 # Create output feature
                 spline_feat = QgsFeature(feature)
                 spline_feat.setGeometry(spline_geom)
-                sink.addFeature(spline_feat, QgsFeatureSink.FastInsert)
+                sink.addFeature(spline_feat, QgsFeatureSink.Flag.FastInsert)
 
                 feedback.pushInfo(f"  Success: smoothed to {len(smoothed_exterior)} exterior vertices")
 
             except Exception as e:
                 feedback.pushInfo(f"  ERROR processing feature {feature.id()}: {e}")
                 # Keep original on error
-                sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
 
             feedback.setProgress(int(current * total))
 

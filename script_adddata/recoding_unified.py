@@ -862,7 +862,7 @@ class UnifiedRecodingDialog(QDialog):
             for template in templates:
                 self.template_combo.addItem(template['template_name'])
         except Exception as e:
-            QgsMessageLog.logMessage(f"Could not load templates: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Could not load templates: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def _on_load_template(self, template_name: str):
         """Load a template"""
