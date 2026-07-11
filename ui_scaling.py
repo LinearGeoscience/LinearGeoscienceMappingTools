@@ -6,7 +6,7 @@ This module ensures consistent UI appearance across different devices and displa
 from 1080p to 4K displays, and handles Windows scaling settings properly.
 """
 
-from qgis.PyQt.QtCore import QSize
+from qgis.PyQt.QtCore import QSize, QT_VERSION_STR
 from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsMessageLog, Qgis
 
@@ -77,9 +77,16 @@ class UIScaleManager:
             # Get physical DPI
             self.physical_dpi = screen.physicalDotsPerInchX()
 
-            # Calculate scale factor based on logical DPI
-            # Logical DPI already includes OS scaling settings
-            self.scale_factor = self.logical_dpi / self.BASE_DPI
+            if QT_VERSION_STR.startswith("6"):
+                # Qt6 always applies OS high-DPI scaling itself: widget
+                # geometry is already in device-independent pixels, so the
+                # manual logical-DPI multiplier used on Qt5 would
+                # double-scale the UI.
+                self.scale_factor = 1.0
+            else:
+                # Calculate scale factor based on logical DPI
+                # Logical DPI already includes OS scaling settings
+                self.scale_factor = self.logical_dpi / self.BASE_DPI
 
             # Clamp scale factor to reasonable bounds
             if self.scale_factor < self.MIN_SCALE_FACTOR:

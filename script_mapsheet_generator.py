@@ -792,20 +792,10 @@ class FinalMapSheetPanel(QDockWidget):
             label_settings = QgsPalLayerSettings()
             label_settings.fieldName = 'name'
 
-            try:
-                label_settings.placement = Qgis.LabelPlacement.OverPoint
-            except AttributeError:
-                try:
-                    label_settings.placement = Qgis.LabelPlacement.OverPoint
-                except AttributeError:
-                    label_settings.placement = Qgis.LabelPlacement.AroundPoint
-
+            label_settings.placement = Qgis.LabelPlacement.OverPoint
             label_settings.xOffset = 0
             label_settings.yOffset = 0
-            try:
-                label_settings.offsetType = Qgis.LabelOffsetType.FromPoint
-            except AttributeError:
-                label_settings.offsetType = Qgis.LabelOffsetType.FromPoint
+            label_settings.offsetType = Qgis.LabelOffsetType.FromPoint
 
             label_format = QgsTextFormat()
             font = label_format.font()

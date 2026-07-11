@@ -21,17 +21,8 @@ except ImportError:
 
 
 def get_over_point_placement():
-    """Get the correct OverPoint placement enum for the current QGIS version"""
-    try:
-        # Try the newer enum structure (QGIS 3.40+)
-        return Qgis.LabelPlacement.OverPoint
-    except AttributeError:
-        try:
-            # Try the older direct enum (QGIS 3.34 and earlier)
-            return Qgis.LabelPlacement.OverPoint
-        except AttributeError:
-            # Fallback to the most basic point placement
-            return Qgis.LabelPlacement.AroundPoint
+    """OverPoint label placement (Qgis.LabelPlacement; QGIS 3.26+ and 4.x)."""
+    return Qgis.LabelPlacement.OverPoint
 
 
 class ModernLayerConfigDialog(QDialog):
@@ -406,8 +397,9 @@ class LayerConfigurator:
                 settings.setEnabled(True)
 
                 # Set type to both vertex and segment flags
-                settings.setType(Qgis.SnappingType.Vertex |
-                                 Qgis.SnappingType.Segment)
+                # (setTypeFlag replaces the deprecated setType removed in QGIS 4)
+                settings.setTypeFlag(Qgis.SnappingType.Vertex |
+                                     Qgis.SnappingType.Segment)
 
                 # Set tolerance and units
                 settings.setTolerance(20)

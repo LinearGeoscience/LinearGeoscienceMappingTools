@@ -3,6 +3,7 @@ name=Linear Geoscience Mapping Tools
 email=harry@lineargeoscience.au
 author=Harry West
 qgisMinimumVersion=3.40
+qgisMaximumVersion=4.99
 description=A comprehensive geological mapping toolbox for the Linear Geoscience QField mapping template.
 about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     into a single plugin for professional geological mapping workflows.
@@ -33,7 +34,7 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     Map cleaning tools are based on the Spline Plugin by Radim Blazek and
     Polygon Clipper by Giuseppe De Marco (GPL).
     See THIRD_PARTY_LICENSES files for complete attribution and license details.
-version=3.4
+version=4.0
 tracker=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/issues
 repository=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
 homepage=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
@@ -46,7 +47,14 @@ deprecated=False
 hasProcessingProvider=yes
 server=False
 plugin_dependencies=
-changelog=3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
+changelog=4.0: QGIS 4 / Qt6 support: one codebase runs on both QGIS 3.40 LTR
+    (Qt5/PyQt5) and QGIS 4.x (Qt6/PyQt6). All Qt and QGIS enums migrated to
+    their fully-scoped forms, QgsField construction moved to QMetaType,
+    QAction/QShortcut imported from QtGui, QSvgWidget from QtSvgWidgets with
+    a Qt5 fallback, Qt6-safe mouse-event handling in the photo panel, and
+    manual DPI scaling disabled under Qt6 (the OS scaling already applies).
+    No feature changes (July 2026)
+    3.4: Map Layout Generator legend overhaul: per-sheet legends (legend
     filtered by map content, field/code scans restricted to each sheet's
     polygon), text-only legend sections for non-symbolised fields (minerals,
     textures, intensity etc. grouped under custom headings with lookup-table
