@@ -16,6 +16,7 @@ from qgis.core import (
     QgsCategorizedSymbolRenderer, QgsRuleBasedRenderer,
     QgsSymbol, QgsFeatureRequest, QgsGeometry,
     QgsCoordinateTransform, QgsCsException,
+    QgsCoordinateReferenceSystem, QgsFields, QgsVectorLayerFeatureSource,
     QgsMessageLog, Qgis,
 )
 
@@ -790,23 +791,16 @@ def _scan_layer_combined(layer, flat_fields, subdivided_specs, filter_geom):
     return field_values, sub_results
 
 
-def scan_sections_for_sheet(project, sections, sheet_geom=None,
-                            sheet_crs=None):
-    """Scan all sections' fields, optionally restricted to a sheet polygon.
+def _build_scan_work(project, sections):
+    """Resolve sections into per-layer work lists (MAIN thread — touches
+    project layers).
 
-    Groups work so each layer is iterated at most once per sheet, however
-    many sections reference it.  Sections with layer=None scan their
-    fields across every spatial vector layer (subdivide_by is ignored for
-    these — feature-level correlation across layers is undefined).
-    Sections with a lookup but no fields auto-detect fields by the lookup
-    table's name pattern (TextureCodes → Texture*).
-
-    Returns {section_id: sorted [values] | {sub_value: sorted [values]}}.
+    Returns (work, flat_targets):
+      work: {layer_id: (layer, flat_fields:set, specs:list)}
+      flat_targets: {section_id: [(layer_id, [fields])]}
     """
-    # Build per-layer work lists: {layer_id: (layer, flat_fields, specs)}
     work = {}
-    # Track which (layer, fields) targets feed each flat section.
-    flat_targets = {}  # {section_id: [(layer_id, [fields])]}
+    flat_targets = {}
 
     def _add_flat(layer, section_id, fnames):
         entry = work.setdefault(layer.id(), (layer, set(), []))
@@ -834,8 +828,17 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
             for lyr, fnames in targets:
                 _add_flat(lyr, sid, fnames)
 
-    # Scan each layer once.  Subdivided results are merged across layers
-    # (a section's field_targets may span several layers).
+    return work, flat_targets
+
+
+def _scan_work_once(work, flat_targets, sheet_geom, sheet_crs, context):
+    """Scan every work layer once for one sheet (or unfiltered) and
+    assemble the per-section results.
+
+    `context` is whatever QgsCoordinateTransform accepts as its third
+    argument: the QgsProject (synchronous path) or a
+    QgsCoordinateTransformContext (background-task path).
+    """
     layer_field_values = {}  # {layer_id: {fname: set}}
     sub_accum = {}  # {sid: {sub_value: set}}
     results = {}
@@ -843,7 +846,7 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
         filter_geom = None
         if sheet_geom is not None and sheet_crs is not None:
             filter_geom = transform_geom_to_layer(
-                sheet_geom, sheet_crs, layer, project)
+                sheet_geom, sheet_crs, layer, context)
         field_values, sub_results = _scan_layer_combined(
             layer, flat_fields, specs, filter_geom)
         layer_field_values[layer_id] = field_values
@@ -865,3 +868,86 @@ def scan_sections_for_sheet(project, sections, sheet_geom=None,
         results[sid] = sorted(unique)
 
     return results
+
+
+def scan_sections_for_sheet(project, sections, sheet_geom=None,
+                            sheet_crs=None):
+    """Scan all sections' fields, optionally restricted to a sheet polygon.
+
+    Groups work so each layer is iterated at most once per sheet, however
+    many sections reference it.  Sections with layer=None scan their
+    fields across every spatial vector layer (subdivide_by is ignored for
+    these — feature-level correlation across layers is undefined).
+    Sections with a lookup but no fields auto-detect fields by the lookup
+    table's name pattern (TextureCodes → Texture*).
+
+    Returns {section_id: sorted [values] | {sub_value: sorted [values]}}.
+    """
+    work, flat_targets = _build_scan_work(project, sections)
+    return _scan_work_once(work, flat_targets, sheet_geom, sheet_crs, project)
+
+
+class _SourceLayerAdapter:
+    """Duck-types the slice of QgsVectorLayer that _scan_layer_combined and
+    transform_geom_to_layer use, backed by a QgsVectorLayerFeatureSource so
+    it is safe to read from a background task. Build on the MAIN thread."""
+
+    def __init__(self, layer):
+        self._source = QgsVectorLayerFeatureSource(layer)
+        self._fields = QgsFields(layer.fields())
+        self._crs = QgsCoordinateReferenceSystem(layer.crs())
+        self._id = layer.id()
+        self._name = layer.name()
+
+    def id(self):
+        return self._id
+
+    def name(self):
+        return self._name
+
+    def fields(self):
+        return self._fields
+
+    def crs(self):
+        return self._crs
+
+    def getFeatures(self, request=None):
+        if request is None:
+            return self._source.getFeatures()
+        return self._source.getFeatures(request)
+
+    def uniqueValues(self, idx):
+        # Only hit on the unfiltered fast path (e.g. a sheet whose CRS
+        # transform failed) — emulate QgsVectorLayer.uniqueValues.
+        request = QgsFeatureRequest()
+        request.setSubsetOfAttributes([idx])
+        request.setFlags(Qgis.FeatureRequestFlag.NoGeometry)
+        return {feat[idx] for feat in self._source.getFeatures(request)}
+
+
+def prepare_sheet_scan(project, sections):
+    """MAIN THREAD: resolve section targets and snapshot every referenced
+    layer behind a thread-safe feature-source adapter, so per-sheet scans
+    can run in a background task via scan_sections_for_sheets_prepared."""
+    work, flat_targets = _build_scan_work(project, sections)
+    prepared_work = {
+        layer_id: (_SourceLayerAdapter(layer), flat_fields, specs)
+        for layer_id, (layer, flat_fields, specs) in work.items()}
+    return {"work": prepared_work, "flat_targets": flat_targets,
+            "context": project.transformContext()}
+
+
+def scan_sections_for_sheets_prepared(prepared, sheets, progress_cb=None):
+    """Background-task-safe batch of per-sheet scans over prepared sources.
+
+    sheets: [(key, sheet_geom, sheet_crs)]  (geometries must be copies)
+    Returns {key: results-dict as scan_sections_for_sheet returns}.
+    """
+    out = {}
+    for i, (key, sheet_geom, sheet_crs) in enumerate(sheets):
+        if progress_cb:
+            progress_cb(int(i / max(len(sheets), 1) * 100),
+                        f"Scanning sheet {i + 1}/{len(sheets)}")
+        out[key] = _scan_work_once(prepared["work"], prepared["flat_targets"],
+                                   sheet_geom, sheet_crs, prepared["context"])
+    return out

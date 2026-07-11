@@ -14,10 +14,15 @@ from qgis.core import (QgsProject, QgsPrintLayout, QgsReadWriteContext,
                        QgsLayoutItemMap, QgsLayoutItemMapGrid, QgsRectangle,
                        QgsLayoutItemLabel, QgsLayoutItemScaleBar,
                        QgsLayoutItemLegend, QgsLayoutExporter,
-                       QgsMessageLog, Qgis,
+                       QgsMessageLog, Qgis, QgsGeometry,
                        QgsMapLayerLegendUtils, QgsLayerTreeGroup,
                        QgsCategorizedSymbolRenderer)
 from qgis.utils import iface
+
+try:
+    from .lgs_tasks import ChunkRunner, run_in_task
+except ImportError:
+    from lgs_tasks import ChunkRunner, run_in_task
 
 try:
     from .recode_workflow.widgets import LayerCheckList, FieldGroupManager
@@ -28,6 +33,7 @@ try:
     from .recode_workflow.legend_builder import (
         resolve_layer_ref, find_fields_for_table,
         load_lookup_table, detect_lookup_columns, scan_sections_for_sheet,
+        prepare_sheet_scan, scan_sections_for_sheets_prepared,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
         collect_widget_lookups, collect_paired_lookups, paired_base_field,
@@ -44,6 +50,7 @@ except ImportError:
     from recode_workflow.legend_builder import (
         resolve_layer_ref, find_fields_for_table,
         load_lookup_table, detect_lookup_columns, scan_sections_for_sheet,
+        prepare_sheet_scan, scan_sections_for_sheets_prepared,
         build_renderer_value_index, field_has_data,
         discover_section_candidates, auto_sections_from_candidates,
         collect_widget_lookups, collect_paired_lookups, paired_base_field,
@@ -84,6 +91,23 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
     Returns:
         tuple: (success_count, fail_count)
     """
+    gen = iter_export_steps(layout_names, out_dir, dpi=dpi, do_pdf=do_pdf,
+                            do_tiff=do_tiff, do_png=do_png, log=log)
+    while True:
+        try:
+            done, total = next(gen)
+        except StopIteration as stop:
+            return stop.value if stop.value is not None else (0, 0)
+        if progress:
+            progress(done, total)
+
+
+def iter_export_steps(layout_names, out_dir, dpi=300, do_pdf=True,
+                      do_tiff=False, do_png=False, log=None):
+    """Generator form of export_layouts_to_formats: yields (done, total)
+    per layout so a ChunkRunner can keep the UI responsive/cancelable.
+    Layout rendering itself must stay on the main thread (layouts are
+    project-tied QObjects). Returns (success_count, fail_count)."""
     def _log(msg):
         if log:
             log(msg)
@@ -94,8 +118,7 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
     export_fail = 0
 
     for idx, name in enumerate(layout_names):
-        if progress:
-            progress(idx + 1, total)
+        yield idx + 1, total
 
         layout = QgsProject.instance().layoutManager().layoutByName(name)
         if not layout:
@@ -1574,6 +1597,11 @@ class MapLayoutGeneratorPanel(QDockWidget):
         self._restoring_state = False
         self._last_preview_text = ''
 
+        # Background work handles (legend-scan task / generation runner)
+        self._task = None
+        self._runner = None
+        self._gen_cfg = None
+
         # Per-sheet options
         self.perSheetCheckbox = QCheckBox(
             "Per-sheet legend content (scan only features on each sheet)")
@@ -1711,12 +1739,20 @@ class MapLayoutGeneratorPanel(QDockWidget):
         self.exportExistingBtn.clicked.connect(self.exportExistingLayouts)
         self.mainLayout.addWidget(self.exportExistingBtn)
 
-        # Progress bar
+        # Progress bar + cancel
+        progressRow = QHBoxLayout()
         self.progressBar = QProgressBar()
         self.progressBar.setTextVisible(True)
         self.progressBar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progressBar.setValue(0)
-        self.mainLayout.addWidget(self.progressBar)
+        progressRow.addWidget(self.progressBar, 1)
+        self.cancelBtn = QPushButton("Cancel")
+        self.cancelBtn.setToolTip(
+            "Stop generating/exporting. Sheets already created are kept.")
+        self.cancelBtn.clicked.connect(self._cancel_work)
+        self.cancelBtn.setVisible(False)
+        progressRow.addWidget(self.cancelBtn)
+        self.mainLayout.addLayout(progressRow)
 
     # ── Populate helpers ──────────────────────────────────────────────
 
@@ -2747,401 +2783,527 @@ class MapLayoutGeneratorPanel(QDockWidget):
                                     "No layouts were selected.")
             return
 
-        # Run export
-        self.setEnabled(False)
-        try:
-            success, fail = self._export_layouts(selected)
+        # Run export as a cancelable runner
+        self._set_generating(True)
+
+        def _done(counts):
+            self._runner = None
+            self._set_generating(False)
+            success, fail = counts
             lines = [f"Exported: {success} layout(s)"]
             if fail:
                 lines.append(f"Failed: {fail} layout(s)")
             lines.append(f"Output: {self.outputDirEdit.text()}")
             QMessageBox.information(self, "Export Complete", "\n".join(lines))
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Export error: {e}")
-        finally:
-            self.setEnabled(True)
-            self.statusLabel.setText("Ready to generate map layouts")
-            self.progressBar.setValue(0)
+
+        self._start_export(selected, _done)
 
     # ── Batch export ──────────────────────────────────────────────────
 
-    def _export_layouts(self, layout_names):
-        """Export layouts to selected formats (delegates to the shared helper)."""
+    def _start_export(self, layout_names, on_done):
+        """Export layouts via a cancelable ChunkRunner (rendering stays on
+        the main thread — layouts are project-tied QObjects)."""
         self.statusLabel.setText("Exporting layouts...")
-        self.progressBar.setMaximum(len(layout_names))
-        self.progressBar.setValue(0)
 
-        def _progress(done, total):
-            self.progressBar.setValue(done)
-            QApplication.processEvents()
-
-        return export_layouts_to_formats(
+        inner = iter_export_steps(
             layout_names,
             self.outputDirEdit.text(),
             dpi=self.dpiSpin.value(),
             do_pdf=self.exportPdfCheckbox.isChecked(),
             do_tiff=self.exportTiffCheckbox.isChecked(),
             do_png=self.exportPngCheckbox.isChecked(),
-            log=lambda m: self.statusLabel.setText(m),
-            progress=_progress)
+            log=lambda m: self.statusLabel.setText(m))
+
+        def _steps():
+            try:
+                while True:
+                    try:
+                        done, total = next(inner)
+                    except StopIteration as stop:
+                        return stop.value if stop.value is not None else (0, 0)
+                    yield (int(done / max(total, 1) * 100),
+                           f"Exporting {done}/{total}")
+            finally:
+                inner.close()
+
+        self._runner = ChunkRunner(
+            _steps(),
+            on_finished=on_done,
+            on_error=self._work_failed,
+            on_cancelled=self._export_cancelled,
+            owner=self, bar=self.progressBar,
+            label=self.statusLabel).start()
+
+    def _export_cancelled(self):
+        self._runner = None
+        self._set_generating(False)
+        QMessageBox.information(
+            self, "Export Layouts",
+            "Export cancelled. Files already written were kept.")
 
     # ── Main generation ───────────────────────────────────────────────
+
+    def _cancel_work(self):
+        if self._task is not None:
+            self._task.cancel()
+        if self._runner is not None:
+            self._runner.cancel()
+        self.statusLabel.setText("Cancelling…")
+
+    def _set_generating(self, busy):
+        self.generateBtn.setEnabled(not busy)
+        self.exportExistingBtn.setEnabled(not busy)
+        self.cancelBtn.setVisible(busy)
+        if busy:
+            self.progressBar.setMaximum(100)
+            self.progressBar.setValue(0)
+        else:
+            self.statusLabel.setText("Ready to generate map layouts")
+            self.progressBar.setValue(0)
+
+    def _work_failed(self, exc, tb):
+        self._task = None
+        self._runner = None
+        self._set_generating(False)
+        QgsMessageLog.logMessage(f"Layout generation failed: {tb}",
+                                 LOG_TAG, Qgis.MessageLevel.Critical)
+        QMessageBox.critical(self, "Error", f"An error occurred: {exc}")
 
     def generateLayouts(self):
         if not self.validateInputs():
             return
 
-        self.setEnabled(False)
-        self.statusLabel.setText("Generating map layouts...")
+        layer_id = self.layerCombo.currentData()
+        polygon_layer = QgsProject.instance().mapLayer(layer_id)
 
-        try:
-            layer_id = self.layerCombo.currentData()
-            polygon_layer = QgsProject.instance().mapLayer(layer_id)
+        project_name = self.projectNameEdit.text().strip()
 
-            project_name = self.projectNameEdit.text().strip()
+        portrait_template_path = self.portraitTemplateEdit.text()
+        landscape_template_path = self.landscapeTemplateEdit.text()
 
-            portrait_template_path = self.portraitTemplateEdit.text()
-            landscape_template_path = self.landscapeTemplateEdit.text()
+        use_custom_scale = self.useScaleCheckbox.isChecked()
+        scale_denominator = None
+        if use_custom_scale:
+            scale_denominator = self.getSelectedScale()
 
-            use_custom_scale = self.useScaleCheckbox.isChecked()
-            scale_denominator = None
-            if use_custom_scale:
-                scale_denominator = self.getSelectedScale()
+        # Per-sheet scale from the mapsheets layer's 'scale' attribute
+        # (written by the Mapsheet Generator) — supersedes the combo.
+        use_layer_scale = (
+            self.useLayerScaleCheckbox.isChecked()
+            and polygon_layer.fields().indexOf('scale') >= 0)
+        if (self.useLayerScaleCheckbox.isChecked()
+                and not use_layer_scale):
+            QgsMessageLog.logMessage(
+                "Mapsheets layer has no 'scale' field — using the "
+                "manual scale setting instead.", LOG_TAG, Qgis.MessageLevel.Warning)
 
-            # Per-sheet scale from the mapsheets layer's 'scale' attribute
-            # (written by the Mapsheet Generator) — supersedes the combo.
-            use_layer_scale = (
-                self.useLayerScaleCheckbox.isChecked()
-                and polygon_layer.fields().indexOf('scale') >= 0)
-            if (self.useLayerScaleCheckbox.isChecked()
-                    and not use_layer_scale):
+        feature_count = polygon_layer.featureCount()
+
+        # Persist the current legend config with the project
+        self._save_legend_state()
+
+        # Compute legend exclusion list.  Only explicitly unchecked
+        # layers are excluded — layers added since the checklist was
+        # populated stay in the legend by default.
+        legend_enabled = self.legendCheckbox.isChecked()
+        excluded_layer_ids = []
+        if legend_enabled:
+            current_ids = set(QgsProject.instance().mapLayers().keys())
+            excluded_layer_ids = [
+                lid for lid in self.legendLayerList.unchecked_layer_ids()
+                if lid in current_ids]
+
+        # Legend sections: scan per sheet (or once, project-wide).
+        # With nothing configured, fall back to auto-detected defaults
+        # (lookup-matched field families with data) — ephemeral, not
+        # persisted, so template changes keep flowing through.
+        sections = [normalize_section(s) for s in self._sections]
+        if legend_enabled and not sections:
+            sections = auto_sections_from_candidates(
+                discover_section_candidates(QgsProject.instance()))
+            if sections:
                 QgsMessageLog.logMessage(
-                    "Mapsheets layer has no 'scale' field — using the "
-                    "manual scale setting instead.", LOG_TAG, Qgis.MessageLevel.Warning)
+                    f"No legend sections configured — using "
+                    f"{len(sections)} auto-detected section(s): "
+                    f"{', '.join(s['title'] for s in sections)}.",
+                    LOG_TAG, Qgis.MessageLevel.Info)
+        lookup_maps, group_maps = (self._load_lookup_maps(sections)
+                                   if sections else ({}, {}))
+        per_sheet = self.perSheetCheckbox.isChecked()
+        filter_by_map = self.filterByMapCheckbox.isChecked()
+        sheet_crs = polygon_layer.crs()
+        project_wide_results = None
+        if sections and not per_sheet:
+            project_wide_results = scan_sections_for_sheet(
+                QgsProject.instance(), sections)
 
-            buffer_percentage = 0
+        # Edits to the preview box are read as per-entry corrections
+        # applied on every sheet: deleted lines exclude that entry,
+        # reworded lines relabel it, added lines are appended — while
+        # each sheet still shows only its own codes.
+        box_text = self.codeTableText.toPlainText().strip()
+        section_headings = [(s['title'].upper() or 'LEGEND')
+                            for s in sections]
+        text_overrides = derive_text_overrides(
+            self._last_preview_text, box_text, section_headings)
 
-            feature_count = polygon_layer.featureCount()
-            created_count = 0
-            skipped_count = 0
-            created_layout_names = []
+        # Selective generation range
+        selective_enabled = self.selectiveCheckbox.isChecked()
+        from_number = self.fromSpin.value()
+        to_number = self.toSpin.value()
 
-            # Persist the current legend config with the project
-            self._save_legend_state()
+        self.fromSpin.setMaximum(feature_count)
+        self.toSpin.setMaximum(feature_count)
 
-            # Compute legend exclusion list.  Only explicitly unchecked
-            # layers are excluded — layers added since the checklist was
-            # populated stay in the legend by default.
-            legend_enabled = self.legendCheckbox.isChecked()
-            excluded_layer_ids = []
-            if legend_enabled:
-                current_ids = set(QgsProject.instance().mapLayers().keys())
-                excluded_layer_ids = [
-                    lid for lid in self.legendLayerList.unchecked_layer_ids()
-                    if lid in current_ids]
+        if selective_enabled:
+            if from_number > to_number:
+                QMessageBox.warning(self, "Invalid Range",
+                                  f"'From' value ({from_number}) cannot be greater than 'To' value ({to_number}).")
+                return
 
-            # Legend sections: scan per sheet (or once, project-wide).
-            # With nothing configured, fall back to auto-detected defaults
-            # (lookup-matched field families with data) — ephemeral, not
-            # persisted, so template changes keep flowing through.
-            sections = [normalize_section(s) for s in self._sections]
-            if legend_enabled and not sections:
-                sections = auto_sections_from_candidates(
-                    discover_section_candidates(QgsProject.instance()))
-                if sections:
-                    QgsMessageLog.logMessage(
-                        f"No legend sections configured — using "
-                        f"{len(sections)} auto-detected section(s): "
-                        f"{', '.join(s['title'] for s in sections)}.",
-                        LOG_TAG, Qgis.MessageLevel.Info)
-            lookup_maps, group_maps = (self._load_lookup_maps(sections)
-                                       if sections else ({}, {}))
-            per_sheet = self.perSheetCheckbox.isChecked()
-            filter_by_map = self.filterByMapCheckbox.isChecked()
-            sheet_crs = polygon_layer.crs()
-            project_wide_results = None
-            if sections and not per_sheet:
-                project_wide_results = scan_sections_for_sheet(
-                    QgsProject.instance(), sections)
+            if from_number < 1:
+                QMessageBox.warning(self, "Invalid Range",
+                                  "'From' value must be at least 1.")
+                return
 
-            # Edits to the preview box are read as per-entry corrections
-            # applied on every sheet: deleted lines exclude that entry,
-            # reworded lines relabel it, added lines are appended — while
-            # each sheet still shows only its own codes.
-            box_text = self.codeTableText.toPlainText().strip()
-            section_headings = [(s['title'].upper() or 'LEGEND')
-                                for s in sections]
-            text_overrides = derive_text_overrides(
-                self._last_preview_text, box_text, section_headings)
+            if to_number > feature_count:
+                QMessageBox.warning(self, "Invalid Range",
+                                  f"'To' value ({to_number}) exceeds the total number of features ({feature_count}).\n\n"
+                                  f"Please enter a value between {from_number} and {feature_count}.")
+                return
 
-            # Selective generation range
-            selective_enabled = self.selectiveCheckbox.isChecked()
-            from_number = self.fromSpin.value()
-            to_number = self.toSpin.value()
-
-            self.fromSpin.setMaximum(feature_count)
-            self.toSpin.setMaximum(feature_count)
-
-            if selective_enabled:
-                if from_number > to_number:
-                    QMessageBox.warning(self, "Invalid Range",
-                                      f"'From' value ({from_number}) cannot be greater than 'To' value ({to_number}).")
-                    return
-
-                if from_number < 1:
-                    QMessageBox.warning(self, "Invalid Range",
-                                      "'From' value must be at least 1.")
-                    return
-
-                if to_number > feature_count:
-                    QMessageBox.warning(self, "Invalid Range",
-                                      f"'To' value ({to_number}) exceeds the total number of features ({feature_count}).\n\n"
-                                      f"Please enter a value between {from_number} and {feature_count}.")
-                    return
-
-                self.progressBar.setMaximum(to_number - from_number + 1)
-                self.statusLabel.setText(f"Generating layouts {from_number} to {to_number}...")
-            else:
-                self.progressBar.setMaximum(feature_count)
-
-            self.progressBar.setValue(0)
-
-            # Process features
-            progress_counter = 0
-            for i, feature in enumerate(polygon_layer.getFeatures()):
-                feature_number = i + 1
-
-                if selective_enabled:
-                    if feature_number < from_number or feature_number > to_number:
-                        continue
-
-                progress_counter += 1
-                self.progressBar.setValue(progress_counter)
-                QApplication.processEvents()
-
+        # Parse each template ONCE up front (previously re-read and
+        # re-parsed for every sheet).
+        template_docs = {}
+        for orient, path in (('Portrait', portrait_template_path),
+                             ('Landscape', landscape_template_path)):
+            if path:
                 try:
-                    orientation = feature['orientation']
-                    polygon_name = feature['name']
-                    # Manager name must be single-line; the template title
-                    # label still gets the two-line form via _populate_labels.
-                    layout_name = f"{project_name} - {polygon_name}"
-                    title_text = f"{project_name}\n{polygon_name}"
+                    with open(path, 'r') as template_file:
+                        doc = QDomDocument()
+                        doc.setContent(template_file.read())
+                        template_docs[orient] = doc
+                except Exception as e:
+                    QMessageBox.critical(self, "Error",
+                                         f"Could not read template '{path}': {e}")
+                    return
+        if not template_docs:
+            QMessageBox.warning(self, "Map Layout Generator",
+                                "No layout template configured.")
+            return
 
-                    # Remove existing layout if it exists (also checks the
-                    # pre-v3.4 newline-separated name form)
-                    manager = QgsProject.instance().layoutManager()
-                    for old_name in (layout_name,
-                                     f"{project_name}\n{polygon_name}"):
-                        existing = manager.layoutByName(old_name)
-                        if existing:
-                            manager.removeLayout(existing)
-                            self.statusLabel.setText(
-                                f"Replacing existing layout: {layout_name}")
+        features = list(polygon_layer.getFeatures())
 
-                    if orientation not in ['Portrait', 'Landscape']:
+        cfg = {
+            'project_name': project_name,
+            'features': features,
+            'feature_count': feature_count,
+            'template_docs': template_docs,
+            'use_custom_scale': use_custom_scale,
+            'scale_denominator': scale_denominator,
+            'use_layer_scale': use_layer_scale,
+            'sections': sections,
+            'lookup_maps': lookup_maps,
+            'group_maps': group_maps,
+            'per_sheet': per_sheet,
+            'project_wide_results': project_wide_results,
+            'legend_enabled': legend_enabled,
+            'excluded_layer_ids': excluded_layer_ids,
+            'filter_by_map': filter_by_map,
+            'text_overrides': text_overrides,
+            'selective_enabled': selective_enabled,
+            'from_number': from_number,
+            'to_number': to_number,
+            'sheet_crs': sheet_crs,
+        }
+        self._gen_cfg = cfg
+        self._set_generating(True)
+
+        def _in_range(number):
+            return (not selective_enabled
+                    or from_number <= number <= to_number)
+
+        if sections and per_sheet:
+            # Stage 1: precompute every sheet's legend scan in a background
+            # task (the data-proportional cost), then build layouts.
+            prepared = prepare_sheet_scan(QgsProject.instance(), sections)
+            sheets = [(i + 1, QgsGeometry(f.geometry()), sheet_crs)
+                      for i, f in enumerate(features)
+                      if _in_range(i + 1) and not f.geometry().isEmpty()]
+            self.statusLabel.setText("Scanning legend content…")
+            self._task = run_in_task(
+                "Scan mapsheet legend content",
+                lambda cb: scan_sections_for_sheets_prepared(
+                    prepared, sheets, progress_cb=cb),
+                on_finished=lambda res: self._start_generation(cfg, res),
+                on_error=self._work_failed,
+                on_cancelled=self._generation_cancelled,
+                owner=self, bar=self.progressBar, label=self.statusLabel)
+        else:
+            self._start_generation(cfg, None)
+
+    def _start_generation(self, cfg, per_sheet_results):
+        self._task = None
+        self.statusLabel.setText("Generating map layouts...")
+        self._runner = ChunkRunner(
+            self._generate_steps(cfg, per_sheet_results),
+            on_finished=self._generation_done,
+            on_error=self._work_failed,
+            on_cancelled=self._generation_cancelled,
+            owner=self, bar=self.progressBar,
+            label=self.statusLabel).start()
+
+    def _generate_steps(self, cfg, per_sheet_results):
+        """One yield per mapsheet; runs on the main thread via ChunkRunner
+        (layouts are project-tied QObjects)."""
+        project_name = cfg['project_name']
+        feature_count = cfg['feature_count']
+        sections = cfg['sections']
+        buffer_percentage = 0
+        created_count = 0
+        skipped_count = 0
+        created_layout_names = []
+
+        selected = [(i + 1, f) for i, f in enumerate(cfg['features'])
+                    if (not cfg['selective_enabled']
+                        or cfg['from_number'] <= i + 1 <= cfg['to_number'])]
+        total_steps = max(len(selected), 1)
+
+        for step, (feature_number, feature) in enumerate(selected):
+            yield (int(step / total_steps * 100),
+                   f"Sheet {feature_number}/{feature_count}")
+
+            try:
+                orientation = feature['orientation']
+                polygon_name = feature['name']
+                # Manager name must be single-line; the template title
+                # label still gets the two-line form via _populate_labels.
+                layout_name = f"{project_name} - {polygon_name}"
+                title_text = f"{project_name}\n{polygon_name}"
+
+                # Remove existing layout if it exists (also checks the
+                # pre-v3.4 newline-separated name form)
+                manager = QgsProject.instance().layoutManager()
+                for old_name in (layout_name,
+                                 f"{project_name}\n{polygon_name}"):
+                    existing = manager.layoutByName(old_name)
+                    if existing:
+                        manager.removeLayout(existing)
                         self.statusLabel.setText(
-                            f"Warning: Feature {polygon_name} has invalid orientation. Using Portrait.")
-                        orientation = 'Portrait'
+                            f"Replacing existing layout: {layout_name}")
 
-                    geom = feature.geometry()
-                    if geom.isEmpty():
-                        self.statusLabel.setText(f"Warning: Feature {polygon_name} has empty geometry. Skipping.")
-                        skipped_count += 1
-                        continue
+                if orientation not in ['Portrait', 'Landscape']:
+                    self.statusLabel.setText(
+                        f"Warning: Feature {polygon_name} has invalid orientation. Using Portrait.")
+                    orientation = 'Portrait'
 
-                    bbox = geom.boundingBox()
+                geom = feature.geometry()
+                if geom.isEmpty():
+                    self.statusLabel.setText(f"Warning: Feature {polygon_name} has empty geometry. Skipping.")
+                    skipped_count += 1
+                    continue
 
-                    # Calculate buffer
-                    width = bbox.width()
-                    height = bbox.height()
-                    buffer_x = width * (buffer_percentage / 100)
-                    buffer_y = height * (buffer_percentage / 100)
-                    bbox_buffered = QgsRectangle(
-                        bbox.xMinimum() - buffer_x,
-                        bbox.yMinimum() - buffer_y,
-                        bbox.xMaximum() + buffer_x,
-                        bbox.yMaximum() + buffer_y
+                bbox = geom.boundingBox()
+
+                # Calculate buffer
+                width = bbox.width()
+                height = bbox.height()
+                buffer_x = width * (buffer_percentage / 100)
+                buffer_y = height * (buffer_percentage / 100)
+                bbox_buffered = QgsRectangle(
+                    bbox.xMinimum() - buffer_x,
+                    bbox.yMinimum() - buffer_y,
+                    bbox.xMaximum() + buffer_x,
+                    bbox.yMaximum() + buffer_y
+                )
+
+                # Choose template based on orientation; fall back to
+                # the other template when only one is provided.
+                doc = cfg['template_docs'].get(orientation)
+                if doc is None:
+                    doc = next(iter(cfg['template_docs'].values()))
+                    QgsMessageLog.logMessage(
+                        f"No {orientation.lower()} template set for "
+                        f"'{polygon_name}' — using the other template "
+                        f"instead.", LOG_TAG, Qgis.MessageLevel.Warning)
+
+                # Load the template (parsed once up front)
+                layout = QgsPrintLayout(QgsProject.instance())
+                layout.loadFromTemplate(doc, QgsReadWriteContext())
+                layout.setName(layout_name)
+
+                # Get main map from template
+                maps = [item for item in layout.items() if isinstance(item, QgsLayoutItemMap)]
+                if not maps:
+                    self.statusLabel.setText(f"No map found in template for {layout_name}. Skipping.")
+                    skipped_count += 1
+                    continue
+
+                main_map = maps[0]
+
+                # Set map extent / scale.  The sheet's own 'scale'
+                # attribute wins; the manual combo is the fallback.
+                feature_scale = None
+                if cfg['use_layer_scale']:
+                    feature_scale = parse_scale_text(feature['scale'])
+                    if feature_scale is None:
+                        QgsMessageLog.logMessage(
+                            f"Sheet '{polygon_name}' has no valid "
+                            f"'scale' value — using the manual scale "
+                            f"setting.", LOG_TAG, Qgis.MessageLevel.Warning)
+                effective_scale = feature_scale or (
+                    cfg['scale_denominator'] if cfg['use_custom_scale']
+                    else None)
+
+                if effective_scale:
+                    center_x = (bbox.xMinimum() + bbox.xMaximum()) / 2
+                    center_y = (bbox.yMinimum() + bbox.yMaximum()) / 2
+
+                    map_width_mm = main_map.rect().width()
+                    map_height_mm = main_map.rect().height()
+
+                    map_width_mapunits = (map_width_mm * effective_scale) / 1000
+                    map_height_mapunits = (map_height_mm * effective_scale) / 1000
+
+                    new_extent = QgsRectangle(
+                        center_x - map_width_mapunits / 2,
+                        center_y - map_height_mapunits / 2,
+                        center_x + map_width_mapunits / 2,
+                        center_y + map_height_mapunits / 2
                     )
 
-                    # Choose template based on orientation; fall back to
-                    # the other template when only one is provided.
-                    is_landscape = (orientation == 'Landscape')
-                    template_path = (landscape_template_path if is_landscape
-                                     else portrait_template_path)
-                    if not template_path:
-                        template_path = (portrait_template_path
-                                         or landscape_template_path)
+                    main_map.setExtent(new_extent)
+                    main_map.setScale(effective_scale)
+                else:
+                    main_map.setExtent(bbox_buffered)
+
+                # Auto-set grid X/Y interval from the sheet's scale (or
+                # override).  The interval is metres, so skip non-metre
+                # CRSes rather than writing metres into degree units.
+                if self.overrideGridCheckbox.isChecked():
+                    grid_interval = self.getGridInterval()
+                elif feature_scale:
+                    grid_interval = feature_scale / 10.0
+                else:
+                    grid_interval = self.getGridInterval()
+                if grid_interval is not None:
+                    map_units = main_map.crs().mapUnits()
+                    if map_units != Qgis.DistanceUnit.Meters:
                         QgsMessageLog.logMessage(
-                            f"No {orientation.lower()} template set for "
-                            f"'{polygon_name}' — using the "
-                            f"{'portrait' if is_landscape else 'landscape'} "
-                            f"template instead.", LOG_TAG, Qgis.MessageLevel.Warning)
-
-                    # Load the template
-                    layout = QgsPrintLayout(QgsProject.instance())
-                    with open(template_path, 'r') as template_file:
-                        template_content = template_file.read()
-
-                    doc = QDomDocument()
-                    doc.setContent(template_content)
-
-                    layout.loadFromTemplate(doc, QgsReadWriteContext())
-                    layout.setName(layout_name)
-
-                    # Get main map from template
-                    maps = [item for item in layout.items() if isinstance(item, QgsLayoutItemMap)]
-                    if not maps:
-                        self.statusLabel.setText(f"No map found in template for {layout_name}. Skipping.")
-                        skipped_count += 1
-                        continue
-
-                    main_map = maps[0]
-
-                    # Set map extent / scale.  The sheet's own 'scale'
-                    # attribute wins; the manual combo is the fallback.
-                    feature_scale = None
-                    if use_layer_scale:
-                        feature_scale = parse_scale_text(feature['scale'])
-                        if feature_scale is None:
-                            QgsMessageLog.logMessage(
-                                f"Sheet '{polygon_name}' has no valid "
-                                f"'scale' value — using the manual scale "
-                                f"setting.", LOG_TAG, Qgis.MessageLevel.Warning)
-                    effective_scale = feature_scale or (
-                        scale_denominator if use_custom_scale else None)
-
-                    if effective_scale:
-                        center_x = (bbox.xMinimum() + bbox.xMaximum()) / 2
-                        center_y = (bbox.yMinimum() + bbox.yMaximum()) / 2
-
-                        map_width_mm = main_map.rect().width()
-                        map_height_mm = main_map.rect().height()
-
-                        map_width_mapunits = (map_width_mm * effective_scale) / 1000
-                        map_height_mapunits = (map_height_mm * effective_scale) / 1000
-
-                        new_extent = QgsRectangle(
-                            center_x - map_width_mapunits / 2,
-                            center_y - map_height_mapunits / 2,
-                            center_x + map_width_mapunits / 2,
-                            center_y + map_height_mapunits / 2
-                        )
-
-                        main_map.setExtent(new_extent)
-                        main_map.setScale(effective_scale)
+                            f"Map CRS for '{layout_name}' is not in "
+                            f"metres; skipping grid spacing.",
+                            LOG_TAG, Qgis.MessageLevel.Warning)
                     else:
-                        main_map.setExtent(bbox_buffered)
-
-                    # Auto-set grid X/Y interval from the sheet's scale (or
-                    # override).  The interval is metres, so skip non-metre
-                    # CRSes rather than writing metres into degree units.
-                    if self.overrideGridCheckbox.isChecked():
-                        grid_interval = self.getGridInterval()
-                    elif feature_scale:
-                        grid_interval = feature_scale / 10.0
-                    else:
-                        grid_interval = self.getGridInterval()
-                    if grid_interval is not None:
-                        map_units = main_map.crs().mapUnits()
-                        if map_units != Qgis.DistanceUnit.Meters:
-                            QgsMessageLog.logMessage(
-                                f"Map CRS for '{layout_name}' is not in "
-                                f"metres; skipping grid spacing.",
-                                LOG_TAG, Qgis.MessageLevel.Warning)
+                        grids = main_map.grids()
+                        if grids.size() > 0:
+                            grid = grids.grid(0)
+                            grid.setIntervalX(grid_interval)
+                            grid.setIntervalY(grid_interval)
+                            grid.setUnits(QgsLayoutItemMapGrid.GridUnit.MapUnit)
                         else:
-                            grids = main_map.grids()
-                            if grids.size() > 0:
-                                grid = grids.grid(0)
-                                grid.setIntervalX(grid_interval)
-                                grid.setIntervalY(grid_interval)
-                                grid.setUnits(QgsLayoutItemMapGrid.GridUnit.MapUnit)
-                            else:
-                                QgsMessageLog.logMessage(
-                                    f"Template for '{layout_name}' has no map grid; "
-                                    f"skipping grid spacing.", LOG_TAG, Qgis.MessageLevel.Warning)
+                            QgsMessageLog.logMessage(
+                                f"Template for '{layout_name}' has no map grid; "
+                                f"skipping grid spacing.", LOG_TAG, Qgis.MessageLevel.Warning)
 
-                    # Auto-resize the scalebar's nice-number bars to the
-                    # template frame at this map's scale.
-                    self._configure_scalebar(layout, main_map, effective_scale)
+                # Auto-resize the scalebar's nice-number bars to the
+                # template frame at this map's scale.
+                self._configure_scalebar(layout, main_map, effective_scale)
 
-                    # Auto-populate labels by Item ID
-                    self._populate_labels(layout, feature_number,
-                                          feature_count, title_text)
+                # Auto-populate labels by Item ID
+                self._populate_labels(layout, feature_number,
+                                      feature_count, title_text)
 
-                    # Per-sheet legend content
-                    scan_results = {}
+                # Per-sheet legend content (precomputed in the background
+                # scan task when per-sheet legends are on)
+                scan_results = {}
+                if sections:
+                    if cfg['per_sheet']:
+                        scan_results = (per_sheet_results or {}).get(
+                            feature_number, {})
+                    else:
+                        scan_results = cfg['project_wide_results'] or {}
+                    scan_results = self._apply_lookup_grouping(
+                        sections, scan_results, cfg['group_maps'])
+
+                # Automate legend
+                unmatched = {}
+                if cfg['legend_enabled']:
+                    self._configure_legend(
+                        layout, cfg['excluded_layer_ids'],
+                        self.legend_text_mappings,
+                        main_map=main_map,
+                        filter_by_map=cfg['filter_by_map'])
+
+                    # Expand configured layers into grouped legend
+                    # entries; values without symbols overflow to text
                     if sections:
-                        if per_sheet:
-                            scan_results = scan_sections_for_sheet(
-                                QgsProject.instance(), sections,
-                                sheet_geom=geom, sheet_crs=sheet_crs)
-                        else:
-                            scan_results = project_wide_results or {}
-                        scan_results = self._apply_lookup_grouping(
-                            sections, scan_results, group_maps)
+                        unmatched = self._apply_symbol_sections(
+                            layout, sections, scan_results)
 
-                    # Automate legend
-                    unmatched = {}
-                    if legend_enabled:
-                        self._configure_legend(
-                            layout, excluded_layer_ids,
-                            self.legend_text_mappings,
-                            main_map=main_map, filter_by_map=filter_by_map)
+                # Build the legend text block, apply the user's
+                # corrections, and place it as a single label.
+                section_lines = apply_text_overrides(
+                    build_text_section_lines(
+                        sections, scan_results, cfg['lookup_maps'],
+                        unmatched),
+                    cfg['text_overrides'])
+                if section_lines:
+                    self._place_text_block(layout, section_lines)
 
-                        # Expand configured layers into grouped legend
-                        # entries; values without symbols overflow to text
-                        if sections:
-                            unmatched = self._apply_symbol_sections(
-                                layout, sections, scan_results)
+                # Add layout to project
+                QgsProject.instance().layoutManager().addLayout(layout)
+                created_count += 1
+                created_layout_names.append(layout_name)
+                self.statusLabel.setText(f"Created map layout: {layout_name}")
 
-                    # Build the legend text block, apply the user's
-                    # corrections, and place it as a single label.
-                    section_lines = apply_text_overrides(
-                        build_text_section_lines(
-                            sections, scan_results, lookup_maps, unmatched),
-                        text_overrides)
-                    if section_lines:
-                        self._place_text_block(layout, section_lines)
+            except Exception as e:
+                QgsMessageLog.logMessage(
+                    f"Error processing feature {feature_number}: {e}",
+                    LOG_TAG, Qgis.MessageLevel.Warning)
+                self.statusLabel.setText(
+                    f"Error processing feature {feature_number}: {str(e)}")
+                skipped_count += 1
 
-                    # Add layout to project
-                    QgsProject.instance().layoutManager().addLayout(layout)
-                    created_count += 1
-                    created_layout_names.append(layout_name)
-                    self.statusLabel.setText(f"Created map layout: {layout_name}")
+        return {'created': created_count, 'skipped': skipped_count,
+                'names': created_layout_names}
 
-                except Exception as e:
-                    QgsMessageLog.logMessage(
-                        f"Error processing feature {i}: {e}", LOG_TAG, Qgis.MessageLevel.Warning)
-                    self.statusLabel.setText(f"Error processing feature {i}: {str(e)}")
-                    skipped_count += 1
+    def _generation_done(self, outcome):
+        self._runner = None
+        # Batch export (if auto-export is enabled) chains as a second
+        # cancelable runner; otherwise finish now.
+        if self.exportCheckbox.isChecked() and outcome['names']:
+            self._start_export(
+                outcome['names'],
+                lambda counts: self._finish_summary(outcome, counts))
+        else:
+            self._finish_summary(outcome, None)
 
-            # Batch export (if auto-export is enabled)
-            export_success, export_fail = 0, 0
-            if self.exportCheckbox.isChecked():
-                export_success, export_fail = self._export_layouts(created_layout_names)
+    def _generation_cancelled(self):
+        self._task = None
+        self._runner = None
+        self._set_generating(False)
+        QMessageBox.information(
+            self, "Map Layout Generator",
+            "Generation cancelled. Sheets already created were kept.")
 
-            # Summary message
-            summary_lines = ["Process complete."]
-            if selective_enabled:
-                summary_lines.append(f"Range: {from_number} to {to_number}")
-            summary_lines.append(f"Created: {created_count} map layouts")
-            if skipped_count:
-                summary_lines.append(f"Skipped: {skipped_count} layouts")
-            if self.exportCheckbox.isChecked():
-                summary_lines.append(f"\nExported: {export_success} layouts")
-                if export_fail:
-                    summary_lines.append(f"Export failures: {export_fail}")
-                summary_lines.append(f"Output: {self.outputDirEdit.text()}")
+    def _finish_summary(self, outcome, export_counts):
+        self._set_generating(False)
+        cfg = self._gen_cfg or {}
+        summary_lines = ["Process complete."]
+        if cfg.get('selective_enabled'):
+            summary_lines.append(
+                f"Range: {cfg['from_number']} to {cfg['to_number']}")
+        summary_lines.append(f"Created: {outcome['created']} map layouts")
+        if outcome['skipped']:
+            summary_lines.append(f"Skipped: {outcome['skipped']} layouts")
+        if export_counts is not None:
+            export_success, export_fail = export_counts
+            summary_lines.append(f"\nExported: {export_success} layouts")
+            if export_fail:
+                summary_lines.append(f"Export failures: {export_fail}")
+            summary_lines.append(f"Output: {self.outputDirEdit.text()}")
 
-            QMessageBox.information(self, "Map Layout Generator", "\n".join(summary_lines))
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
-
-        finally:
-            self.setEnabled(True)
-            self.statusLabel.setText("Ready to generate map layouts")
-            self.progressBar.setValue(0)
+        QMessageBox.information(self, "Map Layout Generator", "\n".join(summary_lines))
 
 
 # Create and show the panel
