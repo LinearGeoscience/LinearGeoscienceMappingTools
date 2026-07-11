@@ -324,7 +324,7 @@ class ExportDialog(QDialog):
         # Separator
         separator = QFrame()
         separator.setProperty("class", "separator")
-        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(separator)
 
         # Export path section
@@ -501,9 +501,9 @@ class ExportDialog(QDialog):
                 # Create group item
                 group_item = QTreeWidgetItem()
                 group_item.setText(0, child.name())
-                group_item.setData(0, Qt.UserRole, "GROUP")
-                group_item.setFlags(group_item.flags() | Qt.ItemIsTristate | Qt.ItemIsUserCheckable)
-                group_item.setCheckState(0, Qt.Checked)
+                group_item.setData(0, Qt.ItemDataRole.UserRole, "GROUP")
+                group_item.setFlags(group_item.flags() | Qt.ItemIsTristate | Qt.ItemFlag.ItemIsUserCheckable)
+                group_item.setCheckState(0, Qt.CheckState.Checked)
 
                 # Style group item
                 font = group_item.font(0)
@@ -532,10 +532,10 @@ class ExportDialog(QDialog):
                     item.setText(1, info['type'])
                     item.setText(2, info.get('geometry', ''))
                     item.setText(3, info['crs'])
-                    item.setData(0, Qt.UserRole, layer.id())
+                    item.setData(0, Qt.ItemDataRole.UserRole, layer.id())
 
                     # Add checkbox
-                    item.setCheckState(0, Qt.Checked if info['is_valid'] else Qt.Unchecked)
+                    item.setCheckState(0, Qt.CheckState.Checked if info['is_valid'] else Qt.CheckState.Unchecked)
                     item.setDisabled(not info['is_valid'])
 
                     # Check for unsupported raster formats
@@ -597,8 +597,8 @@ class ExportDialog(QDialog):
     def select_all_layers(self):
         """Select all valid layers recursively."""
         def select_all_recursive(item):
-            if not item.isDisabled() and item.data(0, Qt.UserRole) != "GROUP":
-                item.setCheckState(0, Qt.Checked)
+            if not item.isDisabled() and item.data(0, Qt.ItemDataRole.UserRole) != "GROUP":
+                item.setCheckState(0, Qt.CheckState.Checked)
             for i in range(item.childCount()):
                 select_all_recursive(item.child(i))
 
@@ -609,7 +609,7 @@ class ExportDialog(QDialog):
     def select_no_layers(self):
         """Deselect all layers recursively."""
         def deselect_all_recursive(item):
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
             for i in range(item.childCount()):
                 deselect_all_recursive(item.child(i))
 
@@ -621,9 +621,9 @@ class ExportDialog(QDialog):
         """Select only vector layers recursively."""
         def select_vector_recursive(item):
             if item.text(1) == "Vector" and not item.isDisabled():
-                item.setCheckState(0, Qt.Checked)
-            elif item.data(0, Qt.UserRole) != "GROUP":
-                item.setCheckState(0, Qt.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Checked)
+            elif item.data(0, Qt.ItemDataRole.UserRole) != "GROUP":
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             for i in range(item.childCount()):
                 select_vector_recursive(item.child(i))
 
@@ -635,9 +635,9 @@ class ExportDialog(QDialog):
         """Select only raster layers recursively."""
         def select_raster_recursive(item):
             if item.text(1) == "Raster" and not item.isDisabled():
-                item.setCheckState(0, Qt.Checked)
-            elif item.data(0, Qt.UserRole) != "GROUP":
-                item.setCheckState(0, Qt.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Checked)
+            elif item.data(0, Qt.ItemDataRole.UserRole) != "GROUP":
+                item.setCheckState(0, Qt.CheckState.Unchecked)
             for i in range(item.childCount()):
                 select_raster_recursive(item.child(i))
 
@@ -650,10 +650,10 @@ class ExportDialog(QDialog):
 
         def collect_checked_layers(item):
             """Recursively collect checked layer IDs."""
-            layer_id = item.data(0, Qt.UserRole)
+            layer_id = item.data(0, Qt.ItemDataRole.UserRole)
 
             # If it's a layer (not a group), add it if checked
-            if layer_id != "GROUP" and item.checkState(0) == Qt.Checked:
+            if layer_id != "GROUP" and item.checkState(0) == Qt.CheckState.Checked:
                 selected.append(layer_id)
 
             # Process children
@@ -720,10 +720,10 @@ class ExportDialog(QDialog):
                     "This may cause sync conflicts with GeoPackage files. "
                     "Consider exporting to a local folder instead.\n\n"
                     "Continue anyway?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
                 )
-                if reply == QMessageBox.No:
+                if reply == QMessageBox.StandardButton.No:
                     return False
                 break  # Only warn once
 

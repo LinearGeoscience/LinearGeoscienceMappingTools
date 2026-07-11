@@ -57,7 +57,7 @@ class PreviewDialog(QDialog):
 
         # Make dialog non-modal and stay on top to allow map interaction (zoom/pan) during preview inspection
         self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
 
@@ -67,8 +67,8 @@ class PreviewDialog(QDialog):
 
         # Separator
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
         # Operation details

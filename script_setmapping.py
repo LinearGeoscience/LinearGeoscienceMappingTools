@@ -59,7 +59,7 @@ class ModernLayerConfigDialog(QDialog):
         self.setupProgressSection(mainLayout)
 
         # Add standard dialog buttons
-        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttonBox.accepted.connect(self.onAccepted)
         self.buttonBox.rejected.connect(self.reject)
         mainLayout.addWidget(self.buttonBox)
@@ -168,7 +168,7 @@ class ModernLayerConfigDialog(QDialog):
 
         # Create status label
         self.statusLabel = QLabel("Ready")
-        self.statusLabel.setAlignment(Qt.AlignCenter)
+        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         progressLayout.addWidget(self.statusLabel)
 
         mainLayout.addWidget(self.progressGroup)
@@ -226,7 +226,7 @@ class ModernLayerConfigDialog(QDialog):
             self.progress_timer.stop()
             self.statusLabel.setText("Completed")
             # Enable the OK button again
-            self.buttonBox.button(QDialogButtonBox.Ok).setEnabled(True)
+            self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def startProgress(self, status_text):
         """Start the progress display with the given status text"""
@@ -241,8 +241,8 @@ class ModernLayerConfigDialog(QDialog):
         self.progressBar.setValue(0)
 
         # Disable buttons during progress
-        self.buttonBox.button(QDialogButtonBox.Ok).setEnabled(False)
-        self.buttonBox.button(QDialogButtonBox.Cancel).setEnabled(False)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(False)
 
         # Process events to update UI
         from qgis.PyQt.QtWidgets import QApplication
@@ -724,7 +724,7 @@ def run_configuration():
     dialog = ModernLayerConfigDialog()
     result = dialog.exec()
 
-    if result != QDialog.Accepted:
+    if result != QDialog.DialogCode.Accepted:
         QgsMessageLog.logMessage("User cancelled. No changes made.", 'Linear Geoscience', Qgis.Info)
 
 

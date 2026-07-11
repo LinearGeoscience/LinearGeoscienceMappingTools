@@ -141,7 +141,7 @@ class RemoveUnusedPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -267,9 +267,9 @@ class RemoveUnusedPage(QWidget):
         reply = QMessageBox.question(
             self, "Confirm",
             f"Remove unused symbology from {len(layer_ids)} layer(s)?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.status_changed.emit("in_progress")

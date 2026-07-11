@@ -180,7 +180,7 @@ class PhotoPanel(QDockWidget):
 
     def __init__(self, iface, parent=None):
         super().__init__("Field Photos", parent)
-        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.setObjectName("FieldPhotosPanel")
         self.iface = iface
 
@@ -293,7 +293,7 @@ class PhotoPanel(QDockWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progress_bar.setStyleSheet(f"""
             QProgressBar {{
                 border: none;
@@ -321,7 +321,7 @@ class PhotoPanel(QDockWidget):
         self.slideshow_controls: Optional[SlideshowControls] = None
 
         # Keyboard navigation
-        self.main_widget.setFocusPolicy(Qt.StrongFocus)
+        self.main_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.main_widget.installEventFilter(self)
         self.focused_index = -1
         self.thumbnails = []
@@ -410,7 +410,7 @@ class PhotoPanel(QDockWidget):
         self.select_tool_btn.setStyleSheet(button_style)
 
         self.slideshow_btn = QToolButton()
-        self.slideshow_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.slideshow_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.slideshow_btn.setIconSize(scale.icon_size(18, 18))
         self.slideshow_btn.setToolTip("Start Slideshow (Ctrl+S)")
         self.slideshow_btn.setStyleSheet(button_style)
@@ -442,10 +442,10 @@ class PhotoPanel(QDockWidget):
         """Initialize the scroll area and photo grid."""
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setFrameShape(QFrame.StyledPanel)
-        self.scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setFrameShape(QFrame.Shape.StyledPanel)
+        self.scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         scale = get_scale_manager()
         scrollbar_width = scale.dimension(8)
         self.scroll_area.setStyleSheet(f"""
@@ -469,14 +469,14 @@ class PhotoPanel(QDockWidget):
         """)
 
         self.scroll_widget = QWidget()
-        self.scroll_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.scroll_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.thumbnail_layout = QGridLayout(self.scroll_widget)
         self.thumbnail_layout.setContentsMargins(
             STYLE['MARGIN_SM'], STYLE['MARGIN_SM'],
             STYLE['MARGIN_SM'], STYLE['MARGIN_SM']
         )
         self.thumbnail_layout.setSpacing(STYLE['MARGIN_LG'])
-        self.thumbnail_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self.thumbnail_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
         self.scroll_area.setWidget(self.scroll_widget)
         self.content_layout.addWidget(self.scroll_area)
@@ -1264,7 +1264,7 @@ class PhotoPanel(QDockWidget):
 
     def eventFilter(self, obj, event):
         """Handle keyboard navigation events."""
-        if event.type() == QEvent.KeyPress and obj == self.main_widget:
+        if event.type() == QEvent.Type.KeyPress and obj == self.main_widget:
             key = event.key()
 
             if not self.thumbnails:
@@ -1272,43 +1272,43 @@ class PhotoPanel(QDockWidget):
 
             # Slideshow mode
             if self.in_slideshow_mode:
-                if key == Qt.Key_Left:
+                if key == Qt.Key.Key_Left:
                     self._view_previous_photo()
                     return True
-                elif key == Qt.Key_Right:
+                elif key == Qt.Key.Key_Right:
                     self._view_next_photo()
                     return True
-                elif key == Qt.Key_Space:
+                elif key == Qt.Key.Key_Space:
                     if self.slideshow_controls:
                         self.slideshow_controls.toggle_play()
                     return True
-                elif key == Qt.Key_Escape:
+                elif key == Qt.Key.Key_Escape:
                     self._end_slideshow()
                     return True
-                elif key in (Qt.Key_Return, Qt.Key_Enter):
+                elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                     self._view_current_photo()
                     return True
 
             # Normal navigation
-            if key == Qt.Key_Right:
+            if key == Qt.Key.Key_Right:
                 self._navigate_next()
                 return True
-            elif key == Qt.Key_Left:
+            elif key == Qt.Key.Key_Left:
                 self._navigate_previous()
                 return True
-            elif key == Qt.Key_Up:
+            elif key == Qt.Key.Key_Up:
                 self._navigate_up()
                 return True
-            elif key == Qt.Key_Down:
+            elif key == Qt.Key.Key_Down:
                 self._navigate_down()
                 return True
-            elif key in (Qt.Key_Return, Qt.Key_Enter):
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 self._open_focused_photo()
                 return True
-            elif key == Qt.Key_Space:
+            elif key == Qt.Key.Key_Space:
                 self._zoom_to_focused_photo()
                 return True
-            elif key == Qt.Key_S and event.modifiers() & Qt.ControlModifier:
+            elif key == Qt.Key.Key_S and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self._start_slideshow()
                 return True
 
@@ -1484,7 +1484,7 @@ def run_photo_panel(iface):
     )
 
     panel = PhotoPanel(iface)
-    iface.addDockWidget(Qt.RightDockWidgetArea, panel)
+    iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, panel)
 
     panel.show()
     panel.raise_()

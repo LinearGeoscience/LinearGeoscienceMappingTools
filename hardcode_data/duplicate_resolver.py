@@ -73,7 +73,7 @@ class DuplicateUuidResolverDialog(QDialog):
         except Exception:
             pass
         self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._setup_ui()
         self._show_group()
@@ -103,7 +103,7 @@ class DuplicateUuidResolverDialog(QDialog):
         layout.addWidget(self._header)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         try:
             sep.setStyleSheet(theme.separator_style())
         except Exception:
@@ -113,7 +113,7 @@ class DuplicateUuidResolverDialog(QDialog):
         # Scrollable list of feature rows for the current group.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._rows_host = QWidget()
         self._rows_layout = QVBoxLayout(self._rows_host)
         self._rows_layout.setContentsMargins(0, 0, s.dimension(6), 0)
@@ -338,8 +338,8 @@ class DuplicateUuidResolverDialog(QDialog):
             self, "Delete Feature",
             f"Delete feature {fid} from '{self.layer.name()}'?\n\n"
             "This permanently removes the feature.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply != QMessageBox.Yes:
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
             return
         if not self._ensure_editable():
             return

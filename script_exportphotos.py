@@ -702,7 +702,7 @@ class PhotoExportDialog(QDialog):
         layout.addWidget(options_group)
 
         # Create splitter for preview and log
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Preview table section
         preview_group = QGroupBox("Photos to Export - Preview")
@@ -714,10 +714,10 @@ class PhotoExportDialog(QDialog):
 
         # Set column widths
         header = self.preview_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-        header.setSectionResizeMode(2, QHeaderView.Stretch)           # Full Path
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)           # Full Path
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Status
 
         preview_layout.addWidget(self.preview_table)
         preview_group.setLayout(preview_layout)
@@ -941,20 +941,20 @@ class PhotoExportDialog(QDialog):
             self.preview_table.setHorizontalHeaderLabels(["Filename", "Type", "SampleID", "Full Path", "Status"])
             # Adjust column widths
             header = self.preview_table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # SampleID
-            header.setSectionResizeMode(3, QHeaderView.Stretch)  # Full Path
-            header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Status
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # SampleID
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # Full Path
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Status
         else:
             self.preview_table.setColumnCount(4)
             self.preview_table.setHorizontalHeaderLabels(["Filename", "Type", "Full Path", "Status"])
             # Adjust column widths
             header = self.preview_table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-            header.setSectionResizeMode(2, QHeaderView.Stretch)  # Full Path
-            header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Full Path
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Status
 
         for row, feature in enumerate(features):
             col = 0
@@ -981,10 +981,10 @@ class PhotoExportDialog(QDialog):
                 sampleid_item = QTableWidgetItem()
                 if sampleid_value.isdigit():
                     # For numeric SampleIDs, set the data as an integer for proper sorting
-                    sampleid_item.setData(Qt.DisplayRole, sampleid_value)
-                    sampleid_item.setData(Qt.UserRole, int(sampleid_value))
+                    sampleid_item.setData(Qt.ItemDataRole.DisplayRole, sampleid_value)
+                    sampleid_item.setData(Qt.ItemDataRole.UserRole, int(sampleid_value))
                 else:
-                    sampleid_item.setData(Qt.DisplayRole, sampleid_value)
+                    sampleid_item.setData(Qt.ItemDataRole.DisplayRole, sampleid_value)
                 self.preview_table.setItem(row, col, sampleid_item)
                 col += 1
 
@@ -1006,14 +1006,14 @@ class PhotoExportDialog(QDialog):
 
             status_item = QTableWidgetItem(status)
             # Use UserRole data for sorting - this ensures Found items come first, then Not Found, then Missing
-            status_item.setData(Qt.UserRole, sort_value)
+            status_item.setData(Qt.ItemDataRole.UserRole, sort_value)
 
             if status == "✓ Found":
-                status_item.setBackground(Qt.lightGray)
+                status_item.setBackground(Qt.GlobalColor.lightGray)
             elif status == "✗ Not Found":
-                status_item.setBackground(Qt.red)
+                status_item.setBackground(Qt.GlobalColor.red)
             else:
-                status_item.setBackground(Qt.yellow)
+                status_item.setBackground(Qt.GlobalColor.yellow)
 
             self.preview_table.setItem(row, col, status_item)
 
@@ -1057,8 +1057,8 @@ class PhotoExportDialog(QDialog):
             reply = QMessageBox.question(self, "Missing Photos",
                                        f"{missing_count} photos are missing or have invalid paths.\n"
                                        f"Do you want to continue with the export?",
-                                       QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.No:
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.No:
                 return
 
         # Check for missing SampleIDs if rename option is enabled
@@ -1075,8 +1075,8 @@ class PhotoExportDialog(QDialog):
                                            f"{missing_sampleid_count} photos are missing a SampleID.\n"
                                            f"These will be exported with their original filenames.\n\n"
                                            f"Do you want to continue?",
-                                           QMessageBox.Yes | QMessageBox.No)
-                if reply == QMessageBox.No:
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
                     return
 
         # Start export

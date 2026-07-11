@@ -319,10 +319,10 @@ class TemplateLoaderDialog(QDialog):
             response = QMessageBox.question(
                 self, "File Exists",
                 f"File already exists:\n{output_gpkg}\n\nDo you want to overwrite it?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
 
-            if response == QMessageBox.No:
+            if response == QMessageBox.StandardButton.No:
                 return
 
         # Remove existing output file if it exists
@@ -516,9 +516,9 @@ def run_template_loader():
         parent = iface.mainWindow()
         dialog = TemplateLoaderDialog(parent)
 
-        dialog.setAttribute(Qt.WA_DeleteOnClose)
-        dialog.setWindowModality(Qt.WindowModal)
-        dialog.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint)
 
         # Store persistent reference to prevent GC; clean up on close
         dialog.destroyed.connect(lambda: setattr(iface, "_template_dialog", None))

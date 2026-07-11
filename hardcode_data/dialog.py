@@ -339,7 +339,7 @@ class HardcodeDataDialog(QDialog):
 
         vbox.addWidget(self._build_summary_label(report, mode))
 
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._build_quality_table(report))
 
         bottom = QWidget()
@@ -408,7 +408,7 @@ class HardcodeDataDialog(QDialog):
 
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setTextFormat(Qt.RichText)
+        label.setTextFormat(Qt.TextFormat.RichText)
         label.setStyleSheet(
             f"background-color: {theme.BG_PRIMARY}; "
             f"border: 1px solid {theme.BORDER}; "
@@ -419,7 +419,7 @@ class HardcodeDataDialog(QDialog):
     def _build_quality_table(self, report):
         table = QTableWidget(len(report.column_stats), len(QUALITY_HEADERS))
         table.setHorizontalHeaderLabels(QUALITY_HEADERS)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
 
@@ -445,14 +445,14 @@ class HardcodeDataDialog(QDialog):
         table.resizeColumnsToContents()
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(
-            6, QHeaderView.Interactive)
+            6, QHeaderView.ResizeMode.Interactive)
         return table
 
     def _build_changes_table(self, report):
         shown = report.changes[:CHANGES_DISPLAY_CAP]
         table = QTableWidget(len(shown), len(CHANGES_HEADERS))
         table.setHorizontalHeaderLabels(CHANGES_HEADERS)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
 
@@ -552,8 +552,8 @@ class HardcodeDataDialog(QDialog):
             self, "Confirm Changes",
             "Apply all previewed changes?\n\n" + "\n".join(lines)
             + "\n\nThis modifies your data and cannot be easily undone.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply != QMessageBox.Yes:
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         total_changes = sum(len(r.changes) for r in reports.values())

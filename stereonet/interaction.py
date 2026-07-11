@@ -241,7 +241,7 @@ class StereonetPickHandler:
         # Qt's live modifier state is reliable across matplotlib versions;
         # mpl's MouseEvent.key needs canvas keyboard focus on older releases
         try:
-            if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
                 return True
         except Exception:
             pass
@@ -253,7 +253,7 @@ class StereonetPickHandler:
     @staticmethod
     def _is_shift(mouseevent):
         try:
-            if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
                 return True
         except Exception:
             pass

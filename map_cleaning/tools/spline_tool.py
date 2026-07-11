@@ -120,7 +120,7 @@ class SplineTool(QgsMapToolEdit):
         """Handle mouse click to add/finish digitizing points"""
         point = self.toMapCoordinates(event.pos())
 
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             # try to snap to a feature
             result = self.snapping_utils.snapToMap(point)
             if result.isValid():
@@ -146,14 +146,14 @@ class SplineTool(QgsMapToolEdit):
             self.canvas.refresh()
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Escape:
+        if e.key() == Qt.Key.Key_Escape:
             # Cancel the current digitizing session without a deactivate()/
             # activate() round-trip — tearing the tool down just to cancel
             # risks leaving the rubber band in a broken state.
             self.reset_points()
             self.reset_rubber_band()
             self.canvas.refresh()
-        elif e.key() == Qt.Key_Backspace:
+        elif e.key() == Qt.Key.Key_Backspace:
             if self.points:
                 self.points.pop()
 
@@ -234,7 +234,7 @@ class SplineTool(QgsMapToolEdit):
                 layer.endEditCommand()
             else:
                 dlg = self.iface.getFeatureForm(layer, f)
-                if dlg.exec_():
+                if dlg.exec():
                     layer.endEditCommand()
                 else:
                     layer.destroyEditCommand()

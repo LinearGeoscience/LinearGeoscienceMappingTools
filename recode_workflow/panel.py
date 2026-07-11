@@ -37,7 +37,7 @@ class RecodeWorkflowWizard(QDialog):
     def __init__(self, iface, parent=None):
         super().__init__(parent)
         self.iface = iface
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._setup_ui()
 
     # ─── main layout ──────────────────────────────────────────────
@@ -49,7 +49,7 @@ class RecodeWorkflowWizard(QDialog):
         w, h = s.dialog_size(1000, 700)
         self.setMinimumSize(w, h)
         self.setStyleSheet(theme.dialog_style())
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -80,7 +80,7 @@ class RecodeWorkflowWizard(QDialog):
         rl.addWidget(self._page_subtitle)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(theme.separator_style())
         rl.addWidget(sep)
 
@@ -130,8 +130,8 @@ class RecodeWorkflowWizard(QDialog):
         scroll.setMinimumWidth(s.dimension(220))
         scroll.setMaximumWidth(s.dimension(260))
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet(theme.sidebar_style() + "\n" + theme.scrollbar_style())
 
         sidebar = QWidget()
@@ -160,7 +160,7 @@ class RecodeWorkflowWizard(QDialog):
         lay.addStretch()
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(theme.separator_style())
         lay.addWidget(sep)
 
@@ -180,14 +180,14 @@ class RecodeWorkflowWizard(QDialog):
 
         self._back_btn = QPushButton("\u2190 Back")
         self._back_btn.setStyleSheet(theme.action_button_style(primary=False))
-        self._back_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._back_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._back_btn.setMinimumHeight(s.dimension(36))
         self._back_btn.setFixedWidth(s.dimension(100))
         self._back_btn.clicked.connect(self._on_back)
 
         self._next_btn = QPushButton("Next \u2192")
         self._next_btn.setStyleSheet(theme.action_button_style(primary=True))
-        self._next_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._next_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._next_btn.setMinimumHeight(s.dimension(36))
         self._next_btn.setFixedWidth(s.dimension(100))
         self._next_btn.clicked.connect(self._on_next)

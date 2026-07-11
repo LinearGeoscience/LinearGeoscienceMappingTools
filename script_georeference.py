@@ -143,7 +143,7 @@ class GeoreferenceLayerDialog(QDialog):
             warn.setStyleSheet("color: red;")
             layout.addWidget(warn)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -198,7 +198,7 @@ def select_geologist_folders(geologist_name_map):
     """Displays a dialog to select folders for each geologist and returns a map of geologist codes to folder paths."""
     app = QApplication.instance() or QApplication(sys.argv)
     dialog = GeologistFolderDialog(geologist_name_map)
-    if dialog.exec() == QDialog.Accepted:
+    if dialog.exec() == QDialog.DialogCode.Accepted:
         return dialog.geologist_folders
     else:
         return {}
@@ -610,7 +610,7 @@ def apply_labels(layer):
 def main():
     # Let the user pick the layers (pre-matched to the standard names)
     dialog = GeoreferenceLayerDialog()
-    if dialog.exec() != QDialog.Accepted:
+    if dialog.exec() != QDialog.DialogCode.Accepted:
         QgsMessageLog.logMessage("Georeferencing cancelled.", 'Linear Geoscience', Qgis.Info)
         return
 

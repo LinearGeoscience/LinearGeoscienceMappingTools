@@ -63,7 +63,7 @@ class EnhancedPreviewDialog(QDialog):
         layout.addWidget(self.tab_widget)
 
         # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -92,7 +92,7 @@ class EnhancedPreviewDialog(QDialog):
         self.stats_table.horizontalHeader().setStretchLastSection(True)
         self.stats_table.setAlternatingRowColors(True)
         self.stats_table.verticalHeader().setVisible(False)
-        self.stats_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.stats_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
         layout.addWidget(self.stats_table)
 
@@ -346,7 +346,7 @@ class EnhancedPreviewDialog(QDialog):
         self.preview_table = QTableWidget()
         self.preview_table.setSortingEnabled(True)
         self.preview_table.setAlternatingRowColors(True)
-        self.preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.preview_table)
 
         widget.setLayout(layout)
@@ -481,7 +481,7 @@ class EnhancedPreviewDialog(QDialog):
         # Duplicates table
         self.duplicates_table = QTableWidget()
         self.duplicates_table.setAlternatingRowColors(True)
-        self.duplicates_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.duplicates_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.duplicates_table)
 
         widget.setLayout(layout)

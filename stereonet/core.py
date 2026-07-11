@@ -365,7 +365,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_selection.topLevelItemCount()):
             item = self.category_tree_selection.topLevelItem(i)
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Selection] All categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_all_categories_selection(self):
@@ -374,7 +374,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_selection.topLevelItemCount()):
             item = self.category_tree_selection.topLevelItem(i)
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Selection] All categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     def select_highlighted_categories_selection(self):
@@ -382,7 +382,7 @@ class StereonetPluginCore:
         if not self.category_tree_selection:
             return
         for item in self.category_tree_selection.selectedItems():
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Selection] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_highlighted_categories_selection(self):
@@ -390,7 +390,7 @@ class StereonetPluginCore:
         if not self.category_tree_selection:
             return
         for item in self.category_tree_selection.selectedItems():
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Selection] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     def select_all_categories_domains(self):
@@ -399,7 +399,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_domains.topLevelItemCount()):
             item = self.category_tree_domains.topLevelItem(i)
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Domains] All categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_all_categories_domains(self):
@@ -408,7 +408,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_domains.topLevelItemCount()):
             item = self.category_tree_domains.topLevelItem(i)
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Domains] All categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     def select_highlighted_categories_domains(self):
@@ -416,7 +416,7 @@ class StereonetPluginCore:
         if not self.category_tree_domains:
             return
         for item in self.category_tree_domains.selectedItems():
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Domains] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_highlighted_categories_domains(self):
@@ -424,7 +424,7 @@ class StereonetPluginCore:
         if not self.category_tree_domains:
             return
         for item in self.category_tree_domains.selectedItems():
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Domains] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     def select_all_categories_live_view(self):
@@ -433,7 +433,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_live_view.topLevelItemCount()):
             item = self.category_tree_live_view.topLevelItem(i)
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Live View] All categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_all_categories_live_view(self):
@@ -442,7 +442,7 @@ class StereonetPluginCore:
             return
         for i in range(self.category_tree_live_view.topLevelItemCount()):
             item = self.category_tree_live_view.topLevelItem(i)
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Live View] All categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     def select_highlighted_categories_live_view(self):
@@ -450,7 +450,7 @@ class StereonetPluginCore:
         if not self.category_tree_live_view:
             return
         for item in self.category_tree_live_view.selectedItems():
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
         QgsMessageLog.logMessage("[Live View] Highlighted categories selected.", 'Linear Geoscience', Qgis.Info)
 
     def deselect_highlighted_categories_live_view(self):
@@ -458,7 +458,7 @@ class StereonetPluginCore:
         if not self.category_tree_live_view:
             return
         for item in self.category_tree_live_view.selectedItems():
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
         QgsMessageLog.logMessage("[Live View] Highlighted categories deselected.", 'Linear Geoscience', Qgis.Info)
 
     # =========================================================================
@@ -488,7 +488,7 @@ class StereonetPluginCore:
         scroll_plot = QScrollArea()
         scroll_plot.setWidget(self.plot_widget)
         scroll_plot.setWidgetResizable(True)
-        scroll_plot.setFrameShape(QFrame.NoFrame)  # Remove frame for cleaner look
+        scroll_plot.setFrameShape(QFrame.Shape.NoFrame)  # Remove frame for cleaner look
         self.tab_widget.addTab(scroll_plot, "Plot")
 
         # 1) Categories Tab (now second)
@@ -497,7 +497,7 @@ class StereonetPluginCore:
         scroll_categories = QScrollArea()
         scroll_categories.setWidget(self.categories_widget)
         scroll_categories.setWidgetResizable(True)
-        scroll_categories.setFrameShape(QFrame.NoFrame)
+        scroll_categories.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_widget.addTab(scroll_categories, "Categories")
 
         # 2) Datasets Tab (now third, renamed from "Datasets & Config" to "Datasets")
@@ -506,7 +506,7 @@ class StereonetPluginCore:
         scroll_datasets = QScrollArea()
         scroll_datasets.setWidget(self.datasets_widget)
         scroll_datasets.setWidgetResizable(True)
-        scroll_datasets.setFrameShape(QFrame.NoFrame)
+        scroll_datasets.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_widget.addTab(scroll_datasets, "Datasets")  # Renamed to just "Datasets"
 
         # 3) Coding Tab (fourth position) - Enhanced version
@@ -515,7 +515,7 @@ class StereonetPluginCore:
         scroll_coding = QScrollArea()
         scroll_coding.setWidget(self.coding_widget)
         scroll_coding.setWidgetResizable(True)
-        scroll_coding.setFrameShape(QFrame.NoFrame)
+        scroll_coding.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_widget.addTab(scroll_coding, "Coding")
 
         # 4) Colors Tab (fifth position)
@@ -524,7 +524,7 @@ class StereonetPluginCore:
         scroll_colors = QScrollArea()
         scroll_colors.setWidget(self.colors_widget)
         scroll_colors.setWidgetResizable(True)
-        scroll_colors.setFrameShape(QFrame.NoFrame)
+        scroll_colors.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_widget.addTab(scroll_colors, "Colors")
 
         # 5) Export Tab (sixth position)
@@ -533,11 +533,11 @@ class StereonetPluginCore:
         scroll_export = QScrollArea()
         scroll_export.setWidget(self.export_widget)
         scroll_export.setWidgetResizable(True)
-        scroll_export.setFrameShape(QFrame.NoFrame)
+        scroll_export.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_widget.addTab(scroll_export, "Export")
 
         self.dock.setWidget(self.tab_widget)
-        self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dock)
+        self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
 
         # Set up backward compatibility references
         self.auto_layer_combo = self.dataset_configs[0]["layer_combo"]
@@ -752,20 +752,20 @@ class StereonetPluginCore:
                     font-weight: bold;
                     min-width: 80px;
                 """)
-                widget.setCursor(Qt.PointingHandCursor)
+                widget.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Set cursor for interactive elements
         for button in self.dock.findChildren(QPushButton):
-            button.setCursor(Qt.PointingHandCursor)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
 
         for combo in self.dock.findChildren(QComboBox):
-            combo.setCursor(Qt.PointingHandCursor)
+            combo.setCursor(Qt.CursorShape.PointingHandCursor)
 
         for checkbox in self.dock.findChildren(QCheckBox):
-            checkbox.setCursor(Qt.PointingHandCursor)
+            checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
 
         for radio in self.dock.findChildren(QRadioButton):
-            radio.setCursor(Qt.PointingHandCursor)
+            radio.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Make plot area stand out
         if hasattr(self, 'plot_label') and self.plot_label:
@@ -883,7 +883,7 @@ class StereonetPluginCore:
             border: 1px solid #dee2e6;
         """)
         dataset1_color_preview.setFixedSize(20, 20)
-        dataset1_color_preview.setFrameShape(QFrame.Box)
+        dataset1_color_preview.setFrameShape(QFrame.Shape.Box)
 
         dataset1_controls_layout = QHBoxLayout()  # Layout for basic controls
         dataset1_controls_layout.setSpacing(10)
@@ -902,7 +902,7 @@ class StereonetPluginCore:
         config1_form_layout = QFormLayout(config1_group)  # Use Form layout for fields
         config1_form_layout.setContentsMargins(10, 15, 10, 10)
         config1_form_layout.setSpacing(10)
-        config1_form_layout.setLabelAlignment(Qt.AlignRight)
+        config1_form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Custom Layer selection with sources
         self.dataset_configs[0]["layer_combo"] = self.create_layer_combo_with_source(0)
@@ -973,7 +973,7 @@ class StereonetPluginCore:
             border: 1px solid #dee2e6;
         """)
         dataset2_color_preview.setFixedSize(20, 20)
-        dataset2_color_preview.setFrameShape(QFrame.Box)
+        dataset2_color_preview.setFrameShape(QFrame.Shape.Box)
 
         dataset2_controls_layout = QHBoxLayout()  # Layout for basic controls
         dataset2_controls_layout.setSpacing(10)
@@ -992,7 +992,7 @@ class StereonetPluginCore:
         config2_form_layout = QFormLayout(config2_group)  # Use Form layout for fields
         config2_form_layout.setContentsMargins(10, 15, 10, 10)
         config2_form_layout.setSpacing(10)
-        config2_form_layout.setLabelAlignment(Qt.AlignRight)
+        config2_form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         # Custom Layer selection with sources
         self.dataset_configs[1]["layer_combo"] = self.create_layer_combo_with_source(1)
@@ -1239,7 +1239,7 @@ class StereonetPluginCore:
         self.contour_plane_checkbox.stateChanged.connect(self.request_plot_update)
         self.mean_plane_checkbox.stateChanged.connect(self.request_plot_update)
         self.mean_plane_checkbox.stateChanged.connect(
-            lambda state: self.mean_plane_type_combo.setEnabled(state == Qt.Checked)
+            lambda state: self.mean_plane_type_combo.setEnabled(state == Qt.CheckState.Checked)
         )
         self.mean_plane_type_combo.currentIndexChanged.connect(self.request_plot_update)
         self.best_fit_line_checkbox.stateChanged.connect(self.request_plot_update)
@@ -1288,14 +1288,14 @@ class StereonetPluginCore:
         # pick events select the source features in QGIS) stacked with a
         # QLabel that remains the message surface for empty/info states
         self.plot_label = QLabel("Plot will appear here")
-        self.plot_label.setAlignment(Qt.AlignCenter)
+        self.plot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.plot_label.setMinimumHeight(400)  # Ensure enough space for plot
-        self.plot_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plot_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.plot_figure = Figure(figsize=(7, 5), dpi=100)
         self.plot_canvas = FigureCanvasQTAgg(self.plot_figure)
         self.plot_canvas.setMinimumHeight(400)
-        self.plot_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plot_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.plot_stack = QStackedWidget()
         self.plot_stack.addWidget(self.plot_label)   # page 0: messages
@@ -1355,7 +1355,7 @@ class StereonetPluginCore:
         # "Selection" sub-tab
         self.category_tree_selection = QTreeWidget()
         self._setup_category_tree_columns(self.category_tree_selection)
-        self.category_tree_selection.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.category_tree_selection.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.category_tree_selection.setAlternatingRowColors(True)
 
         selection_widget = QWidget()
@@ -1402,10 +1402,10 @@ class StereonetPluginCore:
         # "Domains" sub-tab
         self.category_tree_domains = QTreeWidget()
         self._setup_category_tree_columns(self.category_tree_domains)
-        self.category_tree_domains.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.category_tree_domains.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.category_tree_domains.setAlternatingRowColors(True)
         self.category_tree_domains.setSortingEnabled(True)  # Enable sorting
-        self.category_tree_domains.sortByColumn(0, Qt.AscendingOrder)  # Default sort by first column
+        self.category_tree_domains.sortByColumn(0, Qt.SortOrder.AscendingOrder)  # Default sort by first column
 
         domains_widget = QWidget()
         dom_layout = QVBoxLayout(domains_widget)
@@ -1468,7 +1468,7 @@ class StereonetPluginCore:
         # NEW: "Live View" sub-tab
         self.category_tree_live_view = QTreeWidget()
         self._setup_category_tree_columns(self.category_tree_live_view)
-        self.category_tree_live_view.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.category_tree_live_view.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.category_tree_live_view.setAlternatingRowColors(True)
 
         live_view_widget = QWidget()
@@ -1547,7 +1547,7 @@ class StereonetPluginCore:
         # Label to show count of displayed codes
         self.code_count_label = QLabel("No codes loaded")
         self.code_count_label.setStyleSheet("color: #7f8c8d;")
-        options_layout.addWidget(self.code_count_label, alignment=Qt.AlignRight)
+        options_layout.addWidget(self.code_count_label, alignment=Qt.AlignmentFlag.AlignRight)
 
         layout.addLayout(options_layout)
 
@@ -1589,8 +1589,8 @@ class StereonetPluginCore:
 
         # Add separator
         separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
         separator.setStyleSheet("background-color: #dee2e6; margin: 10px 0;")
         layout.addWidget(separator)
 
@@ -1601,14 +1601,14 @@ class StereonetPluginCore:
         self.coding_table.setAlternatingRowColors(True)
 
         # Enable multiple selection
-        self.coding_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.coding_table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.coding_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.coding_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
 
         # Set column widths
-        self.coding_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # Code column stretches
-        self.coding_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Dataset
-        self.coding_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Planar
-        self.coding_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Linear
+        self.coding_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Code column stretches
+        self.coding_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Dataset
+        self.coding_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Planar
+        self.coding_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Linear
 
         layout.addWidget(self.coding_table)
 
@@ -1682,7 +1682,7 @@ class StereonetPluginCore:
         header_layout = QHBoxLayout()
         
         title = QLabel("Structure Color Configuration")
-        title.setFont(QFont("Arial", 12, QFont.Bold))
+        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         header_layout.addWidget(title)
         
         header_layout.addStretch()
@@ -1754,7 +1754,7 @@ class StereonetPluginCore:
                     # Code label
                     code_label = QLabel(code)
                     code_label.setMinimumWidth(50)
-                    code_label.setFont(QFont("Courier", 10, QFont.Bold))
+                    code_label.setFont(QFont("Courier", 10, QFont.Weight.Bold))
                     color_layout.addWidget(code_label)
                     
                     # Structure type indicator
@@ -1836,7 +1836,7 @@ class StereonetPluginCore:
 
             name_label = QLabel(group_name)
             name_label.setMinimumWidth(50)
-            name_label.setFont(QFont("Courier", 10, QFont.Bold))
+            name_label.setFont(QFont("Courier", 10, QFont.Weight.Bold))
             color_layout.addWidget(name_label)
 
             members_label = QLabel("(" + ", ".join(members) + ")")
@@ -1903,11 +1903,11 @@ class StereonetPluginCore:
             self.colors_widget,
             "Reset Colors",
             "Are you sure you want to reset all colors to their default values?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             self.structure_colors = DEFAULT_STRUCTURE_COLORS.copy()
 
             # Re-seed code-group colours so groups aren't orphaned by the reset
@@ -2050,10 +2050,10 @@ class StereonetPluginCore:
         # parent's analysis toggles would always read Unchecked. The
         # parent<->child column-0 sync is done manually in
         # _on_category_tree_item_changed instead.
-        item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable
-                      | Qt.ItemIsEnabled)
-        item.setCheckState(0, Qt.Unchecked)
-        item.setData(0, Qt.UserRole, user_data)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable
+                      | Qt.ItemFlag.ItemIsEnabled)
+        item.setCheckState(0, Qt.CheckState.Unchecked)
+        item.setData(0, Qt.ItemDataRole.UserRole, user_data)
         saved = None
         if saved_analysis is not None:
             saved = saved_analysis.get(
@@ -2075,15 +2075,15 @@ class StereonetPluginCore:
         return item
 
 
-    def _add_group_child_item(self, parent_item, label, user_data, checked=Qt.Unchecked):
+    def _add_group_child_item(self, parent_item, label, user_data, checked=Qt.CheckState.Unchecked):
         """Create a member-code child under a group parent. Children carry the
         legacy tuple UserRole, only a name checkbox (no analysis columns, no
         plot-mode widget)."""
         child = QTreeWidgetItem(parent_item)
         child.setText(0, label)
-        child.setFlags(child.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable
-                       | Qt.ItemIsEnabled)
-        child.setData(0, Qt.UserRole, user_data)
+        child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable
+                       | Qt.ItemFlag.ItemIsEnabled)
+        child.setData(0, Qt.ItemDataRole.UserRole, user_data)
         child.setCheckState(0, checked)
         return child
 
@@ -2131,7 +2131,7 @@ class StereonetPluginCore:
         # and group children; group parents are excluded)
         selected_codes = []
         for sel in tree.selectedItems():
-            code = self._base_code_from_item_data(sel.data(0, Qt.UserRole))
+            code = self._base_code_from_item_data(sel.data(0, Qt.ItemDataRole.UserRole))
             if code and code not in selected_codes:
                 selected_codes.append(code)
 
@@ -2142,7 +2142,7 @@ class StereonetPluginCore:
             menu.addAction(label, lambda: self._create_group_from_codes(tree, selected_codes))
 
         if clicked is not None:
-            cdata = clicked.data(0, Qt.UserRole)
+            cdata = clicked.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(cdata, dict) and cdata.get("is_group"):
                 group_name = cdata["group"]
                 if not menu.isEmpty():
@@ -2153,7 +2153,7 @@ class StereonetPluginCore:
                                lambda: self._ungroup(group_name))
             else:
                 parent = clicked.parent()
-                pdata = parent.data(0, Qt.UserRole) if parent is not None else None
+                pdata = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else None
                 if isinstance(pdata, dict) and pdata.get("is_group"):
                     code = self._base_code_from_item_data(cdata)
                     if code:
@@ -2373,7 +2373,7 @@ class StereonetPluginCore:
         filter_layout.addWidget(QLabel("Select structure types to include:"))
         self.export_structure_tree = QTreeWidget()
         self.export_structure_tree.setHeaderLabels(["Structure Type", "Type"])
-        self.export_structure_tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.export_structure_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.export_structure_tree.setAlternatingRowColors(True)
         filter_layout.addWidget(self.export_structure_tree)
 
@@ -2762,7 +2762,7 @@ class StereonetPluginCore:
 
         def try_set_field(combo, field_prefs, field_key):
             for field_name in field_prefs:
-                index = combo.findText(field_name, Qt.MatchFixedString)
+                index = combo.findText(field_name, Qt.MatchFlag.MatchFixedString)
                 if index >= 0:
                     combo.blockSignals(True)
                     combo.setCurrentIndex(index)
@@ -2956,7 +2956,7 @@ class StereonetPluginCore:
                 planar_cell = QWidget()
                 planar_layout = QHBoxLayout(planar_cell)
                 planar_layout.setContentsMargins(0, 0, 0, 0)
-                planar_layout.setAlignment(Qt.AlignCenter)
+                planar_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 planar_chk = QCheckBox()
 
                 # Set checked state based on current classification
@@ -2970,7 +2970,7 @@ class StereonetPluginCore:
                 linear_cell = QWidget()
                 linear_layout = QHBoxLayout(linear_cell)
                 linear_layout.setContentsMargins(0, 0, 0, 0)
-                linear_layout.setAlignment(Qt.AlignCenter)
+                linear_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 linear_chk = QCheckBox()
 
                 # Set checked state based on current classification
@@ -3110,13 +3110,13 @@ class StereonetPluginCore:
         for st, struct_type in known + unknown:
             item = QTreeWidgetItem(self.export_structure_tree)
             item.setText(0, st)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
 
             if struct_type:
-                item.setCheckState(0, Qt.Checked)  # Default to checked
+                item.setCheckState(0, Qt.CheckState.Checked)  # Default to checked
                 type_label = QLabel(f"({struct_type})")
             else:
-                item.setCheckState(0, Qt.Unchecked)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
                 item.setForeground(0, QBrush(QColor("#d62728")))
                 item.setToolTip(0, "Not classified as planar or linear — "
                                    "classify it in the Coding tab to export")
@@ -3632,7 +3632,7 @@ class StereonetPluginCore:
         header.sectionClicked.connect(
             lambda col, t=tree: self._on_analysis_header_clicked(t, col))
         # Right-click menu for grouping codes into combined categories
-        tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tree.customContextMenuRequested.connect(
             lambda pos, t=tree: self._show_category_tree_menu(t, pos))
 
@@ -3644,7 +3644,7 @@ class StereonetPluginCore:
             return states
         for i in range(tree.topLevelItemCount()):
             item = tree.topLevelItem(i)
-            data = item.data(0, Qt.UserRole)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(data, tuple) and len(data) >= 2:
                 states[(data[0], data[1])] = tuple(
                     item.checkState(col) for col in ANALYSIS_COLUMNS
@@ -3666,7 +3666,7 @@ class StereonetPluginCore:
         was_blocked = tree.blockSignals(True) if tree is not None else False
         try:
             for idx, col in enumerate(ANALYSIS_COLUMNS):
-                state = saved_states[idx] if saved_states is not None else Qt.Checked
+                state = saved_states[idx] if saved_states is not None else Qt.CheckState.Checked
                 item.setCheckState(col, state)
         finally:
             if tree is not None:
@@ -3681,11 +3681,11 @@ class StereonetPluginCore:
             tree = item.treeWidget()
             if tree is None:
                 return
-            data = item.data(0, Qt.UserRole)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(data, dict) and data.get("is_group"):
                 # Parent toggled -> drive all children
                 state = item.checkState(0)
-                if state != Qt.PartiallyChecked:
+                if state != Qt.CheckState.PartiallyChecked:
                     was_blocked = tree.blockSignals(True)
                     try:
                         for j in range(item.childCount()):
@@ -3695,17 +3695,17 @@ class StereonetPluginCore:
                 return
             parent = item.parent()
             if parent is not None:
-                pdata = parent.data(0, Qt.UserRole)
+                pdata = parent.data(0, Qt.ItemDataRole.UserRole)
                 if isinstance(pdata, dict) and pdata.get("is_group"):
                     # Child toggled -> recompute the parent's tri-state
                     states = {parent.child(j).checkState(0)
                               for j in range(parent.childCount())}
-                    if states == {Qt.Checked}:
-                        new_state = Qt.Checked
-                    elif states == {Qt.Unchecked}:
-                        new_state = Qt.Unchecked
+                    if states == {Qt.CheckState.Checked}:
+                        new_state = Qt.CheckState.Checked
+                    elif states == {Qt.CheckState.Unchecked}:
+                        new_state = Qt.CheckState.Unchecked
                     else:
-                        new_state = Qt.PartiallyChecked
+                        new_state = Qt.CheckState.PartiallyChecked
                     was_blocked = tree.blockSignals(True)
                     try:
                         parent.setCheckState(0, new_state)
@@ -3724,10 +3724,10 @@ class StereonetPluginCore:
         if count == 0:
             return
         any_unchecked = any(
-            tree.topLevelItem(i).checkState(column) != Qt.Checked
+            tree.topLevelItem(i).checkState(column) != Qt.CheckState.Checked
             for i in range(count)
         )
-        new_state = Qt.Checked if any_unchecked else Qt.Unchecked
+        new_state = Qt.CheckState.Checked if any_unchecked else Qt.CheckState.Unchecked
         was_blocked = tree.blockSignals(True)
         try:
             for i in range(count):
@@ -3800,10 +3800,10 @@ class StereonetPluginCore:
                 # Add dataset name to differentiate (omitted in combined mode)
                 item_text = st if ds_name is None else f"{st} [{ds_name}]"
                 item.setText(0, item_text)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                item.setCheckState(0, Qt.Unchecked)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
                 # Store both code and dataset index
-                item.setData(0, Qt.UserRole, (st, dataset_idx))
+                item.setData(0, Qt.ItemDataRole.UserRole, (st, dataset_idx))
                 self._init_item_analysis_columns(item, saved_analysis.get((st, dataset_idx)))
 
                 if struct_type == "plane":
@@ -3906,11 +3906,11 @@ class StereonetPluginCore:
                 # Display the category with format "CODE - DOMAIN (Dataset)"
                 item_text = st
                 item.setText(0, item_text)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                item.setCheckState(0, Qt.Unchecked)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
 
                 # Store full category string, dataset index, and parsed components for sorting
-                item.setData(0, Qt.UserRole, (st, dataset_idx, code, domain, dataset_name))
+                item.setData(0, Qt.ItemDataRole.UserRole, (st, dataset_idx, code, domain, dataset_name))
                 self._init_item_analysis_columns(item, saved_analysis.get((st, dataset_idx)))
 
                 if struct_type == "plane":
@@ -3964,7 +3964,7 @@ class StereonetPluginCore:
         items_data = []
         for i in range(self.category_tree_domains.topLevelItemCount()):
             item = self.category_tree_domains.topLevelItem(i)
-            data = item.data(0, Qt.UserRole)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(data, dict) and data.get("is_group"):
                 # Group parent: capture its own state plus the children
                 widget = self.category_tree_domains.itemWidget(item, 1)
@@ -3974,7 +3974,7 @@ class StereonetPluginCore:
                     child = item.child(j)
                     children.append({
                         'label': child.text(0),
-                        'data': child.data(0, Qt.UserRole),
+                        'data': child.data(0, Qt.ItemDataRole.UserRole),
                         'check_state': child.checkState(0),
                     })
                 items_data.append({
@@ -4041,11 +4041,11 @@ class StereonetPluginCore:
 
             item = QTreeWidgetItem(self.category_tree_domains)
             item.setText(0, item_data['st'])
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
             item.setCheckState(0, item_data['check_state'])
 
             # Store data for future sorting
-            item.setData(0, Qt.UserRole, (
+            item.setData(0, Qt.ItemDataRole.UserRole, (
                 item_data['st'],
                 item_data['dataset_idx'],
                 item_data['code'],
@@ -4228,7 +4228,7 @@ class StereonetPluginCore:
 
         for i in range(self.category_tree_live_view.topLevelItemCount()):
             item = self.category_tree_live_view.topLevelItem(i)
-            data = item.data(0, Qt.UserRole)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(data, tuple):
                 code_str, dataset_idx = data
                 # Store check state
@@ -4248,7 +4248,7 @@ class StereonetPluginCore:
                     current_plot_modes[gkey] = widget.currentText()
                 for j in range(item.childCount()):
                     child = item.child(j)
-                    cdata = child.data(0, Qt.UserRole)
+                    cdata = child.data(0, Qt.ItemDataRole.UserRole)
                     if isinstance(cdata, tuple):
                         current_check_states[(cdata[0], cdata[1])] = child.checkState(0)
 
@@ -4359,7 +4359,7 @@ class StereonetPluginCore:
                 for c in same_type:
                     self._add_group_child_item(
                         parent, c, (c, dataset_idx),
-                        current_check_states.get((c, dataset_idx), Qt.Unchecked))
+                        current_check_states.get((c, dataset_idx), Qt.CheckState.Unchecked))
                 parent.setExpanded(True)
                 any_data = True
 
@@ -4373,16 +4373,16 @@ class StereonetPluginCore:
                 item.setText(0, item_text)
 
                 # Set item properties
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
 
                 # Restore previous check state if it exists, otherwise default to unchecked
                 if (code_str, dataset_idx) in current_check_states:
                     item.setCheckState(0, current_check_states[(code_str, dataset_idx)])
                 else:
-                    item.setCheckState(0, Qt.Unchecked)
+                    item.setCheckState(0, Qt.CheckState.Unchecked)
 
                 # Store both code and dataset index
-                item.setData(0, Qt.UserRole, (code_str, dataset_idx))
+                item.setData(0, Qt.ItemDataRole.UserRole, (code_str, dataset_idx))
                 self._init_item_analysis_columns(item, saved_analysis.get((code_str, dataset_idx)))
 
                 # Create appropriate widget for column 1 based on structure type
@@ -4536,13 +4536,13 @@ class StereonetPluginCore:
             item.setText(0, item_text)
 
             # Set item properties
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
 
             # Start all categories unchecked - user selects what to plot
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
 
             # Store both code and dataset index
-            item.setData(0, Qt.UserRole, (domain_code, dataset_idx))
+            item.setData(0, Qt.ItemDataRole.UserRole, (domain_code, dataset_idx))
             self._init_item_analysis_columns(item, saved_analysis.get((domain_code, dataset_idx)))
 
             # Create appropriate widget for column 1 based on structure type
@@ -4745,19 +4745,19 @@ class StereonetPluginCore:
         analysis_flags = {}
         for i in range(tree_widget.topLevelItemCount()):
             item = tree_widget.topLevelItem(i)
-            data = item.data(0, Qt.UserRole)
+            data = item.data(0, Qt.ItemDataRole.UserRole)
 
             if isinstance(data, dict) and data.get("is_group"):
                 # Group parent: merge the checked children's data into one
                 # plotted category. PartiallyChecked parents must pass.
-                if item.checkState(0) == Qt.Unchecked:
+                if item.checkState(0) == Qt.CheckState.Unchecked:
                     continue
                 merged = []
                 for j in range(item.childCount()):
                     child = item.child(j)
-                    if child.checkState(0) != Qt.Checked:
+                    if child.checkState(0) != Qt.CheckState.Checked:
                         continue
-                    cdata = child.data(0, Qt.UserRole)
+                    cdata = child.data(0, Qt.ItemDataRole.UserRole)
                     if combined:
                         merged.extend(self._combined_category_data(subtype_dict, cdata[0]))
                     else:
@@ -4775,13 +4775,13 @@ class StereonetPluginCore:
                 plotted_data.append((code_str, struct_type, merged, plot_mode,
                                      dataset_idx, self.dataset_configs[dataset_idx]["color"]))
                 analysis_flags[(code_str, dataset_idx)] = (
-                    item.checkState(COL_BF) == Qt.Checked,
-                    item.checkState(COL_CT) == Qt.Checked,
-                    item.checkState(COL_MN) == Qt.Checked,
+                    item.checkState(COL_BF) == Qt.CheckState.Checked,
+                    item.checkState(COL_CT) == Qt.CheckState.Checked,
+                    item.checkState(COL_MN) == Qt.CheckState.Checked,
                 )
                 continue
 
-            if item.checkState(0) == Qt.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked:
                 # Get both code and dataset index
                 if isinstance(data, tuple):
                     if len(data) >= 5:
@@ -4829,9 +4829,9 @@ class StereonetPluginCore:
 
                 # Per-category analysis toggles (BF/Ct/Mn tree columns)
                 analysis_flags[(code_str, dataset_idx)] = (
-                    item.checkState(COL_BF) == Qt.Checked,
-                    item.checkState(COL_CT) == Qt.Checked,
-                    item.checkState(COL_MN) == Qt.Checked,
+                    item.checkState(COL_BF) == Qt.CheckState.Checked,
+                    item.checkState(COL_CT) == Qt.CheckState.Checked,
+                    item.checkState(COL_MN) == Qt.CheckState.Checked,
                 )
 
         if not plotted_data:
@@ -5752,7 +5752,7 @@ class StereonetPluginCore:
 
         text_edit = QTextEdit()
         text_edit.setPlainText(text)
-        text_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        text_edit.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(text_edit)
 
         button_layout = QHBoxLayout()
@@ -5844,7 +5844,7 @@ class StereonetPluginCore:
         selected_structures = []
         for i in range(self.export_structure_tree.topLevelItemCount()):
             item = self.export_structure_tree.topLevelItem(i)
-            if item.checkState(0) == Qt.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked:
                 selected_structures.append(item.text(0))
 
         if not selected_structures:
@@ -6086,7 +6086,7 @@ class StereonetPluginCore:
         for i in range(self.leapfrog_fields_list.count()):
             item = self.leapfrog_fields_list.item(i)
             previously_seen.add(item.text())
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 previously_checked.add(item.text())
 
         available = set()
@@ -6105,11 +6105,11 @@ class StereonetPluginCore:
         default_checked = ('comments', 'comment', 'photoid', 'photo_id')
         for name in sorted(available, key=str.lower):
             item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             if name in previously_seen:
-                state = Qt.Checked if name in previously_checked else Qt.Unchecked
+                state = Qt.CheckState.Checked if name in previously_checked else Qt.CheckState.Unchecked
             else:
-                state = Qt.Checked if name.lower() in default_checked else Qt.Unchecked
+                state = Qt.CheckState.Checked if name.lower() in default_checked else Qt.CheckState.Unchecked
             item.setCheckState(state)
             self.leapfrog_fields_list.addItem(item)
 
@@ -6260,7 +6260,7 @@ class StereonetPluginCore:
         selected_structures = set()
         for i in range(self.export_structure_tree.topLevelItemCount()):
             item = self.export_structure_tree.topLevelItem(i)
-            if item.checkState(0) == Qt.Checked:
+            if item.checkState(0) == Qt.CheckState.Checked:
                 selected_structures.add(item.text(0))
         if not selected_structures:
             QMessageBox.warning(self.iface.mainWindow(), "Export Error",
@@ -6289,7 +6289,7 @@ class StereonetPluginCore:
         extra_fields = []
         for i in range(self.leapfrog_fields_list.count()):
             item = self.leapfrog_fields_list.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 extra_fields.append(item.text())
         want_group_col = self.leapfrog_group_col_checkbox.isChecked()
 
@@ -6401,7 +6401,7 @@ class StereonetPluginCore:
 
             pixmap = QPixmap()
             pixmap.loadFromData(buf.getvalue(), 'PNG')
-            QApplication.clipboard().setPixmap(pixmap, QClipboard.Clipboard)
+            QApplication.clipboard().setPixmap(pixmap, QClipboard.Mode.Clipboard)
             return
 
         settings = self._collect_render_settings('clipboard')
@@ -6433,12 +6433,12 @@ class StereonetPluginCore:
             # Use QImage for proper alpha channel handling
             image = QImage()
             image.loadFromData(buf.getvalue(), 'PNG')
-            QApplication.clipboard().setImage(image, QClipboard.Clipboard)
+            QApplication.clipboard().setImage(image, QClipboard.Mode.Clipboard)
             QgsMessageLog.logMessage("High-res image (300 dpi) with transparent background copied to clipboard.", 'Linear Geoscience', Qgis.Info)
         else:
             pixmap = QPixmap()
             pixmap.loadFromData(buf.getvalue(), 'PNG')
-            QApplication.clipboard().setPixmap(pixmap, QClipboard.Clipboard)
+            QApplication.clipboard().setPixmap(pixmap, QClipboard.Mode.Clipboard)
             QgsMessageLog.logMessage("High-res image (300 dpi) copied to clipboard.", 'Linear Geoscience', Qgis.Info)
 
 
@@ -6465,7 +6465,7 @@ class StereonetPluginCore:
 
     def toggle_live_view_mode(self, state):
         """Enable/disable live view mode and set up map canvas monitoring"""
-        self.live_view_enabled = (state == Qt.Checked)
+        self.live_view_enabled = (state == Qt.CheckState.Checked)
 
         if self.live_view_enabled:
             QgsMessageLog.logMessage("Live View mode enabled", 'Linear Geoscience', Qgis.Info)
@@ -6531,13 +6531,13 @@ class StereonetPluginCore:
         sender = self.sender()
 
         # Ensure only one mode is active at a time
-        if sender == self.live_view_by_extent_checkbox and state == Qt.Checked:
+        if sender == self.live_view_by_extent_checkbox and state == Qt.CheckState.Checked:
             self.live_view_by_selection_checkbox.blockSignals(True)
             self.live_view_by_selection_checkbox.setChecked(False)
             self.live_view_by_selection_checkbox.blockSignals(False)
             QgsMessageLog.logMessage("Live View mode: By Map Extent", 'Linear Geoscience', Qgis.Info)
 
-        elif sender == self.live_view_by_selection_checkbox and state == Qt.Checked:
+        elif sender == self.live_view_by_selection_checkbox and state == Qt.CheckState.Checked:
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(False)
             self.live_view_by_extent_checkbox.blockSignals(False)
@@ -6611,7 +6611,7 @@ class StereonetPluginCore:
         if not self.live_view_enabled:
             return
 
-        if state == Qt.Checked:
+        if state == Qt.CheckState.Checked:
             # If extent mode is checked, uncheck selection mode
             self.live_view_by_selection_checkbox.blockSignals(True)
             self.live_view_by_selection_checkbox.setChecked(False)
@@ -6638,7 +6638,7 @@ class StereonetPluginCore:
         if not self.live_view_enabled:
             return
 
-        if state == Qt.Checked:
+        if state == Qt.CheckState.Checked:
             # If selection mode is checked, uncheck extent mode
             self.live_view_by_extent_checkbox.blockSignals(True)
             self.live_view_by_extent_checkbox.setChecked(False)
@@ -6665,7 +6665,7 @@ class StereonetPluginCore:
         if not self.live_view_enabled:
             return
 
-        if state == Qt.Checked:
+        if state == Qt.CheckState.Checked:
             QgsMessageLog.logMessage("Live View mode: By Domain", 'Linear Geoscience', Qgis.Info)
 
             # Rebuild category tree with domain categories
@@ -6731,15 +6731,15 @@ class StereonetPluginCore:
         if self.category_tree_live_view:
             for i in range(self.category_tree_live_view.topLevelItemCount()):
                 item = self.category_tree_live_view.topLevelItem(i)
-                data = item.data(0, Qt.UserRole)
+                data = item.data(0, Qt.ItemDataRole.UserRole)
                 if isinstance(data, dict) and data.get("is_group"):
                     for j in range(item.childCount()):
                         child = item.child(j)
-                        cdata = child.data(0, Qt.UserRole)
-                        if child.checkState(0) == Qt.Checked and isinstance(cdata, tuple):
+                        cdata = child.data(0, Qt.ItemDataRole.UserRole)
+                        if child.checkState(0) == Qt.CheckState.Checked and isinstance(cdata, tuple):
                             checked_categories.append((cdata[0], cdata[1]))
                             QgsMessageLog.logMessage(f"  Checked category: '{cdata[0]}' [Dataset {cdata[1] + 1}] (group '{data['group']}')", 'Linear Geoscience', Qgis.Info)
-                elif item.checkState(0) == Qt.Checked:
+                elif item.checkState(0) == Qt.CheckState.Checked:
                     if isinstance(data, tuple):
                         code_str, dataset_idx = data
                         checked_categories.append((code_str, dataset_idx))
@@ -7572,9 +7572,9 @@ class StereonetPluginCore:
                 category_tree = self.category_tree_selection
                 for i in range(category_tree.topLevelItemCount()):
                     item = category_tree.topLevelItem(i)
-                    if item.checkState(0) == Qt.Checked:
+                    if item.checkState(0) == Qt.CheckState.Checked:
                         # Get both code and dataset index
-                        data = item.data(0, Qt.UserRole)
+                        data = item.data(0, Qt.ItemDataRole.UserRole)
                         if isinstance(data, tuple):
                             code_str, item_dataset_idx = data
                         else:
@@ -7594,9 +7594,9 @@ class StereonetPluginCore:
                 domain_tree = self.category_tree_domains
                 for i in range(domain_tree.topLevelItemCount()):
                     item = domain_tree.topLevelItem(i)
-                    if item.checkState(0) == Qt.Checked:
+                    if item.checkState(0) == Qt.CheckState.Checked:
                         # Get both code and dataset index
-                        data = item.data(0, Qt.UserRole)
+                        data = item.data(0, Qt.ItemDataRole.UserRole)
                         if isinstance(data, tuple):
                             if len(data) >= 5:
                                 # New format: (st, dataset_idx, code, domain, dataset_name)
@@ -7812,8 +7812,8 @@ class StereonetPluginCore:
 
     def toggle_dataset(self, dataset_index, state):
         """Enable or disable a dataset"""
-        self.dataset_configs[dataset_index]["enabled"] = (state == Qt.Checked)
-        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} {'enabled' if state == Qt.Checked else 'disabled'}", 'Linear Geoscience', Qgis.Info)
+        self.dataset_configs[dataset_index]["enabled"] = (state == Qt.CheckState.Checked)
+        QgsMessageLog.logMessage(f"Dataset {dataset_index + 1} {'enabled' if state == Qt.CheckState.Checked else 'disabled'}", 'Linear Geoscience', Qgis.Info)
         
         # Update capture button state - enabled only if live view is active and any datasets are enabled
         if hasattr(self, 'capture_button'):
@@ -7843,7 +7843,7 @@ class StereonetPluginCore:
             # Update color preview in the UI
             if self.datasets_widget:
                 for child in self.datasets_widget.findChildren(QFrame):
-                    if child.frameShape() == QFrame.Box and child.width() == 20:
+                    if child.frameShape() == QFrame.Shape.Box and child.width() == 20:
                         if child.parentWidget() == self.datasets_widget.layout().itemAt(dataset_index).widget():
                             child.setStyleSheet(f"background-color: {color_hex};")
                             break
@@ -8423,7 +8423,7 @@ class StereonetPluginCore:
 
     def handle_checkbox_change(self, state, row, other_checkbox, is_planar):
         """Ensure only one of Planar or Linear is selected"""
-        if state == Qt.Checked:
+        if state == Qt.CheckState.Checked:
             other_checkbox.blockSignals(True)
             other_checkbox.setChecked(False)
             other_checkbox.blockSignals(False)
@@ -8530,17 +8530,17 @@ class StereonetPluginCore:
             if self.category_tree_selection:
                 for i in range(self.category_tree_selection.topLevelItemCount()):
                     item = self.category_tree_selection.topLevelItem(i)
-                    data = item.data(0, Qt.UserRole)
+                    data = item.data(0, Qt.ItemDataRole.UserRole)
 
                     if isinstance(data, dict) and data.get("is_group"):
                         # Grouped codes live one level down
                         for j in range(item.childCount()):
                             child = item.child(j)
-                            cdata = child.data(0, Qt.UserRole)
+                            cdata = child.data(0, Qt.ItemDataRole.UserRole)
                             if isinstance(cdata, tuple):
                                 for code, ds_idx in coded_items:
                                     if cdata[0] == code and cdata[1] == ds_idx:
-                                        child.setCheckState(0, Qt.Checked)
+                                        child.setCheckState(0, Qt.CheckState.Checked)
                                         break
                         continue
 
@@ -8554,23 +8554,23 @@ class StereonetPluginCore:
                     # Check if this item matches any of our newly classified codes
                     for code, ds_idx in coded_items:
                         if code_str == code and dataset_idx == ds_idx:
-                            item.setCheckState(0, Qt.Checked)
+                            item.setCheckState(0, Qt.CheckState.Checked)
                             break
 
             # For Domains tab
             if self.category_tree_domains:
                 for i in range(self.category_tree_domains.topLevelItemCount()):
                     item = self.category_tree_domains.topLevelItem(i)
-                    data = item.data(0, Qt.UserRole)
+                    data = item.data(0, Qt.ItemDataRole.UserRole)
 
                     if isinstance(data, dict) and data.get("is_group"):
                         for j in range(item.childCount()):
                             child = item.child(j)
-                            cdata = child.data(0, Qt.UserRole)
+                            cdata = child.data(0, Qt.ItemDataRole.UserRole)
                             if isinstance(cdata, tuple) and len(cdata) >= 5:
                                 for code, ds_idx in coded_items:
                                     if cdata[2] == code and cdata[1] == ds_idx:
-                                        child.setCheckState(0, Qt.Checked)
+                                        child.setCheckState(0, Qt.CheckState.Checked)
                                         break
                         continue
 
@@ -8592,7 +8592,7 @@ class StereonetPluginCore:
                         # Check if this item matches any of our newly classified codes
                         for code, ds_idx in coded_items:
                             if base_code == code and dataset_idx == ds_idx:
-                                item.setCheckState(0, Qt.Checked)
+                                item.setCheckState(0, Qt.CheckState.Checked)
                                 break
         except Exception as e:
             QgsMessageLog.logMessage(f"Error selecting newly classified codes: {e}", 'Linear Geoscience', Qgis.Warning)
@@ -8673,8 +8673,8 @@ class StereonetPluginCore:
 
     def toggle_domain_filter(self, state):
         """Show/hide domain filter based on checkbox state"""
-        self.domain_filter_combo.setVisible(state == Qt.Checked)
-        if state == Qt.Checked:
+        self.domain_filter_combo.setVisible(state == Qt.CheckState.Checked)
+        if state == Qt.CheckState.Checked:
             self.refresh_domain_list()
 
 
@@ -8685,7 +8685,7 @@ class StereonetPluginCore:
 
         for i in range(self.export_structure_tree.topLevelItemCount()):
             item = self.export_structure_tree.topLevelItem(i)
-            item.setCheckState(0, Qt.Checked)
+            item.setCheckState(0, Qt.CheckState.Checked)
 
 
     def deselect_all_export(self):
@@ -8695,7 +8695,7 @@ class StereonetPluginCore:
 
         for i in range(self.export_structure_tree.topLevelItemCount()):
             item = self.export_structure_tree.topLevelItem(i)
-            item.setCheckState(0, Qt.Unchecked)
+            item.setCheckState(0, Qt.CheckState.Unchecked)
 
 
     def get_layer(self, dataset_index=None):

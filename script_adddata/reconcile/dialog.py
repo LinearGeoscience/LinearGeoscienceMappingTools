@@ -400,7 +400,7 @@ class ReconcileDialog(QDialog):
                     "Project ID and/or Mapped scale are blank, so those "
                     "standard fields won't be filled. UUIDs, legends and "
                     "coordinates will still be prepared.\n\nContinue?",
-                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
         self.hardcode_btn.setEnabled(False)
@@ -478,15 +478,15 @@ class ReconcileDialog(QDialog):
     def _confirm_prepare(self):
         """Offer to hardcode before previewing. Returns True to continue."""
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Question)
+        box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("Prepare field data first?")
         box.setText(
             "The working template hasn't been hardcoded yet. Preparing it "
             "fills UUIDs, legends and coordinates so features reconcile "
             "cleanly instead of as blanking conflicts.")
-        prep_btn = box.addButton("Prepare && continue", QMessageBox.AcceptRole)
-        box.addButton("Build without preparing", QMessageBox.DestructiveRole)
-        cancel_btn = box.addButton(QMessageBox.Cancel)
+        prep_btn = box.addButton("Prepare && continue", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Build without preparing", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
         box.setDefaultButton(prep_btn)
         box.exec()
         clicked = box.clickedButton()
@@ -575,7 +575,7 @@ class ReconcileDialog(QDialog):
         for u in uuids[:_UUID_PREVIEW_LIMIT]:
             leaf = QTreeWidgetItem(["", "", u])
             if layer is not None:
-                leaf.setData(0, Qt.UserRole, ("feature", layer, u))
+                leaf.setData(0, Qt.ItemDataRole.UserRole, ("feature", layer, u))
             node.addChild(leaf)
         if len(uuids) > _UUID_PREVIEW_LIMIT:
             node.addChild(QTreeWidgetItem(
@@ -588,7 +588,7 @@ class ReconcileDialog(QDialog):
         parent.addChild(node)
         for c in conflicts[:_UUID_PREVIEW_LIMIT]:
             item = QTreeWidgetItem([c.uuid, "", c.type])
-            item.setData(0, Qt.UserRole, ("feature", plan.layer, c.uuid))
+            item.setData(0, Qt.ItemDataRole.UserRole, ("feature", plan.layer, c.uuid))
             node.addChild(item)
             self._add_conflict_detail(item, c)
             # Defer the combo until the item is attached to the tree.
@@ -655,14 +655,14 @@ class ReconcileDialog(QDialog):
                 detail = (f"{len(g.parent_uuids)} parents → {g.survivor_uuid} "
                           f"({int(g.cover_frac * 100)}% covered)")
             item = QTreeWidgetItem(["accept", "", detail])
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Checked)   # default-accept (passed threshold)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.CheckState.Checked)   # default-accept (passed threshold)
             if kind == "split":
-                item.setData(0, Qt.UserRole,
+                item.setData(0, Qt.ItemDataRole.UserRole,
                              ("split", g.layer, g.parent_uuid,
                               list(g.child_uuids)))
             else:
-                item.setData(0, Qt.UserRole,
+                item.setData(0, Qt.ItemDataRole.UserRole,
                              ("merge", g.layer, g.survivor_uuid,
                               list(g.parent_uuids)))
             node.addChild(item)
@@ -671,12 +671,12 @@ class ReconcileDialog(QDialog):
 
     def _sync_lineage_acceptance(self):
         for g, item in self._lineage_items:
-            g.accepted = (item.checkState(0) == Qt.Checked)
+            g.accepted = (item.checkState(0) == Qt.CheckState.Checked)
 
     # --------------------------------------------------------------- map flash
     def _on_tree_clicked(self, item, column):
         """Zoom + flash the clicked feature(s): template (amber) vs master (grey)."""
-        data = item.data(0, Qt.UserRole)
+        data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data or not self.build or self.iface is None:
             return
         kind = data[0]
@@ -808,7 +808,7 @@ class ReconcileDialog(QDialog):
                    f"Conflicts skipped (re-surface next sync): {unresolved}\n"
                    f"Splits accepted: {splits}   Merges accepted: {merges}")
         if QMessageBox.question(self, "Apply reconcile", confirm,
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self._run_apply(force_lock=False)
 
@@ -871,8 +871,8 @@ class ReconcileDialog(QDialog):
                 f"A reconcile is already in progress ({who}, since {since}).\n\n"
                 "Override the lock and apply anyway? Only do this if you are "
                 "sure no one else is mid-reconcile.",
-                QMessageBox.Yes | QMessageBox.No)
-            if override == QMessageBox.Yes:
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if override == QMessageBox.StandardButton.Yes:
                 self._run_apply(force_lock=True)
             else:
                 self.apply_btn.setEnabled(True)
@@ -901,7 +901,7 @@ def run_reconcile_tool_dialog(iface):
     """Entry point used by mainplugin.py."""
     parent = iface.mainWindow() if iface else None
     dlg = ReconcileDialog(iface, parent)
-    dlg.setAttribute(Qt.WA_DeleteOnClose)
+    dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()

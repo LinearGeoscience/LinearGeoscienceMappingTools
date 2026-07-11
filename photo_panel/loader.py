@@ -263,13 +263,13 @@ class BackgroundLoader(QThread):
                 orientation = read_exif_orientation(path)
                 transform = get_exif_transform(orientation)
                 if transform is not None:
-                    image = image.transformed(transform, Qt.SmoothTransformation)
+                    image = image.transformed(transform, Qt.TransformationMode.SmoothTransformation)
 
             # Scale
             scaled_image = image.scaled(
                 width, height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
             )
 
             # Apply rounded corners
@@ -288,12 +288,12 @@ class BackgroundLoader(QThread):
             return image
 
         try:
-            target = QImage(image.size(), QImage.Format_ARGB32_Premultiplied)
-            target.fill(Qt.transparent)
+            target = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+            target.fill(Qt.GlobalColor.transparent)
 
             painter = QPainter(target)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
             path = QPainterPath()
             path.addRoundedRect(
@@ -411,7 +411,7 @@ class FullImageLoader(QThread):
                     orientation = read_exif_orientation(path)
                     transform = get_exif_transform(orientation)
                     if transform is not None:
-                        image = image.transformed(transform, Qt.SmoothTransformation)
+                        image = image.transformed(transform, Qt.TransformationMode.SmoothTransformation)
 
                 self.image_ready.emit(request_id, path, image)
             except Exception as e:

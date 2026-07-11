@@ -280,8 +280,8 @@ class LegendTextEditorDialog(QDialog):
         self.tree.setColumnCount(2)
         header = self.tree.header()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.tree.setAlternatingRowColors(True)
         layout.addWidget(self.tree)
 
@@ -303,7 +303,7 @@ class LegendTextEditorDialog(QDialog):
         layout.addLayout(btn_row)
 
         # OK / Cancel
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -335,9 +335,9 @@ class LegendTextEditorDialog(QDialog):
 
             # Layer node
             layer_item = QTreeWidgetItem([layer_name, display_name])
-            layer_item.setFlags(layer_item.flags() | Qt.ItemIsEditable)
-            layer_item.setData(0, Qt.UserRole, 'layer')
-            layer_item.setData(0, Qt.UserRole + 1, layer.id())
+            layer_item.setFlags(layer_item.flags() | Qt.ItemFlag.ItemIsEditable)
+            layer_item.setData(0, Qt.ItemDataRole.UserRole, 'layer')
+            layer_item.setData(0, Qt.ItemDataRole.UserRole + 1, layer.id())
             self.tree.addTopLevelItem(layer_item)
 
             # Feature/symbol children (vector layers only)
@@ -351,8 +351,8 @@ class LegendTextEditorDialog(QDialog):
                             continue
                         custom_label = feature_mappings.get(original_label, original_label)
                         child = QTreeWidgetItem([original_label, custom_label])
-                        child.setFlags(child.flags() | Qt.ItemIsEditable)
-                        child.setData(0, Qt.UserRole, 'feature')
+                        child.setFlags(child.flags() | Qt.ItemFlag.ItemIsEditable)
+                        child.setData(0, Qt.ItemDataRole.UserRole, 'feature')
                         layer_item.addChild(child)
                 except Exception:
                     pass
@@ -370,7 +370,7 @@ class LegendTextEditorDialog(QDialog):
             layer_item = self.tree.topLevelItem(i)
             original_name = layer_item.text(self.COL_ORIGINAL)
             display_name = layer_item.text(self.COL_DISPLAY)
-            layer_id = layer_item.data(0, Qt.UserRole + 1) or original_name
+            layer_id = layer_item.data(0, Qt.ItemDataRole.UserRole + 1) or original_name
 
             features = {}
             for j in range(layer_item.childCount()):
@@ -572,7 +572,7 @@ class LegendFieldConfigDialog(QDialog):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -810,28 +810,28 @@ class LegendFieldConfigDialog(QDialog):
                      f"  ({detail})")
             item = QListWidgetItem(label)
             item.setToolTip("Layers: " + ", ".join(cand['layers']))
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
-                Qt.Checked if cand['matched'] else Qt.Unchecked)
-            item.setData(Qt.UserRole, cand)
+                Qt.CheckState.Checked if cand['matched'] else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, cand)
             lst.addItem(item)
         lay.addWidget(lst, 1)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         lay.addWidget(buttons)
 
-        if dlg.exec() != QDialog.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
         added = 0
         for i in range(lst.count()):
             item = lst.item(i)
-            if item.checkState() != Qt.Checked:
+            if item.checkState() != Qt.CheckState.Checked:
                 continue
-            cand = item.data(Qt.UserRole)
+            cand = item.data(Qt.ItemDataRole.UserRole)
             self._sections.append(normalize_section({
                 'title': cand['title'],
                 'layer': None,
@@ -970,16 +970,16 @@ class LegendFieldConfigDialog(QDialog):
             if not fields:
                 continue
             parent = QTreeWidgetItem([layer.name()])
-            parent.setFlags(parent.flags() & ~Qt.ItemIsUserCheckable)
+            parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             tree.addTopLevelItem(parent)
             wanted = pre_by_layer.get(layer.id(), pre_names)
             for fname in fields:
                 child = QTreeWidgetItem([fname])
-                child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 child.setCheckState(
-                    0, Qt.Checked if fname.lower() in wanted
-                    else Qt.Unchecked)
-                child.setData(0, Qt.UserRole, layer.id())
+                    0, Qt.CheckState.Checked if fname.lower() in wanted
+                    else Qt.CheckState.Unchecked)
+                child.setData(0, Qt.ItemDataRole.UserRole, layer.id())
                 parent.addChild(child)
             parent.setExpanded(True)
 
@@ -989,9 +989,9 @@ class LegendFieldConfigDialog(QDialog):
                 parent = tree.topLevelItem(i)
                 fields = [parent.child(j).text(0)
                           for j in range(parent.childCount())
-                          if parent.child(j).checkState(0) == Qt.Checked]
+                          if parent.child(j).checkState(0) == Qt.CheckState.Checked]
                 if fields:
-                    layer_id = parent.child(0).data(0, Qt.UserRole)
+                    layer_id = parent.child(0).data(0, Qt.ItemDataRole.UserRole)
                     layer = QgsProject.instance().mapLayer(layer_id)
                     targets.append({
                         'layer': {'id': layer_id,
@@ -1008,8 +1008,8 @@ class LegendFieldConfigDialog(QDialog):
                 for j in range(parent.childCount()):
                     child = parent.child(j)
                     child.setCheckState(
-                        0, Qt.Checked if child.text(0).lower() in wanted
-                        else Qt.Unchecked)
+                        0, Qt.CheckState.Checked if child.text(0).lower() in wanted
+                        else Qt.CheckState.Unchecked)
 
         return tree, checked_targets, set_checked_names
 
@@ -1143,12 +1143,12 @@ class LegendFieldConfigDialog(QDialog):
                 lambda: on_table_changed())
             on_table_changed()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         form.addWidget(buttons)
 
-        if dlg.exec() != QDialog.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         tbl = QgsProject.instance().mapLayer(table_combo.currentData())
         if not tbl:
@@ -1235,11 +1235,11 @@ class LegendFieldConfigDialog(QDialog):
                 label = (f"{fname}  (↔ {desc_field})" if desc_field
                          else fname)
                 item = QListWidgetItem(label)
-                item.setData(Qt.UserRole, fname)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setData(Qt.ItemDataRole.UserRole, fname)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(
-                    Qt.Checked if fname.lower() in pre_fields
-                    else Qt.Unchecked)
+                    Qt.CheckState.Checked if fname.lower() in pre_fields
+                    else Qt.CheckState.Unchecked)
                 fields_list.addItem(item)
             for field in layer.fields():
                 split_combo.addItem(field.name(), field.name())
@@ -1266,19 +1266,19 @@ class LegendFieldConfigDialog(QDialog):
                     layer_combo.setCurrentIndex(li)
         on_layer_changed()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         form.addWidget(buttons)
 
-        if dlg.exec() != QDialog.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         layer = QgsProject.instance().mapLayer(layer_combo.currentData())
         if not layer:
             return
-        fields = [fields_list.item(i).data(Qt.UserRole)
+        fields = [fields_list.item(i).data(Qt.ItemDataRole.UserRole)
                   for i in range(fields_list.count())
-                  if fields_list.item(i).checkState() == Qt.Checked]
+                  if fields_list.item(i).checkState() == Qt.CheckState.Checked]
         if not fields:
             QMessageBox.warning(self, "No Fields",
                                 "Check at least one code field to scan.")
@@ -1342,7 +1342,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         # Scroll area wrapper so the dock remains usable at smaller heights
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.setWidget(scroll)
 
         self.mainWidget = QWidget()
@@ -1715,7 +1715,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
         # Progress bar
         self.progressBar = QProgressBar()
         self.progressBar.setTextVisible(True)
-        self.progressBar.setAlignment(Qt.AlignCenter)
+        self.progressBar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progressBar.setValue(0)
         self.mainLayout.addWidget(self.progressBar)
 
@@ -1892,7 +1892,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
     def openLegendTextEditor(self):
         """Open the legend text editor dialog."""
         dlg = LegendTextEditorDialog(self.legend_text_mappings, parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             self.legend_text_mappings = dlg.get_mappings()
             self._save_legend_state()
             count = len(self.legend_text_mappings)
@@ -1911,7 +1911,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
             self._sections,
             mapsheet_layer_id=self.layerCombo.currentData(),
             parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             self._sections = dlg.get_sections()
             self._save_legend_state()
             QgsMessageLog.logMessage(
@@ -2708,8 +2708,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
         list_widget = QListWidget()
         for lay in sorted(layouts, key=lambda l: l.name()):
             item = QListWidgetItem(lay.name())
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
             list_widget.addItem(item)
         dlg_layout.addWidget(list_widget)
 
@@ -2718,29 +2718,29 @@ class MapLayoutGeneratorPanel(QDockWidget):
         select_all_btn = QPushButton("Select All")
         deselect_all_btn = QPushButton("Deselect All")
         select_all_btn.clicked.connect(
-            lambda: [list_widget.item(i).setCheckState(Qt.Checked)
+            lambda: [list_widget.item(i).setCheckState(Qt.CheckState.Checked)
                      for i in range(list_widget.count())])
         deselect_all_btn.clicked.connect(
-            lambda: [list_widget.item(i).setCheckState(Qt.Unchecked)
+            lambda: [list_widget.item(i).setCheckState(Qt.CheckState.Unchecked)
                      for i in range(list_widget.count())])
         sel_row.addWidget(select_all_btn)
         sel_row.addWidget(deselect_all_btn)
         sel_row.addStretch()
         dlg_layout.addLayout(sel_row)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(dlg.accept)
         button_box.rejected.connect(dlg.reject)
         dlg_layout.addWidget(button_box)
 
-        if dlg.exec() != QDialog.Accepted:
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
         # Collect selected layout names
         selected = []
         for i in range(list_widget.count()):
             item = list_widget.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.text())
 
         if not selected:
@@ -3148,7 +3148,7 @@ class MapLayoutGeneratorPanel(QDockWidget):
 # Create and show the panel
 def create_map_layout_generator_panel():
     panel = MapLayoutGeneratorPanel()
-    iface.addDockWidget(Qt.RightDockWidgetArea, panel)
+    iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, panel)
     return panel
 
 

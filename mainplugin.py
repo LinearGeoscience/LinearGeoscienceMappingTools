@@ -67,8 +67,8 @@ class ActionButton(QPushButton):
 
     def __init__(self, text, icon_name=None, parent=None, plugin_dir=None, primary=True):
         super().__init__(_esc_amp(text), parent)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._original_text = text
 
         scale = get_scale_manager()
@@ -91,7 +91,7 @@ class BrandHeader(QWidget):
         self.plugin_dir = plugin_dir
         self.scale = get_scale_manager()
         self.setMinimumHeight(self.scale.dimension(80))
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.setAutoFillBackground(True)
         self._apply_gradient(self.width())
@@ -118,12 +118,12 @@ class BrandHeader(QWidget):
             aspect_ratio = original_size.width() / original_size.height()
             width = int(height * aspect_ratio)
             self.logo.setFixedSize(width, height)
-            content_layout.addWidget(self.logo, 0, Qt.AlignLeft | Qt.AlignVCenter)
+            content_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         # Title
         self.title = QLabel("QField Geological Mapping Plugin")
-        self.title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.title.setAlignment(Qt.AlignCenter)
+        self.title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(theme.header_title_style())
         content_layout.addWidget(self.title, 1)
 
@@ -131,8 +131,8 @@ class BrandHeader(QWidget):
 
         # Bottom shadow line
         shadow_line = QFrame()
-        shadow_line.setFrameShape(QFrame.HLine)
-        shadow_line.setFrameShadow(QFrame.Plain)
+        shadow_line.setFrameShape(QFrame.Shape.HLine)
+        shadow_line.setFrameShadow(QFrame.Shadow.Plain)
         shadow_line.setStyleSheet(theme.header_bottom_shadow())
         layout.addWidget(shadow_line)
 
@@ -141,7 +141,7 @@ class BrandHeader(QWidget):
         gradient = QLinearGradient(0, 0, max(width, 1), 0)
         gradient.setColorAt(0, QColor(theme.HEADER_START))
         gradient.setColorAt(1, QColor(theme.HEADER_END))
-        palette.setBrush(QPalette.Window, gradient)
+        palette.setBrush(QPalette.ColorRole.Window, gradient)
         self.setPalette(palette)
 
     def resizeEvent(self, event):
@@ -201,8 +201,8 @@ class FeatureGroup(QGroupBox):
 
     def addSeparator(self):
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Plain)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Plain)
         line.setStyleSheet(theme.separator_style())
         self.group_layout.addWidget(line)
 
@@ -222,7 +222,7 @@ class FeatureGroup(QGroupBox):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content_widget = QWidget()
         scroll.setWidget(content_widget)
@@ -232,7 +232,7 @@ class FeatureGroup(QGroupBox):
 
         info_label = QLabel(content)
         info_label.setWordWrap(True)
-        info_label.setTextFormat(Qt.RichText)
+        info_label.setTextFormat(Qt.TextFormat.RichText)
         info_label.setOpenExternalLinks(True)
         content_layout.addWidget(info_label)
         content_layout.addStretch()
@@ -240,8 +240,8 @@ class FeatureGroup(QGroupBox):
         layout.addWidget(scroll)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         layout.addWidget(sep)
 
@@ -416,8 +416,8 @@ class LinearGeosciencePluginMain:
 
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle("Linear Geoscience - Geological Mapping")
-        dialog.setAttribute(Qt.WA_DeleteOnClose)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         dialog_width, dialog_height = scale.dialog_size(800, 600)
         dialog.setStyleSheet(theme.dialog_style())
@@ -493,9 +493,9 @@ class LinearGeosciencePluginMain:
         sidebar_scroll.setMinimumWidth(scale.dimension(280))
         sidebar_scroll.setMaximumWidth(scale.dimension(350))
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        sidebar_scroll.setFrameShape(QFrame.NoFrame)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
         sidebar_scroll.setStyleSheet(
             theme.sidebar_style() + "\n" + theme.scrollbar_style()
         )
@@ -515,7 +515,7 @@ class LinearGeosciencePluginMain:
         qa_style = theme.quick_access_button_style()
 
         btn_stereonet = QPushButton("Launch Stereonet")
-        btn_stereonet.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_stereonet.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_stereonet.setMinimumHeight(scale.dimension(34))
         btn_stereonet.setToolTip("Open the interactive stereonet plotting panel")
         btn_stereonet.setStyleSheet(qa_style)
@@ -523,7 +523,7 @@ class LinearGeosciencePluginMain:
         lay.addWidget(btn_stereonet)
 
         btn_map_cleaning = QPushButton("Launch Map Cleaning")
-        btn_map_cleaning.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_map_cleaning.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_map_cleaning.setMinimumHeight(scale.dimension(34))
         btn_map_cleaning.setToolTip("Open the map cleaning panel (clip, splines, fix geometry)")
         btn_map_cleaning.setStyleSheet(qa_style)
@@ -531,7 +531,7 @@ class LinearGeosciencePluginMain:
         lay.addWidget(btn_map_cleaning)
 
         btn_photo = QPushButton("Launch Photo Panel")
-        btn_photo.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_photo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_photo.setMinimumHeight(scale.dimension(34))
         btn_photo.setToolTip("Open the photo viewing dock panel")
         btn_photo.setStyleSheet(qa_style)
@@ -540,8 +540,8 @@ class LinearGeosciencePluginMain:
 
         # Separator
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         sep_margin = scale.dimension(4)
         sep.setContentsMargins(0, sep_margin, 0, sep_margin)
@@ -559,8 +559,8 @@ class LinearGeosciencePluginMain:
         for idx, (label, icon_file, tooltip, _title) in enumerate(PAGE_DEFS):
             btn = QPushButton(_esc_amp(label))
             btn.setCheckable(True)
-            btn.setCursor(QCursor(Qt.PointingHandCursor))
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             btn.setMinimumHeight(scale.dimension(36))
             btn.setToolTip(tooltip)
             btn.setStyleSheet(nav_style)
@@ -575,19 +575,19 @@ class LinearGeosciencePluginMain:
 
         # Version info with top separator
         ver_sep = QFrame()
-        ver_sep.setFrameShape(QFrame.HLine)
-        ver_sep.setFrameShadow(QFrame.Plain)
+        ver_sep.setFrameShape(QFrame.Shape.HLine)
+        ver_sep.setFrameShadow(QFrame.Shadow.Plain)
         ver_sep.setStyleSheet(theme.separator_style())
         lay.addWidget(ver_sep)
 
         version_info = QLabel("Linear Geoscience Mapping Tools V3.3\nAuthor: Harry West\nJune 2026")
-        version_info.setAlignment(Qt.AlignLeft)
+        version_info.setAlignment(Qt.AlignmentFlag.AlignLeft)
         version_info.setStyleSheet(theme.version_label_style())
         lay.addWidget(version_info)
 
         # QField export button (above template)
         btn_qfield = QPushButton("Export for QField")
-        btn_qfield.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_qfield.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_qfield.setMinimumHeight(scale.dimension(34))
         btn_qfield.setToolTip("Export selected layers and the current project for QField (offline)")
         btn_qfield.setStyleSheet(theme.qfield_button_style())
@@ -596,7 +596,7 @@ class LinearGeosciencePluginMain:
 
         # Reconcile button (below QField export, above template)
         btn_reconcile = QPushButton("Reconcile / Merge")
-        btn_reconcile.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_reconcile.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_reconcile.setMinimumHeight(scale.dimension(34))
         btn_reconcile.setToolTip("Reconcile and re-sync the working geopackage back into the master GeoPackage")
         btn_reconcile.setStyleSheet(theme.reconcile_button_style())
@@ -605,7 +605,7 @@ class LinearGeosciencePluginMain:
 
         # Template button
         btn_template = QPushButton("New Mapping Template")
-        btn_template.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_template.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_template.setMinimumHeight(scale.dimension(34))
         btn_template.setToolTip("Load or configure the mapping geopackage template for your project")
         btn_template.setStyleSheet(theme.template_button_style())
@@ -637,8 +637,8 @@ class LinearGeosciencePluginMain:
 
         # Thin separator under page header
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         layout.addWidget(sep)
 
@@ -781,9 +781,9 @@ class LinearGeosciencePluginMain:
                     btn.setChecked(True)
                     btn.click()
 
-        QShortcut(QKeySequence(Qt.Key_Escape), dialog, dialog.close)
-        QShortcut(QKeySequence(Qt.Key_Up), dialog, lambda: move_nav(-1))
-        QShortcut(QKeySequence(Qt.Key_Down), dialog, lambda: move_nav(1))
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), dialog, dialog.close)
+        QShortcut(QKeySequence(Qt.Key.Key_Up), dialog, lambda: move_nav(-1))
+        QShortcut(QKeySequence(Qt.Key.Key_Down), dialog, lambda: move_nav(1))
 
     # ------------------------------------------------------------------
     # Geometry persistence
@@ -849,7 +849,7 @@ class LinearGeosciencePluginMain:
     def run_qfield_export(self):
         from .qfield_export.gui.export_dialog import ExportDialog
         dlg = ExportDialog(self.iface, self.iface.mainWindow())
-        dlg.exec_()
+        dlg.exec()
 
     def run_mapsheetgenerator(self):
         from .script_mapsheet_generator import run

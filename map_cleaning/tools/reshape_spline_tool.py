@@ -137,7 +137,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         """
         point = self.toMapCoordinates(event.pos())
 
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             # Left click - add control point
             result = self.snapping_utils.snapToMap(point)
             if result.isValid():
@@ -168,12 +168,12 @@ class ReshapeSplineTool(QgsMapToolEdit):
         Args:
             e: Key press event
         """
-        if e.key() == Qt.Key_Escape:
+        if e.key() == Qt.Key.Key_Escape:
             # ESC - cancel current operation
             self.reset_points()
             self.reset_rubber_band()
             self.canvas.refresh()
-        elif e.key() == Qt.Key_Backspace:
+        elif e.key() == Qt.Key.Key_Backspace:
             # Backspace - remove last point
             if self.points:
                 self.points.pop()

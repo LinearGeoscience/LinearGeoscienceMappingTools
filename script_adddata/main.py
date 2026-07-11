@@ -54,7 +54,7 @@ class LayerFieldTreeWidget(QTreeWidget):
         self.setColumnWidth(3, scale.dimension(100))
 
         # Enable extended selection
-        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         # Store references
         self.layer_items = {}
@@ -65,7 +65,7 @@ class LayerFieldTreeWidget(QTreeWidget):
         layer_item = QTreeWidgetItem(self)
         layer_item.setText(0, layer_name)
         layer_item.setText(1, "Layer")
-        layer_item.setCheckState(0, Qt.Checked)  # Checked by default
+        layer_item.setCheckState(0, Qt.CheckState.Checked)  # Checked by default
         layer_item.setExpanded(False)  # Collapsed by default
 
         # Style the layer item
@@ -142,7 +142,7 @@ class LayerFieldTreeWidget(QTreeWidget):
         field_item = QTreeWidgetItem(layer_item)
         field_item.setText(0, field_name)
         field_item.setText(1, "Field")
-        field_item.setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
+        field_item.setCheckState(0, Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
         self.layer_items[layer_name]['fields'][field_name] = field_item
 
@@ -223,7 +223,7 @@ class LayerFieldTreeWidget(QTreeWidget):
         """Get list of checked layers"""
         selected = []
         for layer_name, layer_info in self.layer_items.items():
-            if layer_info['item'].checkState(0) == Qt.Checked:
+            if layer_info['item'].checkState(0) == Qt.CheckState.Checked:
                 selected.append(layer_name)
         return selected
 
@@ -234,7 +234,7 @@ class LayerFieldTreeWidget(QTreeWidget):
 
         selected = []
         for field_name, field_item in self.layer_items[layer_name]['fields'].items():
-            if field_item.checkState(0) == Qt.Checked:
+            if field_item.checkState(0) == Qt.CheckState.Checked:
                 selected.append(field_name)
         return selected
 
@@ -336,11 +336,11 @@ class GeoPackageAppendTool(QMainWindow):
         fuzzy_layout = QHBoxLayout()
         if FUZZY_MATCHING_AVAILABLE:
             fuzzy_label = QLabel("Fuzzy Match Threshold:")
-            self.fuzzy_threshold = QSlider(Qt.Horizontal)
+            self.fuzzy_threshold = QSlider(Qt.Orientation.Horizontal)
             self.fuzzy_threshold.setMinimum(50)
             self.fuzzy_threshold.setMaximum(90)
             self.fuzzy_threshold.setValue(75)
-            self.fuzzy_threshold.setTickPosition(QSlider.TicksBelow)
+            self.fuzzy_threshold.setTickPosition(QSlider.TickPosition.TicksBelow)
             self.fuzzy_threshold.setTickInterval(5)
             self.fuzzy_threshold_value = QLabel("75%")
             self.fuzzy_threshold.valueChanged.connect(self.update_fuzzy_threshold)
@@ -582,7 +582,7 @@ class GeoPackageAppendTool(QMainWindow):
     def browse_master(self):
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Select or Create Master GeoPackage", "", "GeoPackage Files (*.gpkg)",
-            options=QFileDialog.DontConfirmOverwrite
+            options=QFileDialog.Option.DontConfirmOverwrite
         )
         if file_path:
             # Ensure .gpkg extension
@@ -727,13 +727,13 @@ class GeoPackageAppendTool(QMainWindow):
     def select_all_layers(self):
         """Select all layers in the tree"""
         for layer_name, layer_info in self.tree_widget.layer_items.items():
-            layer_info['item'].setCheckState(0, Qt.Checked)
+            layer_info['item'].setCheckState(0, Qt.CheckState.Checked)
         self.log_message("Selected all layers")
 
     def deselect_all_layers(self):
         """Deselect all layers in the tree"""
         for layer_name, layer_info in self.tree_widget.layer_items.items():
-            layer_info['item'].setCheckState(0, Qt.Unchecked)
+            layer_info['item'].setCheckState(0, Qt.CheckState.Unchecked)
         self.log_message("Deselected all layers")
 
     def log_message(self, message):
@@ -863,10 +863,10 @@ class GeoPackageAppendTool(QMainWindow):
                 f"ALL features from these layers will be added without duplicate checking.\n"
                 f"If you run this again, duplicate features may be added.\n\n"
                 f"Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 self.log_message("Processing cancelled - No UUID confirmation declined")
                 return
 
@@ -874,8 +874,8 @@ class GeoPackageAppendTool(QMainWindow):
         if not os.path.exists(master_gpkg):
             reply = QMessageBox.question(self, "Create Master GeoPackage?",
                                          f"Master GeoPackage '{master_gpkg}' does not exist. Do you want to create it?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply != QMessageBox.Yes:
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
                 return
             # Don't pre-create the file here: an empty SQLite database is NOT
             # a valid GeoPackage. QgsVectorFileWriter creates the file itself
@@ -909,8 +909,8 @@ class GeoPackageAppendTool(QMainWindow):
         reply = QMessageBox.question(
             self, "Confirm Processing",
             "<br>".join(summary_lines) + "<br><br>Proceed?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if reply != QMessageBox.Yes:
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        if reply != QMessageBox.StandardButton.Yes:
             self.log_message("Processing cancelled by user")
             return
 
@@ -981,8 +981,8 @@ def run_gpkg_append_tool_dialog(qgis_iface):
     if hasattr(qgis_iface, "_adddata_dialog") and qgis_iface._adddata_dialog is not None:
         try:
             qgis_iface._adddata_dialog.reset_ui()
-            qgis_iface._adddata_dialog.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
-            qgis_iface._adddata_dialog.setWindowModality(Qt.ApplicationModal)
+            qgis_iface._adddata_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+            qgis_iface._adddata_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
             qgis_iface._adddata_dialog.show()
             qgis_iface._adddata_dialog.activateWindow()
             qgis_iface._adddata_dialog.raise_()
@@ -993,8 +993,8 @@ def run_gpkg_append_tool_dialog(qgis_iface):
     main_window = qgis_iface.mainWindow()
     dialog = GeoPackageAppendTool(parent=main_window)
 
-    dialog.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
-    dialog.setWindowModality(Qt.ApplicationModal)
+    dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
 
     # Store persistent reference on iface to prevent GC; clean up on close
     dialog.destroyed.connect(lambda: setattr(qgis_iface, "_adddata_dialog", None))

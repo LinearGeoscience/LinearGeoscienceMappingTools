@@ -58,10 +58,10 @@ class PhotoThumbnail(QFrame):
         """Set up the UI components."""
         scale = get_scale_manager()
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setLineWidth(0)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         # Bug fix #1: stylesheet uses dynamic property selector
         self.setStyleSheet(f"""
@@ -86,7 +86,7 @@ class PhotoThumbnail(QFrame):
 
         # Feature indicator at top
         self.feature_indicator = QFrame(self)
-        self.feature_indicator.setFrameShape(QFrame.StyledPanel)
+        self.feature_indicator.setFrameShape(QFrame.Shape.StyledPanel)
         self.feature_indicator.setStyleSheet(f"""
             background-color: {self.photo.feature_color.name()};
             border-top-left-radius: {STYLE['RADIUS_LG']};
@@ -103,7 +103,7 @@ class PhotoThumbnail(QFrame):
 
         # Photo label
         self.photo_label = QLabel()
-        self.photo_label.setAlignment(Qt.AlignCenter)
+        self.photo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumb_width = scale.dimension(180)
         thumb_height = scale.dimension(140)
         self.photo_label.setMinimumSize(thumb_width, thumb_height)
@@ -130,7 +130,7 @@ class PhotoThumbnail(QFrame):
         if self.photo.comment and self.photo.comment.strip() and self.photo.comment != "NULL":
             comment_label = QLabel(self.photo.comment)
             comment_label.setWordWrap(True)
-            comment_label.setAlignment(Qt.AlignLeft)
+            comment_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
             comment_label.setStyleSheet(f"""
                 color: {STYLE['TEXT_SECONDARY']};
                 font-size: {STYLE['FONT_SIZE_XS']};
@@ -159,7 +159,7 @@ class PhotoThumbnail(QFrame):
 
         if meta_text:
             meta_label = QLabel(meta_text)
-            meta_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            meta_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             meta_label.setStyleSheet(f"""
                 font-size: {STYLE['FONT_SIZE_XS']};
                 color: {STYLE['TEXT_SECONDARY']};
@@ -231,9 +231,9 @@ class PhotoThumbnail(QFrame):
 
     def mousePressEvent(self, event):
         """Handle mouse press events. Bug fix #2: emit signal."""
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.photo.path)
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             self.show_context_menu(event.globalPos())
 
     def show_context_menu(self, pos) -> None:
@@ -348,8 +348,8 @@ class FilterPanel(QFrame):
 
         # Header
         self.header = QFrame()
-        self.header.setFrameShape(QFrame.StyledPanel)
-        self.header.setCursor(QCursor(Qt.PointingHandCursor))
+        self.header.setFrameShape(QFrame.Shape.StyledPanel)
+        self.header.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.header.setStyleSheet(f"""
             QFrame {{
                 background-color: {STYLE['PRIMARY']};
@@ -380,7 +380,7 @@ class FilterPanel(QFrame):
 
         # Content panel
         self.content = QFrame()
-        self.content.setFrameShape(QFrame.StyledPanel)
+        self.content.setFrameShape(QFrame.Shape.StyledPanel)
         self.content.setStyleSheet(f"""
             QFrame {{
                 background-color: {STYLE['SECONDARY_LIGHT']};
@@ -509,7 +509,7 @@ class FilterPanel(QFrame):
             font-size: {STYLE['FONT_SIZE_SM']};
         """)
 
-        self.columns_slider = QSlider(Qt.Horizontal)
+        self.columns_slider = QSlider(Qt.Orientation.Horizontal)
         self.columns_slider.setMinimum(1)
         self.columns_slider.setMaximum(4)
         self.columns_slider.setValue(2)
@@ -532,7 +532,7 @@ class FilterPanel(QFrame):
         """)
 
         self.columns_value = QLabel("2")
-        self.columns_value.setAlignment(Qt.AlignCenter)
+        self.columns_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.columns_value.setStyleSheet(f"""
             background-color: {STYLE['PRIMARY_LIGHT']};
             color: {STYLE['PRIMARY']};

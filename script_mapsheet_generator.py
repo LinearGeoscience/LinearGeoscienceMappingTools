@@ -71,11 +71,11 @@ class PolygonDrawMapTool(QgsMapTool):
         self.points = []
 
     def canvasPressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             point = self.toMapCoordinates(event.pos())
             self.points.append(point)
             self._update_rubber_band()
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             if len(self.points) >= 3:
                 ring = list(self.points)
                 ring.append(ring[0])  # Close the ring
@@ -108,7 +108,7 @@ class FinalMapSheetPanel(QDockWidget):
     def __init__(self, parent=None):
         try:
             super(FinalMapSheetPanel, self).__init__("MapSheet Generator", parent)
-            self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+            self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
 
             # Dictionary of sheet sizes with their dimensions in cm (usable area with 2.5cm margins)
             # Note: These dimensions are in portrait orientation by default (width < height)
@@ -420,7 +420,7 @@ class FinalMapSheetPanel(QDockWidget):
 
         # Status message
         self.status_label = QLabel('No preview generated')
-        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(self.status_label, 3, 0, 1, 4)
 
         preview_box.setLayout(preview_layout)
@@ -796,7 +796,7 @@ class FinalMapSheetPanel(QDockWidget):
                 symbol.symbolLayer(0).setStrokeColor(QColor(80, 80, 80))
                 symbol.symbolLayer(0).setFillColor(QColor(0, 0, 0, 0))
                 symbol.symbolLayer(0).setStrokeWidth(0.15)
-                symbol.symbolLayer(0).setStrokeStyle(Qt.DashLine)
+                symbol.symbolLayer(0).setStrokeStyle(Qt.PenStyle.DashLine)
                 category = QgsRendererCategory(group_id, symbol, f"Group {group_id}")
                 categories.append(category)
 
@@ -808,7 +808,7 @@ class FinalMapSheetPanel(QDockWidget):
                 symbol.symbolLayer(0).setStrokeColor(QColor(80, 80, 80))
                 symbol.symbolLayer(0).setFillColor(QColor(0, 0, 0, 0))
                 symbol.symbolLayer(0).setStrokeWidth(0.15)
-                symbol.symbolLayer(0).setStrokeStyle(Qt.DashLine)
+                symbol.symbolLayer(0).setStrokeStyle(Qt.PenStyle.DashLine)
                 layer.renderer().setSymbol(symbol)
 
             label_settings = QgsPalLayerSettings()
@@ -875,12 +875,12 @@ class FinalMapSheetPanel(QDockWidget):
             dlg_layout.addWidget(landscape_radio)
             dlg_layout.addWidget(portrait_radio)
 
-            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             dlg_layout.addWidget(buttons)
 
-            if dialog.exec() == QDialog.Accepted:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.add_mapsheet(landscape=landscape_radio.isChecked())
 
         except Exception as e:
@@ -1517,11 +1517,11 @@ class FinalMapSheetPanel(QDockWidget):
                 f"to '{master_layer.name()}'?\n\n"
                 f"New mapsheets will be numbered from {highest_number + 1} "
                 f"to {highest_number + len(source_features)}.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
 
-            if reply != QMessageBox.Yes:
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             master_layer.startEditing()
@@ -1684,7 +1684,7 @@ def run_final_mapsheet_panel():
         # Create and show the panel
         QgsMessageLog.logMessage("Creating new panel", 'Linear Geoscience', Qgis.Info)
         panel = FinalMapSheetPanel(iface.mainWindow())
-        iface.addDockWidget(Qt.RightDockWidgetArea, panel)
+        iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, panel)
         panel.show()
 
         QgsMessageLog.logMessage("Final MapSheet Generator panel created", 'Linear Geoscience', Qgis.Info)

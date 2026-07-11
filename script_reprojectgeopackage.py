@@ -179,10 +179,10 @@ class GeoPackageReprojectDialog(QDialog):
             response = QMessageBox.question(
                 self, "File Exists",
                 "Output file already exists. Do you want to overwrite it?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
 
-            if response == QMessageBox.No:
+            if response == QMessageBox.StandardButton.No:
                 return
 
             # Remove existing file to avoid issues
@@ -909,8 +909,8 @@ def run_reproject_geopackage():
     dialog = GeoPackageReprojectDialog(parent)
 
     from qgis.PyQt.QtCore import Qt
-    dialog.setWindowModality(Qt.WindowModal)
-    dialog.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowCloseButtonHint)
+    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint)
 
     # Store persistent reference to prevent GC; clean up on close
     dialog.destroyed.connect(lambda: setattr(iface, "_reproject_dialog", None))

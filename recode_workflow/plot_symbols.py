@@ -126,7 +126,7 @@ class PlotSymbolsPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -163,10 +163,10 @@ class PlotSymbolsPage(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["Layer", "Code Table", "Key Field", "Layer Field", ""])
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 5):
-            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.setStyleSheet(f"""
             QTableWidget {{
@@ -586,9 +586,9 @@ class PlotSymbolsPage(QWidget):
         reply = QMessageBox.question(
             self, "Remove Features",
             f"Remove {total} previously plotted feature(s)?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.log_message.emit(f"Removing {total} previously plotted features...")

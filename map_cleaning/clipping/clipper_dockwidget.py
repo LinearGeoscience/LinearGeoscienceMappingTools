@@ -136,7 +136,7 @@ class ClipperDockWidget(QDockWidget):
 
         # Title
         title_label = QLabel("<b>Map Cleaning Toolkit</b>")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 11pt; padding: 4px; color: #2196F3;")
         main_layout.addWidget(title_label)
 

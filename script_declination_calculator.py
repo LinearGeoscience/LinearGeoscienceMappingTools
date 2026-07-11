@@ -193,7 +193,7 @@ class CalculateDeclinationDialog(QDialog):
         self.preview_table.setHorizontalHeaderLabels([
             "Feature ID", "Longitude", "Latitude", "Elevation (m)", "Date", "Declination (°)"
         ])
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.preview_table)
 
         # Buttons
@@ -306,9 +306,9 @@ class CalculateDeclinationDialog(QDialog):
             reply = QMessageBox.question(
                 self, "Field Exists",
                 f"Field '{field_name}' already exists. Use it anyway?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 # Select the existing field
                 index = self.declination_field_combo.findText(field_name)
                 if index >= 0:
@@ -615,14 +615,14 @@ class CalculateDeclinationDialog(QDialog):
         # Confirm with user
         msg = f"This will calculate magnetic declination for {len(features)} features.\n\nContinue?"
         reply = QMessageBox.question(self, "Confirm Calculation", msg,
-                                    QMessageBox.Yes | QMessageBox.No)
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Create progress dialog
         progress = QProgressDialog("Calculating declination...", "Cancel", 0, len(features), self)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
 
         # Get field index

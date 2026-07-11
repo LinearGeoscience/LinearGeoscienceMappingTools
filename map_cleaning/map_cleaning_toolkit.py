@@ -106,7 +106,7 @@ class MapCleaningToolkit(object):
 
         # Create dock widget (starts hidden)
         self.dockwidget = ClipperDockWidget()
-        self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dockwidget)
+        self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dockwidget)
         self.dockwidget.setVisible(False)
 
         # Create managers for clipping
@@ -428,7 +428,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Checker')
 
         # Create engine with delete_zero_area enabled
@@ -452,10 +452,10 @@ class MapCleaningToolkit(object):
         issues_dialog = GeometryIssuesDialog(layer, issues, self.iface, self.iface.mainWindow())
 
         # Show dialog and wait for user decision
-        result = issues_dialog.exec_()
+        result = issues_dialog.exec()
 
         # If user clicked "Fix All", proceed with fixing
-        if result == QDialog.Accepted:
+        if result == QDialog.DialogCode.Accepted:
             # Create progress dialog for fixing
             progress = QProgressDialog(
                 'Fixing geometries...',
@@ -464,7 +464,7 @@ class MapCleaningToolkit(object):
                 total_features,
                 self.iface.mainWindow()
             )
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setWindowTitle('Geometry Fixer')
 
             # Run the fixing engine
@@ -534,13 +534,13 @@ class MapCleaningToolkit(object):
             f'Use Ctrl+Z to undo if needed.'
         )
 
-        msg_type = QMessageBox.Information if results['failed'] == 0 else QMessageBox.Warning
+        msg_type = QMessageBox.Icon.Information if results['failed'] == 0 else QMessageBox.Icon.Warning
 
         QMessageBox(
             msg_type,
             'Geometry Fixing Results',
             message,
-            QMessageBox.Ok,
+            QMessageBox.StandardButton.Ok,
             self.iface.mainWindow()
         ).exec_()
 
@@ -576,7 +576,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Checker')
 
         # Create engine with delete_zero_area enabled and store for reuse in fix step
@@ -630,10 +630,10 @@ class MapCleaningToolkit(object):
         )
 
         # Show dialog (user can inspect and zoom)
-        result = issues_dialog.exec_()
+        result = issues_dialog.exec()
 
         # If user clicked "Fix All", proceed with fixing
-        if result == QDialog.Accepted:
+        if result == QDialog.DialogCode.Accepted:
             self.fix_geometry_issues()
 
     def fix_geometry_issues(self):
@@ -656,11 +656,11 @@ class MapCleaningToolkit(object):
             f'This will fix all {len(self.geometry_issues)} detected issues in layer "{layer.name()}".\n\n'
             f'The layer will remain in edit mode so you can undo if needed.\n\n'
             f'Proceed?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Create progress dialog for fixing
@@ -671,7 +671,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Fixer')
 
         # Reuse stored engine if available and layer matches, otherwise create new
