@@ -3313,27 +3313,37 @@ def create_map_layout_generator_panel():
     return panel
 
 
-def run(iface):
-    """Entry point called from mainplugin.py."""
-    # Singleton: reuse the existing panel only when it is alive, visible
-    # AND built from this module.  After a plugin reload the old panel's
-    # class is a different class object — keeping it would show stale UI,
-    # so tear it down and build a fresh one from the reloaded code.
-    panel = getattr(iface, '_layout_panel', None)
+def run(iface, owner=None):
+    """Entry point called from mainplugin.py.
+
+    The singleton panel is stored on `owner` (the plugin instance) as
+    `owner.layout_panel` so its lifecycle is plugin-owned; unload() tears
+    it down. When no owner is passed (standalone/console use) the panel is
+    simply shown without singleton tracking.
+    """
+    if owner is None:
+        return create_map_layout_generator_panel()
+
+    # Reuse the existing panel only when it is alive, visible AND built
+    # from this module.  After a plugin reload the old panel's class is a
+    # different class object — keeping it would show stale UI, so tear it
+    # down and build a fresh one from the reloaded code.
+    panel = getattr(owner, 'layout_panel', None)
     if panel is not None:
         try:
             if (type(panel) is MapLayoutGeneratorPanel
                     and panel.isVisible()):
                 panel.raise_()
                 panel.activateWindow()
-                return
+                return panel
             iface.removeDockWidget(panel)
             panel.close()
             panel.deleteLater()
         except RuntimeError:
             pass  # C++ object already deleted
-        iface._layout_panel = None
+        owner.layout_panel = None
 
     panel = create_map_layout_generator_panel()
-    iface._layout_panel = panel
-    panel.destroyed.connect(lambda: setattr(iface, '_layout_panel', None))
+    owner.layout_panel = panel
+    panel.destroyed.connect(lambda: setattr(owner, 'layout_panel', None))
+    return panel

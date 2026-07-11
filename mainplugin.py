@@ -261,6 +261,11 @@ class LinearGeosciencePluginMain:
         self.photo_panel = None
         self.map_cleaning = None
         self.main_dialog = None  # non-modal dialog reference
+        # Plugin-owned singletons for the tools that used to stash them on
+        # iface (torn down in unload so a reload rebuilds fresh).
+        self.layout_panel = None
+        self.reproject_dialog = None
+        self.recode_wizard = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -357,18 +362,30 @@ class LinearGeosciencePluginMain:
             self.photo_panel.deleteLater()
             self.photo_panel = None
 
-        # The Map Layout Generator panel is a singleton stored on iface;
-        # remove it on unload so a plugin reload builds a fresh panel
-        # from the new code instead of re-raising the stale dock.
-        layout_panel = getattr(self.iface, '_layout_panel', None)
-        if layout_panel is not None:
-            try:
-                self.iface.removeDockWidget(layout_panel)
-                layout_panel.close()
-                layout_panel.deleteLater()
-            except Exception:
-                pass  # panel may already be deleted
-            self.iface._layout_panel = None
+        # Plugin-owned singletons: tear down on unload so a reload rebuilds
+        # fresh instead of re-raising a stale one. Also sweep up the old
+        # iface-stashed attributes so panels created by a previous plugin
+        # version are cleaned up during an in-place upgrade.
+        for own_attr, iface_attr, is_dock in (
+                ('layout_panel', '_layout_panel', True),
+                ('reproject_dialog', '_reproject_dialog', False),
+                ('recode_wizard', '_recode_wizard', False)):
+            for holder, attr in ((self, own_attr),
+                                 (self.iface, iface_attr)):
+                widget = getattr(holder, attr, None)
+                if widget is None:
+                    continue
+                try:
+                    if is_dock:
+                        self.iface.removeDockWidget(widget)
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass  # already deleted
+                try:
+                    setattr(holder, attr, None)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Panel toggles
@@ -849,11 +866,11 @@ class LinearGeosciencePluginMain:
         except ImportError as e:
             self._show_missing_dependency("Recode & Restyle Wizard", str(e))
             return
-        run_recode_workflow(self.iface)
+        run_recode_workflow(self.iface, owner=self)
 
     def run_reprojectgeopackage(self):
         from .script_reprojectgeopackage import run
-        run(self.iface)
+        run(self.iface, owner=self)
 
     def run_static_mapping_export(self):
         from .static_mapping_export import run_static_mapping_export
@@ -889,7 +906,7 @@ class LinearGeosciencePluginMain:
 
     def run_createlayouts(self):
         from .script_create_layouts import run
-        run(self.iface)
+        run(self.iface, owner=self)
 
     def run_loadtemplate(self):
         try:

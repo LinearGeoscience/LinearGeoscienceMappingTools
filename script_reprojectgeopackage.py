@@ -935,18 +935,24 @@ class GeoPackageReprojectDialog(QDialog):
 
 # Replace the last two lines of script_reprojectgeopackage.py with this code:
 
-def run_reproject_geopackage():
-    """Main function to run the GeoPackage Reproject Tool"""
+def run_reproject_geopackage(owner=None):
+    """Main function to run the GeoPackage Reproject Tool.
+
+    The singleton dialog is stored on `owner` (the plugin instance) as
+    `owner.reproject_dialog` so its lifecycle is plugin-owned. Without an
+    owner the dialog is shown without singleton tracking.
+    """
     from qgis.utils import iface
 
     # Re-raise existing dialog if still alive
-    if hasattr(iface, "_reproject_dialog") and iface._reproject_dialog is not None:
+    existing = getattr(owner, "reproject_dialog", None) if owner else None
+    if existing is not None:
         try:
-            iface._reproject_dialog.raise_()
-            iface._reproject_dialog.activateWindow()
-            return iface._reproject_dialog
+            existing.raise_()
+            existing.activateWindow()
+            return existing
         except RuntimeError:
-            iface._reproject_dialog = None
+            owner.reproject_dialog = None
 
     parent = iface.mainWindow()
     dialog = GeoPackageReprojectDialog(parent)
@@ -955,9 +961,11 @@ def run_reproject_geopackage():
     dialog.setWindowModality(Qt.WindowModality.WindowModal)
     dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint)
 
-    # Store persistent reference to prevent GC; clean up on close
-    dialog.destroyed.connect(lambda: setattr(iface, "_reproject_dialog", None))
-    iface._reproject_dialog = dialog
+    if owner is not None:
+        # Persistent reference to prevent GC; clean up on close
+        dialog.destroyed.connect(
+            lambda: setattr(owner, "reproject_dialog", None))
+        owner.reproject_dialog = dialog
 
     dialog.show()
     dialog.raise_()
@@ -965,6 +973,6 @@ def run_reproject_geopackage():
     return dialog
 
 
-def run(iface):
+def run(iface, owner=None):
     """Entry point called from mainplugin.py."""
-    return run_reproject_geopackage()
+    return run_reproject_geopackage(owner=owner)
