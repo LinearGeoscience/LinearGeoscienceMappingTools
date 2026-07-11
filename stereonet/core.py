@@ -2044,7 +2044,7 @@ class StereonetPluginCore:
         """
         item = QTreeWidgetItem(tree)
         item.setText(0, label)
-        # NOTE: deliberately NOT Qt.ItemIsAutoTristate — with that flag an
+        # NOTE: deliberately NOT Qt.ItemFlag.ItemIsAutoTristate — with that flag an
         # item with children derives its check state from the children in
         # EVERY column, and group children carry no BF/Ct/Mn states, so the
         # parent's analysis toggles would always read Unchecked. The

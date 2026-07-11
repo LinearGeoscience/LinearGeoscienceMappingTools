@@ -5,11 +5,11 @@ Calculates magnetic declination for points using the World Magnetic Model (WMM)
 
 from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
-                                  QMessageBox, QHeaderView, QGroupBox, QAction,
+                                  QMessageBox, QHeaderView, QGroupBox,
                                   QCheckBox, QDateEdit, QDoubleSpinBox, QRadioButton,
                                   QButtonGroup, QProgressDialog, QTextEdit)
 from qgis.PyQt.QtCore import Qt, QDate, QVariant
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QAction
 from qgis.core import (QgsProject, QgsVectorLayer, QgsField, edit,
                        QgsCoordinateReferenceSystem, QgsCoordinateTransform,
                        QgsPointXY, QgsWkbTypes)

@@ -502,7 +502,7 @@ class ExportDialog(QDialog):
                 group_item = QTreeWidgetItem()
                 group_item.setText(0, child.name())
                 group_item.setData(0, Qt.ItemDataRole.UserRole, "GROUP")
-                group_item.setFlags(group_item.flags() | Qt.ItemIsTristate | Qt.ItemFlag.ItemIsUserCheckable)
+                group_item.setFlags(group_item.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable)
                 group_item.setCheckState(0, Qt.CheckState.Checked)
 
                 # Style group item

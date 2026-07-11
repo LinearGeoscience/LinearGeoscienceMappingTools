@@ -551,7 +551,7 @@ class UnifiedRecodingDialog(QDialog):
 
         raw_value is the actual source data value; source_value may carry a
         display suffix like " (123 records)". The raw value is stored in
-        Qt.UserRole so it is never reconstructed by parsing the display text
+        Qt.ItemDataRole.UserRole so it is never reconstructed by parsing the display text
         (which corrupts values that themselves contain " (").
         """
         row = self.value_mapping_table.rowCount()
@@ -591,7 +591,7 @@ class UnifiedRecodingDialog(QDialog):
         return item.text() if item else ""
 
     def _get_source_value(self, row: int) -> Optional[str]:
-        """Get the raw source value from a row (stored in Qt.UserRole)"""
+        """Get the raw source value from a row (stored in Qt.ItemDataRole.UserRole)"""
         item = self.value_mapping_table.item(row, 0)
         if item is None:
             return None

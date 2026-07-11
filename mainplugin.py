@@ -1,14 +1,21 @@
 import os
 from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import (
-    QAction, QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QMessageBox, QWidget, QGroupBox, QFrame, QSizePolicy, QScrollArea,
-    QStackedWidget, QButtonGroup, QShortcut, QApplication
+    QStackedWidget, QButtonGroup, QApplication
 )
 from qgis.PyQt.QtGui import (
-    QIcon, QColor, QPalette, QLinearGradient, QCursor, QKeySequence
+    QIcon, QColor, QPalette, QLinearGradient, QCursor, QKeySequence,
+    QAction, QShortcut
 )
-from qgis.PyQt.QtSvg import QSvgWidget, QSvgRenderer
+from qgis.PyQt.QtSvg import QSvgRenderer
+try:
+    # Qt6 (QGIS 4): QSvgWidget lives in QtSvgWidgets
+    from qgis.PyQt.QtSvgWidgets import QSvgWidget
+except ImportError:
+    # Qt5 (QGIS 3.x): still in QtSvg
+    from qgis.PyQt.QtSvg import QSvgWidget
 
 # Import UI scaling system for DPI-aware interface
 from .ui_scaling import get_scale_manager

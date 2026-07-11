@@ -247,16 +247,24 @@ class SlideshowControls(QWidget):
         panel_y = qgis_rect.y() + 120
         self.move(int(panel_x), int(panel_y))
 
+    @staticmethod
+    def _global_pos(event):
+        """Global cursor position of a mouse event on both Qt5 and Qt6
+        (globalPos() is removed in Qt6; globalPosition() is absent in Qt5)."""
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        return event.globalPos()
+
     def mousePressEvent(self, event):
         """Handle mouse press for dragging."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            self.drag_position = self._global_pos(event) - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move for dragging."""
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position:
-            self.move(event.globalPos() - self.drag_position)
+            self.move(self._global_pos(event) - self.drag_position)
             event.accept()
 
     def mouseReleaseEvent(self, event):

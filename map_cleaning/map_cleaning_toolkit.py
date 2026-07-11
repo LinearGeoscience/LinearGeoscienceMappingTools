@@ -23,8 +23,8 @@
 import os.path
 
 from qgis.PyQt.QtCore import QSettings, Qt
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QProgressDialog, QDialog
+from qgis.PyQt.QtGui import QIcon, QAction
+from qgis.PyQt.QtWidgets import QMessageBox, QProgressDialog, QDialog
 from qgis.core import QgsApplication, QgsWkbTypes, QgsMapLayerType, QgsVectorLayer, QgsMessageLog, Qgis
 
 # Import clipping components
@@ -542,7 +542,7 @@ class MapCleaningToolkit(object):
             message,
             QMessageBox.StandardButton.Ok,
             self.iface.mainWindow()
-        ).exec_()
+        ).exec()
 
         self.log_geometry_fixer(
             f"Completed: {results['fixed']} fixed, {results.get('recovered', 0)} recovered, "

@@ -55,7 +55,7 @@ def normalize_for_mobile(path: str) -> str:
 
 
 def clean_csv_uri_to_path(uri: str) -> Optional[str]:
-    """
+    r"""
     Extract and clean the actual file path from a CSV/delimited text layer URI.
 
     QGIS stores CSV layers with query parameters and file protocols:

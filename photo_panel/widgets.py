@@ -5,7 +5,7 @@ Bug fixes:
   #1:  Qt dynamic property for selection styling instead of brittle .replace()
   #2:  clicked = pyqtSignal(str) on PhotoThumbnail, no lambda overrides
   #3:  select_on_map() implemented with layer.selectByIds() + zoomToSelected()
-  #4:  menu.exec(pos) instead of deprecated menu.exec_(pos)
+  #4:  menu.exec(pos) instead of the deprecated underscore variant
   #5:  Persistent QTimer with stop()/start() for search debounce
 """
 
@@ -15,12 +15,12 @@ from typing import Dict, List, Any
 
 from qgis.PyQt.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QToolButton,
-    QComboBox, QSlider, QLineEdit, QMenu, QAction, QApplication,
+    QComboBox, QSlider, QLineEdit, QMenu, QApplication,
     QMessageBox, QWidget, QSizePolicy
 )
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 from qgis.PyQt.QtGui import (
-    QPixmap, QIcon, QCursor, QDesktopServices
+    QPixmap, QIcon, QCursor, QDesktopServices, QAction
 )
 from qgis.core import (
     QgsProject, QgsCoordinateTransform, QgsMessageLog, Qgis
@@ -234,7 +234,11 @@ class PhotoThumbnail(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.photo.path)
         elif event.button() == Qt.MouseButton.RightButton:
-            self.show_context_menu(event.globalPos())
+            # globalPos() is removed in Qt6; globalPosition() is absent in Qt5
+            if hasattr(event, "globalPosition"):
+                self.show_context_menu(event.globalPosition().toPoint())
+            else:
+                self.show_context_menu(event.globalPos())
 
     def show_context_menu(self, pos) -> None:
         """Show context menu with actions. Bug fix #4: menu.exec()."""
