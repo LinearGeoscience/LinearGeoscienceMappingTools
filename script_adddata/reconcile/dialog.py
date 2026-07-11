@@ -14,8 +14,12 @@ A self-contained, preview-then-apply tool:
 Conflicts (a feature changed on both sides) are shown but NOT applied in the
 MVP — they are left for the Phase 2 resolution UI.
 
-Runs synchronously on the GUI thread with processEvents() for progress: the
-commit uses a QgsVectorLayer edit session, which must run on the main thread.
+Preview, apply, migrate and prepare all run as background QgsTasks (see
+lgs_tasks.run_in_task): the engine is path-based and opens its own layer
+instances inside the task, so nothing touches project layers off the main
+thread. Progress reports to the in-dialog bar and the QGIS task manager;
+a Cancel button stops between layers (apply keeps committed layers and
+advances their base).
 """
 
 import os
@@ -25,7 +29,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFileDialog, QGroupBox, QProgressBar, QTreeWidget, QTreeWidgetItem,
-    QMessageBox, QApplication, QWidget, QComboBox)
+    QMessageBox, QWidget, QComboBox)
 
 from qgis.core import (QgsMessageLog, Qgis, QgsGeometry, QgsRectangle,
                        QgsVectorLayer, QgsCoordinateReferenceSystem,
@@ -66,6 +70,11 @@ except Exception:  # pragma: no cover - theme is optional
         group_box_style = lambda: ""
         dialog_style = lambda: ""
 
+try:
+    from ...lgs_tasks import run_in_task
+except Exception:  # pragma: no cover - standalone fallback
+    from lgs_tasks import run_in_task
+
 
 _UUID_PREVIEW_LIMIT = 100
 
@@ -78,6 +87,7 @@ class ReconcileDialog(QDialog):
         self.template_gpkg = None
         self.build = None
         self._template_prepared = False
+        self._task = None
 
         self.setWindowTitle("Reconcile / Merge Field Data")
         self.resize(720, 640)
@@ -210,9 +220,20 @@ class ReconcileDialog(QDialog):
         layout.addWidget(prev, 1)
 
         # --- Progress + actions ---
+        prog_row = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        layout.addWidget(self.progress)
+        prog_row.addWidget(self.progress, 1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setToolTip(
+            "Stop the current operation. Applying a reconcile stops after "
+            "the current layer: already-committed layers keep their changes "
+            "and are recorded in the base snapshot.")
+        self.cancel_btn.clicked.connect(self._cancel_task)
+        self.cancel_btn.setVisible(False)
+        self._style(self.cancel_btn, primary=False)
+        prog_row.addWidget(self.cancel_btn)
+        layout.addLayout(prog_row)
         self.status = QLabel("Ready")
         layout.addWidget(self.status)
 
@@ -338,10 +359,49 @@ class ReconcileDialog(QDialog):
         self.summary.setText("No preview yet.")
         self.apply_btn.setEnabled(False)
 
-    def _on_progress(self, pct, msg):
-        self.progress.setValue(int(pct))
-        self.status.setText(msg)
-        QApplication.processEvents()
+    # --------------------------------------------------------- task plumbing
+    def _set_busy(self, busy, note=None):
+        for btn in (self.preview_btn, self.apply_btn,
+                    self.migrate_btn, self.hardcode_btn):
+            btn.setEnabled(not busy)
+        self.cancel_btn.setVisible(busy)
+        if not busy:
+            self._refresh_apply_enabled()
+            self.progress.setValue(0)
+            self.status.setText(note or "Ready")
+
+    def _cancel_task(self):
+        if self._task is not None:
+            self._task.cancel()
+            self.status.setText("Cancelling…")
+
+    def _start_task(self, description, func, on_finished):
+        """Run func(progress_cb) on the QGIS task pool; on_finished(result)
+        on the main thread with the busy state already cleared."""
+        self._set_busy(True)
+        self.status.setText(description + "…")
+
+        def _done(result):
+            self._task = None
+            self._set_busy(False)
+            on_finished(result)
+
+        def _err(exc, tb):
+            self._task = None
+            self._set_busy(False)
+            QgsMessageLog.logMessage(f"{description} failed: {tb}",
+                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
+            QMessageBox.critical(self, "Reconcile",
+                                 f"{description} failed:\n{exc}")
+
+        def _cancelled():
+            self._task = None
+            self._set_busy(False, "Cancelled")
+
+        self._task = run_in_task(description, func, on_finished=_done,
+                                 on_error=_err, on_cancelled=_cancelled,
+                                 owner=self, bar=self.progress,
+                                 label=self.status)
 
     def _require_paths(self):
         if not self.master_gpkg or not os.path.exists(self.master_gpkg):
@@ -357,34 +417,33 @@ class ReconcileDialog(QDialog):
         if not self.master_gpkg or not os.path.exists(self.master_gpkg):
             QMessageBox.warning(self, "Reconcile", "Select a master GeoPackage first.")
             return
-        self.migrate_btn.setEnabled(False)
-        try:
-            report = migrate.run_migration(self.master_gpkg, progress_cb=self._on_progress)
-            added = sum(len(v.get("columns_added", []))
-                        for v in report.get("layers", {}).values()
-                        if isinstance(v, dict))
-            filled = sum(v.get("uuids_filled", 0)
-                         for v in report.get("layers", {}).values()
-                         if isinstance(v, dict))
-            if report.get("ok"):
-                self.setup_status.setText(
-                    f"Migrated. lgs_* columns added: {added}; UUIDs backfilled: "
-                    f"{filled}. UUID defaults: {report.get('uuid_defaults')}")
-            else:
-                self.setup_status.setText(
-                    "Migration finished with issues: "
-                    + "; ".join(report.get("errors", [])))
-        except Exception as exc:
-            QgsMessageLog.logMessage(f"reconcile migrate failed: {exc}",
-                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
-            QMessageBox.critical(self, "Reconcile", f"Migration failed:\n{exc}")
-        finally:
-            self.migrate_btn.setEnabled(True)
-            self.progress.setValue(0)
-            self.status.setText("Ready")
+        master = self.master_gpkg
+        self._start_task(
+            "Migrate master GeoPackage",
+            lambda cb: migrate.run_migration(master, progress_cb=cb),
+            self._migrate_done)
 
-    def _run_hardcode(self):
-        """Hardcode the working template in place (empty-only) before preview."""
+    def _migrate_done(self, report):
+        added = sum(len(v.get("columns_added", []))
+                    for v in report.get("layers", {}).values()
+                    if isinstance(v, dict))
+        filled = sum(v.get("uuids_filled", 0)
+                     for v in report.get("layers", {}).values()
+                     if isinstance(v, dict))
+        if report.get("ok"):
+            self.setup_status.setText(
+                f"Migrated. lgs_* columns added: {added}; UUIDs backfilled: "
+                f"{filled}. UUID defaults: {report.get('uuid_defaults')}")
+        else:
+            self.setup_status.setText(
+                "Migration finished with issues: "
+                + "; ".join(report.get("errors", [])))
+
+    def _run_hardcode(self, then=None):
+        """Hardcode the working template in place (empty-only) before preview.
+
+        `then` is an optional continuation invoked after a successful
+        preparation (used to chain straight into building the preview)."""
         if not self._require_paths():
             return
         try:
@@ -403,28 +462,21 @@ class ReconcileDialog(QDialog):
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
 
-        self.hardcode_btn.setEnabled(False)
-        try:
-            report = hardcode_geopackage(
-                self.template_gpkg, project_id=project_id,
-                mapped_scale=mapped_scale,
-                lookup_sources=[self.template_gpkg, self.master_gpkg],
-                progress_cb=self._on_progress)
-        except Exception as exc:
-            QgsMessageLog.logMessage(f"reconcile hardcode failed: {exc}",
-                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
-            QMessageBox.critical(self, "Prepare field data",
-                                 f"Preparation failed:\n{exc}")
-            return
-        finally:
-            self.hardcode_btn.setEnabled(True)
-            self.progress.setValue(0)
-            self.status.setText("Ready")
+        template, master = self.template_gpkg, self.master_gpkg
+        self._start_task(
+            "Prepare field data",
+            lambda cb: hardcode_geopackage(
+                template, project_id=project_id, mapped_scale=mapped_scale,
+                lookup_sources=[template, master], progress_cb=cb),
+            lambda report: self._hardcode_done(report, then))
 
+    def _hardcode_done(self, report, then=None):
         self._template_prepared = True
         self._show_hardcode_summary(report)
         # The template changed on disk; any prior preview is now stale.
         self._reset_preview()
+        if then is not None:
+            then()
 
     def _show_hardcode_summary(self, report):
         layers = report.get("layers", {})
@@ -476,7 +528,9 @@ class ReconcileDialog(QDialog):
         self.prep_status.setText(status)
 
     def _confirm_prepare(self):
-        """Offer to hardcode before previewing. Returns True to continue."""
+        """Offer to hardcode before previewing.
+
+        Returns 'prepare', 'continue' or 'cancel'."""
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("Prepare field data first?")
@@ -491,32 +545,39 @@ class ReconcileDialog(QDialog):
         box.exec()
         clicked = box.clickedButton()
         if clicked is cancel_btn:
-            return False
+            return "cancel"
         if clicked is prep_btn:
-            self._run_hardcode()
-            # Only proceed if preparation actually succeeded.
-            return self._template_prepared
-        return True  # "Build without preparing"
+            return "prepare"
+        return "continue"  # "Build without preparing"
 
     def _build_preview(self):
         if not self._require_paths():
             return
-        if not self._template_prepared and not self._confirm_prepare():
-            return
+        if not self._template_prepared:
+            choice = self._confirm_prepare()
+            if choice == "cancel":
+                return
+            if choice == "prepare":
+                # Prepare first, then chain into the preview build.
+                self._run_hardcode(then=self._start_build_preview)
+                return
+        self._start_build_preview()
+
+    def _start_build_preview(self):
         self._reset_preview()
-        self.preview_btn.setEnabled(False)
-        try:
-            self.build = engine.build_plans(
-                self.master_gpkg, self.template_gpkg, progress_cb=self._on_progress)
-            self._populate_tree(self.build)
-        except Exception as exc:
-            QgsMessageLog.logMessage(f"reconcile preview failed: {exc}",
-                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
-            QMessageBox.critical(self, "Reconcile", f"Preview failed:\n{exc}")
-        finally:
-            self.preview_btn.setEnabled(True)
-            self.progress.setValue(0)
-            self.status.setText("Ready")
+        master, template = self.master_gpkg, self.template_gpkg
+        # Capture the transform context on the main thread; the engine must
+        # not touch QgsProject from the task thread.
+        ctx = QgsProject.instance().transformContext()
+        self._start_task(
+            "Build reconcile preview",
+            lambda cb: engine.build_plans(master, template, progress_cb=cb,
+                                          transform_context=ctx),
+            self._preview_done)
+
+    def _preview_done(self, build):
+        self.build = build
+        self._populate_tree(build)
 
     def _populate_tree(self, build):
         self.tree.clear()
@@ -814,51 +875,58 @@ class ReconcileDialog(QDialog):
 
     def _run_apply(self, force_lock):
         mapper = self.mapper_edit.text().strip()
-        self.apply_btn.setEnabled(False)
         self._sync_lineage_acceptance()
-        try:
-            result = engine.apply_plans(
-                self.master_gpkg, self.template_gpkg, self.build,
-                mapper=mapper, force_lock=force_lock,
-                progress_cb=self._on_progress)
-            t = result["totals"]
+        master, template, build = self.master_gpkg, self.template_gpkg, self.build
+        self._start_task(
+            "Apply reconcile",
+            lambda cb: engine.apply_plans(master, template, build,
+                                          mapper=mapper, force_lock=force_lock,
+                                          progress_cb=cb),
+            self._apply_done)
 
-            if result.get("aborted"):
-                self._handle_abort(result)
-                return
+    def _apply_done(self, result):
+        t = result["totals"]
 
-            if result.get("ok"):
-                self._reload_master_layers()
-                extra = ""
-                if result.get("unresolved_conflicts"):
-                    extra += (f"\n{result['unresolved_conflicts']} conflict(s) "
-                              "left unresolved — they will re-appear next sync.")
-                if result.get("tombstones_written"):
-                    extra += (f"\n{result['tombstones_written']} deleted "
-                              "feature(s) saved as recoverable tombstones.")
-                QMessageBox.information(
-                    self, "Reconcile",
-                    f"Applied {t['inserted']} adds, {t['updated']} updates, "
-                    f"{t['deleted']} deletes.\nBatch: {result['batch_id']}{extra}"
-                    "\n\nThe base snapshot has been advanced — re-syncing this "
-                    "template will apply further edits, not lose them.")
-                self._reset_preview()
-            else:
-                QMessageBox.warning(
-                    self, "Reconcile",
-                    "Reconcile completed with errors (failed layers kept their "
-                    "previous base for retry):\n"
-                    + "\n".join(result.get("errors", []))
-                    + f"\n\nApplied: {t}")
-                self.apply_btn.setEnabled(True)
-        except Exception as exc:
-            QgsMessageLog.logMessage(f"reconcile apply failed: {exc}",
-                                     "Linear Geoscience", Qgis.MessageLevel.Critical)
-            QMessageBox.critical(self, "Reconcile", f"Apply failed:\n{exc}")
-            self.apply_btn.setEnabled(True)
-        finally:
-            self.progress.setValue(0)
-            self.status.setText("Ready")
+        if result.get("aborted"):
+            self._handle_abort(result)
+            return
+
+        if result.get("cancelled"):
+            QMessageBox.information(
+                self, "Reconcile",
+                "Apply cancelled.\n\n"
+                f"Layers committed before cancelling keep their changes "
+                f"(applied so far: {t['inserted']} adds, {t['updated']} "
+                f"updates, {t['deleted']} deletes) and their base snapshot "
+                "was advanced. Build a new preview to continue with the "
+                "remaining layers.")
+            self._reset_preview()
+            return
+
+        if result.get("ok"):
+            self._reload_master_layers()
+            extra = ""
+            if result.get("unresolved_conflicts"):
+                extra += (f"\n{result['unresolved_conflicts']} conflict(s) "
+                          "left unresolved — they will re-appear next sync.")
+            if result.get("tombstones_written"):
+                extra += (f"\n{result['tombstones_written']} deleted "
+                          "feature(s) saved as recoverable tombstones.")
+            QMessageBox.information(
+                self, "Reconcile",
+                f"Applied {t['inserted']} adds, {t['updated']} updates, "
+                f"{t['deleted']} deletes.\nBatch: {result['batch_id']}{extra}"
+                "\n\nThe base snapshot has been advanced — re-syncing this "
+                "template will apply further edits, not lose them.")
+            self._reset_preview()
+        else:
+            self._reload_master_layers()
+            QMessageBox.warning(
+                self, "Reconcile",
+                "Reconcile completed with errors (failed layers kept their "
+                "previous base for retry):\n"
+                + "\n".join(result.get("errors", []))
+                + f"\n\nApplied: {t}")
 
     def _handle_abort(self, result):
         """Version-guard / lock aborts: offer rebuild or override."""

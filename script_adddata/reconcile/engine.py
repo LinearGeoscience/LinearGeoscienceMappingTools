@@ -80,11 +80,19 @@ def _uuid_field(layer, default: str = "UUID") -> str:
     return default if default in names else (names[0] if names else default)
 
 
-def _transform(src_layer, dst_layer):
+def _transform(src_layer, dst_layer, context=None):
+    """CRS transform between two layers.
+
+    `context` may be a QgsCoordinateTransformContext captured on the main
+    thread; without it we fall back to QgsProject.instance(), which is only
+    safe when running on the main thread (background tasks must pass one).
+    """
     try:
         scrs, dcrs = src_layer.crs(), dst_layer.crs()
         if scrs.isValid() and dcrs.isValid() and scrs != dcrs:
-            return QgsCoordinateTransform(scrs, dcrs, QgsProject.instance())
+            return QgsCoordinateTransform(
+                scrs, dcrs, context if context is not None
+                else QgsProject.instance())
     except Exception:
         pass
     return None
@@ -97,7 +105,7 @@ def _master_fingerprints(master_layer, uuid_field) -> Dict[str, FeatureFingerpri
 
 def build_plans(master_gpkg: str, template_path: str,
                 layer_names: Optional[List[str]] = None,
-                progress_cb=None) -> dict:
+                progress_cb=None, transform_context=None) -> dict:
     """Capture + classify every standard layer. Does NOT modify anything.
 
     Returns {plans: [ReconcilePlan], captures: {layer: working_payloads},
@@ -136,7 +144,7 @@ def build_plans(master_gpkg: str, template_path: str,
 
         uuid_field = _uuid_field(tpl_layer)
         master_uuid_field = _uuid_field(master_layer)
-        transform = _transform(tpl_layer, master_layer)
+        transform = _transform(tpl_layer, master_layer, transform_context)
 
         working_payloads, wreport = capture_layer(
             tpl_layer, uuid_field=uuid_field, transform=transform)
@@ -243,8 +251,19 @@ def apply_plans(master_gpkg: str, template_path: str, build: dict,
 
         for i, plan in enumerate(plans):
             if progress_cb:
-                progress_cb(int(i / max(len(plans), 1) * 80),
-                            f"Applying {plan.layer}")
+                try:
+                    progress_cb(int(i / max(len(plans), 1) * 80),
+                                f"Applying {plan.layer}")
+                except Exception:
+                    # Cancel requested (the caller's callback raises to stop
+                    # us). Stop cleanly BETWEEN layers: layers already
+                    # committed keep their changes, and the base/changelog
+                    # advance below still runs for them so a re-sync stays
+                    # consistent.
+                    result["cancelled"] = True
+                    result["errors"].append(
+                        f"cancelled by user before layer: {plan.layer}")
+                    break
             result["unresolved_conflicts"] += sum(
                 1 for c in plan.conflicts
                 if c.effective_resolution() == RES_SKIP)
@@ -307,7 +326,10 @@ def apply_plans(master_gpkg: str, template_path: str, build: dict,
         result["tombstones_written"] = len(all_tombstones)
 
         if progress_cb:
-            progress_cb(90, "Advancing base snapshot")
+            try:
+                progress_cb(90, "Advancing base snapshot")
+            except Exception:
+                pass  # too late to stop: the base advance must complete
         master_version = log.current_version() + 1
         try:
             checkout.update_base(master_gpkg, template_id, new_base_layers,
@@ -331,7 +353,10 @@ def apply_plans(master_gpkg: str, template_path: str, build: dict,
         lock.release()
 
     if progress_cb:
-        progress_cb(100, "Reconcile complete")
+        try:
+            progress_cb(100, "Reconcile complete")
+        except Exception:
+            pass
     return result
 
 
@@ -349,7 +374,8 @@ def _apply_resolutions(plans, resolutions: dict):
 
 def register_and_snapshot(master_gpkg: str, template_path: str,
                           mapper: str = "",
-                          layer_names: Optional[List[str]] = None) -> dict:
+                          layer_names: Optional[List[str]] = None,
+                          transform_context=None) -> dict:
     """Record a template handout and store its base snapshot.
 
     For a blank template the base is empty (all future features classify as
@@ -370,7 +396,8 @@ def register_and_snapshot(master_gpkg: str, template_path: str,
             continue
         uuid_field = _uuid_field(tpl_layer)
         master_layer = _open(master_gpkg, name)
-        transform = _transform(tpl_layer, master_layer) if master_layer else None
+        transform = (_transform(tpl_layer, master_layer, transform_context)
+                     if master_layer else None)
         payloads, _ = capture_layer(tpl_layer, uuid_field=uuid_field,
                                     transform=transform)
         snapshots[name] = snapshot_from_payloads(name, uuid_field, payloads)
