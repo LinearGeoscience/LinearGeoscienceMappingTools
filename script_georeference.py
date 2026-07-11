@@ -13,7 +13,8 @@ This script integrates data from the 'GeologistCodes' and '1 - FieldNotebook' la
 import os
 from qgis.PyQt.QtWidgets import (
     QFileDialog, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QPushButton, QLineEdit, QComboBox, QDialogButtonBox, QApplication, QMessageBox
+    QPushButton, QLineEdit, QComboBox, QDialogButtonBox, QApplication, QMessageBox,
+    QProgressDialog
 )
 from qgis.core import (
     QgsProject, QgsPointXY, QgsFeature, QgsGeometry, QgsVectorLayer, QgsField,
@@ -37,7 +38,7 @@ except ImportError:
     except ImportError:
         def read_exif_orientation(path):
             return 1
-from qgis.PyQt.QtCore import QUrl, QMetaType
+from qgis.PyQt.QtCore import QUrl, QMetaType, Qt
 from qgis.PyQt.QtGui import QColor, QImageReader
 import sys
 
@@ -306,8 +307,32 @@ def match_photos(point_layer, geologist_folders, codes_layer):
     ])
     table_layer.updateFields()
 
+    # Scan each geologist's photo folder ONCE up front (this loop previously
+    # re-walked the folder for every feature: O(features x files) disk I/O).
+    folder_photo_dicts = {}
+    for folder in set(geologist_folders.values()):
+        photo_dict = {}
+        for root, dirs, files in os.walk(folder):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    photo_id = file[-8:-4]
+                    # Store the FULL path (root may be a subfolder). Storing only the
+                    # bare filename and rebuilding from photo_folder broke nested layouts:
+                    # the photo matched but the path pointed at the wrong place.
+                    photo_dict[photo_id] = os.path.join(root, file)
+        folder_photo_dicts[folder] = photo_dict
+
+    progress = QProgressDialog("Matching photos to features...", "Cancel",
+                               0, point_layer.featureCount())
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.setMinimumDuration(500)
+
     # Process each feature in point layer by geologist
-    for feature in point_layer.getFeatures():
+    for feat_no, feature in enumerate(point_layer.getFeatures()):
+        progress.setValue(feat_no)
+        if progress.wasCanceled():
+            QgsMessageLog.logMessage("Photo matching cancelled by user.", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            break
         geologist = feature['Geologist']
         geologist_name = geologist_name_map.get(str(geologist).strip(), f"Geologist {geologist}")
         photo_id_str = str(feature['PhotoID'])
@@ -325,16 +350,7 @@ def match_photos(point_layer, geologist_folders, codes_layer):
         if photo_id_str == 'NULL' or not photo_id_str.strip():
             continue  # Skip NULL or empty PhotoID entries
 
-        photo_folder = geologist_folders[geologist]
-        photo_dict = {}
-        for root, dirs, files in os.walk(photo_folder):
-            for file in files:
-                if file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    photo_id = file[-8:-4]
-                    # Store the FULL path (root may be a subfolder). Storing only the
-                    # bare filename and rebuilding from photo_folder broke nested layouts:
-                    # the photo matched but the path pointed at the wrong place.
-                    photo_dict[photo_id] = os.path.join(root, file)
+        photo_dict = folder_photo_dicts[geologist_folders[geologist]]
 
         try:
             expanded_photo_ids = expand_photo_ids(photo_id_str)
@@ -447,6 +463,8 @@ def match_photos(point_layer, geologist_folders, codes_layer):
 
         # Update summary
         photo_summary[geologist_name] = photo_summary.get(geologist_name, 0) + len(photo_files)
+
+    progress.close()
 
     # Create group in QGIS and add layers
     group = QgsProject.instance().layerTreeRoot().insertGroup(0, 'Georeferenced Photos')
