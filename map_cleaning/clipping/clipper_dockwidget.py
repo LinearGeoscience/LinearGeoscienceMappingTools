@@ -105,6 +105,7 @@ class ClipperDockWidget(QDockWidget):
     detectGeometryIssuesClicked = pyqtSignal()  # Emitted when detect geometry issues is clicked
     viewGeometryIssuesClicked = pyqtSignal()  # Emitted when view issues is clicked
     fixGeometryIssuesClicked = pyqtSignal()  # Emitted when fix all is clicked
+    runNativeAlgClicked = pyqtSignal(str)  # Emits a native Processing algorithm id (QGIS 4)
 
     def __init__(self, parent=None):
         super(ClipperDockWidget, self).__init__(parent)
@@ -752,9 +753,44 @@ class ClipperDockWidget(QDockWidget):
         actions_group.setLayout(actions_layout)
         layout.addWidget(actions_group)
 
+        # QGIS 4 native cleaning algorithms (shown only when available):
+        # gap filling and small-part removal, run via their Processing
+        # dialogs on the active layer.
+        self._build_native_cleaning_group(layout)
+
         layout.addStretch()
         tab.setLayout(layout)
         return tab
+
+    def _build_native_cleaning_group(self, layout):
+        """Add buttons for native gap-fill / remove-parts algorithms when
+        the running QGIS provides them (QGIS 4.0/4.2+). No-op on 3.x."""
+        from qgis.core import QgsApplication
+        registry = QgsApplication.processingRegistry()
+        available = [
+            ("Fill Gaps Between Polygons", 'native:fixgeometrygap'),
+            ("Remove Small Parts (by area)", 'native:removepartsbyarea'),
+            ("Remove Short Parts (by length)", 'native:removepartsbylength'),
+        ]
+        available = [(label, alg) for label, alg in available
+                     if registry.algorithmById(alg) is not None]
+        if not available:
+            return
+
+        group = QGroupBox("QGIS 4 Cleaning Tools")
+        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        vbox = QVBoxLayout()
+        vbox.setSpacing(6)
+        note = QLabel("Native algorithms from your QGIS version.")
+        note.setStyleSheet("font-size: 9pt; color: #666;")
+        vbox.addWidget(note)
+        for label, alg in available:
+            btn = QPushButton(label)
+            btn.setStyleSheet("padding: 8px; border-radius: 4px;")
+            btn.clicked.connect(lambda _checked, a=alg: self.runNativeAlgClicked.emit(a))
+            vbox.addWidget(btn)
+        group.setLayout(vbox)
+        layout.addWidget(group)
 
     def create_spline_settings_tab(self):
         """Create Spline Settings tab content"""

@@ -132,6 +132,7 @@ class MapCleaningToolkit(object):
         self.dockwidget.detectGeometryIssuesClicked.connect(self.detect_geometry_issues_from_tab)
         self.dockwidget.viewGeometryIssuesClicked.connect(self.view_geometry_issues)
         self.dockwidget.fixGeometryIssuesClicked.connect(self.fix_geometry_issues)
+        self.dockwidget.runNativeAlgClicked.connect(self.run_native_algorithm)
 
         # Load spline settings into dock widget
         self.dockwidget.load_spline_settings()
@@ -402,6 +403,26 @@ class MapCleaningToolkit(object):
 
         # Switch to smart clip tab (index 2)
         self.dockwidget.tab_widget.setCurrentIndex(2)
+
+    def run_native_algorithm(self, alg_id):
+        """Launch a native QGIS Processing algorithm dialog (QGIS 4 cleaning
+        tools) pre-filled with the active layer. Runs in the background with
+        its own progress via the Processing framework."""
+        try:
+            import processing
+        except ImportError:
+            QMessageBox.warning(
+                self.iface.mainWindow(), 'Processing unavailable',
+                'The Processing framework is not available.')
+            return
+        layer = self.iface.activeLayer()
+        params = {'INPUT': layer} if layer is not None else {}
+        try:
+            processing.execAlgorithmDialog(alg_id, params)
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Failed to open algorithm {alg_id}: {e}",
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def execute_geometry_fixer(self):
         """Execute geometry fixer directly from toolbar button"""
