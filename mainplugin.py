@@ -23,28 +23,14 @@ from .ui_scaling import get_scale_manager
 # Import centralized theme
 from . import plugin_theme as theme
 
-# The stereonet and recode workflow modules require matplotlib/pandas, which
-# are not bundled with every QGIS install (notably some Linux packages). Guard
-# their imports so the plugin still loads and the remaining tools stay usable;
-# the affected features show an installation hint instead.
-try:
-    from .stereonet import StereonetPluginCore
-    STEREONET_IMPORT_ERROR = None
-except ImportError as e:
-    StereonetPluginCore = None
-    STEREONET_IMPORT_ERROR = str(e)
-
-try:
-    from .recode_workflow import run_recode_workflow
-    RECODE_IMPORT_ERROR = None
-except ImportError as e:
-    run_recode_workflow = None
-    RECODE_IMPORT_ERROR = str(e)
-
-from .photo_panel import run_photo_panel
+# The stereonet and recode-workflow modules pull in matplotlib/pandas/numpy —
+# the heaviest imports in the plugin. They (and the other feature modules) are
+# imported lazily inside their launcher methods so plugin load (paid on every
+# QGIS startup) stays cheap and the stereonet dock is only built when first
+# opened. Only map_cleaning stays eager (it registers a Processing provider at
+# load). feature_info is a lightweight constants module, kept eager for the
+# sidebar builder.
 from .map_cleaning import MapCleaningToolkit
-from .script_declination_adjuster import DeclinationAdjusterDialog
-from .script_declination_calculator import CalculateDeclinationDialog
 from . import feature_info
 
 # QSettings keys
@@ -299,13 +285,30 @@ class LinearGeosciencePluginMain:
         # Add to Plugins menu (required for QGIS plugin repository)
         self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_main_button)
 
-        if StereonetPluginCore is not None:
-            self.stereonet_core = StereonetPluginCore(self.iface)
-            self.stereonet_core.initGui()
+        # The stereonet dock (+ matplotlib/pandas) is built lazily on first
+        # open via _ensure_stereonet(), not at startup.
+        self._stereonet_import_error = None
 
         # Map cleaning toolkit: adds its actions to the plugin toolbar
         self.map_cleaning = MapCleaningToolkit(self.iface)
         self.map_cleaning.initGui(toolbar=self.toolbar)
+
+    def _ensure_stereonet(self):
+        """Build the stereonet core + dock on first use. Returns the core or
+        None if matplotlib/pandas are unavailable (hint already shown)."""
+        if self.stereonet_core is not None:
+            return self.stereonet_core
+        if self._stereonet_import_error is not None:
+            return None
+        try:
+            from .stereonet import StereonetPluginCore
+        except ImportError as e:
+            self._stereonet_import_error = str(e)
+            return None
+        core = StereonetPluginCore(self.iface)
+        core.initGui()
+        self.stereonet_core = core
+        return core
 
     def unload(self):
         if self.main_dialog:
@@ -382,16 +385,20 @@ class LinearGeosciencePluginMain:
         )
 
     def toggle_stereonet_panel(self):
-        if self.stereonet_core is None and STEREONET_IMPORT_ERROR:
-            self._show_missing_dependency("Stereonet Analysis", STEREONET_IMPORT_ERROR)
+        core = self._ensure_stereonet()
+        if core is None:
+            self._show_missing_dependency(
+                "Stereonet Analysis",
+                self._stereonet_import_error or "matplotlib/pandas not found")
             return
-        if not self.stereonet_core or not self.stereonet_core.dock:
+        if not core.dock:
             return
-        dock = self.stereonet_core.dock
+        dock = core.dock
         dock.setVisible(not dock.isVisible())
 
     def toggle_photo_panel(self):
         if not self.photo_panel:
+            from .photo_panel import run_photo_panel
             self.photo_panel = run_photo_panel(self.iface)
             if not self.photo_panel:
                 return
@@ -835,8 +842,12 @@ class LinearGeosciencePluginMain:
         run(self.iface)
 
     def run_recode_workflow(self):
-        if run_recode_workflow is None:
-            self._show_missing_dependency("Recode & Restyle Wizard", RECODE_IMPORT_ERROR)
+        # recode_workflow pulls in pandas; import lazily so a missing
+        # dependency only affects this feature, not plugin load.
+        try:
+            from .recode_workflow import run_recode_workflow
+        except ImportError as e:
+            self._show_missing_dependency("Recode & Restyle Wizard", str(e))
             return
         run_recode_workflow(self.iface)
 
@@ -846,7 +857,10 @@ class LinearGeosciencePluginMain:
 
     def run_static_mapping_export(self):
         from .static_mapping_export import run_static_mapping_export
-        run_static_mapping_export(self.iface, stereonet_core=self.stereonet_core)
+        # Build the stereonet core on demand (it feeds the export); None is
+        # handled downstream when matplotlib is unavailable.
+        run_static_mapping_export(self.iface,
+                                  stereonet_core=self._ensure_stereonet())
 
     def run_adddomainlayer(self):
         from .script_adddomainlayer import run
@@ -894,9 +908,11 @@ class LinearGeosciencePluginMain:
             )
 
     def run_declination_adjuster(self):
+        from .script_declination_adjuster import DeclinationAdjusterDialog
         dialog = DeclinationAdjusterDialog(self.iface.mainWindow())
         dialog.exec()
 
     def run_declination_calculator(self):
+        from .script_declination_calculator import CalculateDeclinationDialog
         dialog = CalculateDeclinationDialog(self.iface.mainWindow())
         dialog.exec()
