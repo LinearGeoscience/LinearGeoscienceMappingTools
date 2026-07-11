@@ -14,7 +14,7 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QLineEdit, QRadioButton, QButtonGroup, QComboBox, QGroupBox,
     QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QSplitter,
-    QProgressBar, QMessageBox, QApplication, QWidget, QHeaderView,
+    QProgressBar, QMessageBox, QWidget, QHeaderView,
 )
 from qgis.core import QgsProject
 
@@ -43,8 +43,14 @@ except ImportError:
 from .analysis import (
     LAYER_CONFIGS, MODE_EMPTY_ONLY, MODE_OVERWRITE_ALL, MODE_SELECTED_ONLY,
     SOURCE_STANDARD, SOURCE_COPY, SOURCE_GEOMETRY, SOURCE_LEGEND, SOURCE_UUID,
-    analyze_layer, apply_layer_report, is_empty,
+    LayerScanSnapshot, analyze_layer, build_lookup_dict,
+    iter_apply_layer_report, is_empty,
 )
+
+try:
+    from ..lgs_tasks import ChunkRunner, run_in_task
+except ImportError:
+    from lgs_tasks import ChunkRunner, run_in_task
 
 SKIP_LAYER_TEXT = "— skip this layer —"
 NO_LOOKUP_TEXT = "— none —"
@@ -75,6 +81,8 @@ class HardcodeDataDialog(QDialog):
         # Snapshot state captured at preview time, applied at commit time
         self._reports = {}          # config key -> LayerReport
         self._snapshot_layers = {}  # config key -> QgsVectorLayer
+        self._task = None           # running preview QgsTask
+        self._runner = None         # running commit ChunkRunner
 
         self._setup_ui()
 
@@ -106,9 +114,19 @@ class HardcodeDataDialog(QDialog):
         self.preview_btn.clicked.connect(self._generate_preview)
         layout.addWidget(self.preview_btn)
 
+        progress_row = QHBoxLayout()
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
+        progress_row.addWidget(self.progress_bar, 1)
+        self.cancel_task_btn = QPushButton("Cancel")
+        self.cancel_task_btn.setStyleSheet(theme.action_button_style(primary=False))
+        self.cancel_task_btn.setToolTip(
+            "Stop the current operation. Cancelling a commit rolls back the "
+            "layer being written; layers already committed keep their changes.")
+        self.cancel_task_btn.clicked.connect(self._cancel_work)
+        self.cancel_task_btn.setVisible(False)
+        progress_row.addWidget(self.cancel_task_btn)
+        layout.addLayout(progress_row)
 
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget, 1)
@@ -270,47 +288,87 @@ class HardcodeDataDialog(QDialog):
         self._reports = {}
         self._snapshot_layers = dict(selected)
 
-        total_features = sum(lyr.featureCount() for lyr in selected.values())
-        self.progress_bar.setRange(0, max(total_features, 1))
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(True)
-        self.preview_btn.setEnabled(False)
-        try:
+        # Everything the worker needs is captured on the main thread here:
+        # feature-source snapshots of the target layers and plain-dict
+        # lookups. The task never touches a live layer.
+        snapshots = {name: LayerScanSnapshot(lyr)
+                     for name, lyr in selected.items()}
+        lookup_dicts = {}
+        for layer_name in selected:
+            config = LAYER_CONFIGS[layer_name]
+            if config.get('legend'):
+                lookup_layer = lookups.get(config['legend']['lookup_table'])
+                if lookup_layer is not None:
+                    lookup_dicts[layer_name] = build_lookup_dict(lookup_layer)
+        total = max(sum(s.featureCount() for s in snapshots.values()), 1)
+
+        def work(cb):
+            reports = {}
             offset = 0
-            for layer_name, layer in selected.items():
-                config = LAYER_CONFIGS[layer_name]
-                lookup_layer = None
-                if config.get('legend'):
-                    lookup_layer = lookups.get(config['legend']['lookup_table'])
-
-                def on_progress(done, base=offset):
-                    self.progress_bar.setValue(base + done)
-                    QApplication.processEvents()
-
-                report = analyze_layer(
-                    layer, config,
+            for layer_name, snap in snapshots.items():
+                def on_count(done, base=offset, name=layer_name):
+                    cb(int((base + done) / total * 100), f"Scanning {name}")
+                reports[layer_name] = analyze_layer(
+                    snap, LAYER_CONFIGS[layer_name],
                     project_id=project_id, mapped_scale=mapped_scale,
                     project_crs=project_crs, mode=mode,
-                    lookup_layer=lookup_layer, progress_cb=on_progress)
-                self._reports[layer_name] = report
-                offset += layer.featureCount()
+                    lookup_dict=lookup_dicts.get(layer_name),
+                    progress_cb=on_count)
+                offset += snap.featureCount()
+            return reports
 
-                tab = self._build_layer_tab(layer_name, report, mode)
-                short_name = layer_name.split(' - ')[-1]
-                self.tab_widget.addTab(tab, short_name)
-        except Exception as exc:
-            QMessageBox.critical(self, "Preview Error",
-                                 f"Error generating preview:\n{exc}")
-            self._invalidate_preview()
-            return
-        finally:
-            self.progress_bar.setVisible(False)
-            self.preview_btn.setEnabled(True)
+        self._set_busy(True)
+        self._task = run_in_task(
+            "Prepare field data preview", work,
+            on_finished=self._preview_done,
+            on_error=self._preview_failed,
+            on_cancelled=lambda: self._work_cancelled("Preview cancelled."),
+            owner=self, bar=self.progress_bar)
 
-        total_changes = sum(len(r.changes) for r in self._reports.values())
+    def _preview_done(self, reports):
+        self._task = None
+        self._set_busy(False)
+        self._reports = reports
+        mode = self.mode_group.checkedId()
+        for layer_name, report in reports.items():
+            tab = self._build_layer_tab(layer_name, report, mode)
+            short_name = layer_name.split(' - ')[-1]
+            self.tab_widget.addTab(tab, short_name)
+        total_changes = sum(len(r.changes) for r in reports.values())
         self.commit_btn.setEnabled(total_changes > 0)
         if total_changes == 0:
             self._show_no_changes_message()
+
+    def _preview_failed(self, exc, tb):
+        self._task = None
+        self._set_busy(False)
+        QMessageBox.critical(self, "Preview Error",
+                             f"Error generating preview:\n{exc}")
+        self._invalidate_preview()
+
+    def _work_cancelled(self, message):
+        self._task = None
+        self._runner = None
+        self._set_busy(False)
+        self._invalidate_preview()
+        QMessageBox.information(self, "Cancelled", message)
+
+    def _cancel_work(self):
+        if self._task is not None:
+            self._task.cancel()
+        if self._runner is not None:
+            self._runner.cancel()
+
+    def _set_busy(self, busy):
+        self.preview_btn.setEnabled(not busy)
+        self.commit_btn.setEnabled(
+            not busy and bool(sum(len(r.changes)
+                                  for r in self._reports.values())))
+        self.progress_bar.setVisible(busy)
+        self.cancel_task_btn.setVisible(busy)
+        if busy:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
 
     def _show_no_changes_message(self):
         msg = "No changes are needed — all values are already up to date.\n"
@@ -556,45 +614,70 @@ class HardcodeDataDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        total_changes = sum(len(r.changes) for r in reports.values())
-        self.progress_bar.setRange(0, max(total_changes, 1))
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(True)
-        self.commit_btn.setEnabled(False)
-        self.preview_btn.setEnabled(False)
+        # Commit edits live project layers, so it must stay on the main
+        # thread — a cancelable ChunkRunner keeps the UI responsive by
+        # slicing the work across event-loop ticks.
+        self._set_busy(True)
+        self._runner = ChunkRunner(
+            self._commit_steps(reports),
+            on_finished=self._commit_done,
+            on_error=self._commit_failed,
+            on_cancelled=lambda: self._work_cancelled(
+                "Commit cancelled. The layer being written was rolled back; "
+                "layers already committed keep their changes. Generate a "
+                "fresh preview to continue."),
+            owner=self, bar=self.progress_bar).start()
 
+    def _commit_steps(self, reports):
+        """Generator: one yield every PROGRESS_EVERY attribute changes."""
         results = []
         total_applied = 0
-        try:
-            offset = 0
-            for layer_name, report in reports.items():
-                layer = self._snapshot_layers.get(layer_name)
-                if (layer is None or
-                        QgsProject.instance().mapLayer(report.layer_id) is None):
-                    results.append(f"❌ {layer_name}: layer no longer in "
-                                   "project — skipped")
-                    continue
+        total = max(sum(len(r.changes) for r in reports.values()), 1)
+        offset = 0
+        for layer_name, report in reports.items():
+            layer = self._snapshot_layers.get(layer_name)
+            if (layer is None or
+                    QgsProject.instance().mapLayer(report.layer_id) is None):
+                results.append(f"❌ {layer_name}: layer no longer in "
+                               "project — skipped")
+                continue
 
-                def on_progress(done, base=offset):
-                    self.progress_bar.setValue(base + done)
-                    QApplication.processEvents()
+            inner = iter_apply_layer_report(layer, report)
+            try:
+                while True:
+                    try:
+                        count = next(inner)
+                    except StopIteration as stop:
+                        applied, errors = stop.value
+                        break
+                    yield (int((offset + count) / total * 100),
+                           f"Committing {layer_name}")
+            finally:
+                inner.close()  # cancellation mid-layer rolls the layer back
 
-                applied, errors = apply_layer_report(layer, report,
-                                                     progress_cb=on_progress)
-                offset += len(report.changes)
-                total_applied += applied
-                if errors:
-                    results.append(f"❌ {layer_name}: {applied} applied; "
-                                   + "; ".join(errors))
-                else:
-                    results.append(f"✅ {layer_name}: {applied} changes "
-                                   "committed")
-        finally:
-            self.progress_bar.setVisible(False)
-            self.preview_btn.setEnabled(True)
+            offset += len(report.changes)
+            total_applied += applied
+            if errors:
+                results.append(f"❌ {layer_name}: {applied} applied; "
+                               + "; ".join(errors))
+            else:
+                results.append(f"✅ {layer_name}: {applied} changes "
+                               "committed")
+        return results, total_applied
 
+    def _commit_done(self, outcome):
+        self._runner = None
+        self._set_busy(False)
+        results, total_applied = outcome
         QMessageBox.information(
             self, "Commit Complete",
             f"Total changes applied: {total_applied}\n\n" + "\n".join(results))
         # Force a fresh preview before any further commit
+        self._invalidate_preview()
+
+    def _commit_failed(self, exc, tb):
+        self._runner = None
+        self._set_busy(False)
+        QMessageBox.critical(self, "Commit Error",
+                             f"Error committing changes:\n{exc}")
         self._invalidate_preview()
