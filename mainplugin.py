@@ -311,6 +311,9 @@ class LinearGeosciencePluginMain:
         if self.main_dialog:
             self._save_geometry()
             self.main_dialog.close()
+            # The dialog is cached across opens (no WA_DeleteOnClose), so a
+            # plugin unload/reload must delete it explicitly.
+            self.main_dialog.deleteLater()
             self.main_dialog = None
 
         if self.action_main_button:
@@ -408,13 +411,18 @@ class LinearGeosciencePluginMain:
     # Main dialog  (non-modal)
     # ------------------------------------------------------------------
     def open_plugin_dialog(self):
-        """Open or bring to front the main plugin dialog (non-modal)."""
+        """Open or bring to front the main plugin dialog (non-modal).
+
+        The dialog is built once and cached — closing hides it, reopening
+        shows the same instance instantly with its state intact. It only
+        rebuilds after a plugin reload (unload() deletes it)."""
         if self.main_dialog is not None:
             try:
-                if self.main_dialog.isVisible():
-                    self.main_dialog.raise_()
-                    self.main_dialog.activateWindow()
-                    return
+                self._refresh_dialog_on_show(self.main_dialog)
+                self.main_dialog.show()
+                self.main_dialog.raise_()
+                self.main_dialog.activateWindow()
+                return
             except RuntimeError:
                 # C++ object already deleted
                 self.main_dialog = None
@@ -423,7 +431,6 @@ class LinearGeosciencePluginMain:
 
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle("Linear Geoscience - Geological Mapping")
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         dialog_width, dialog_height = scale.dialog_size(800, 600)
@@ -475,9 +482,8 @@ class LinearGeosciencePluginMain:
         stacked_widget.setCurrentIndex(last_page)
         page_header_label.setText(PAGE_DEFS[last_page][3])
 
-        # Save geometry on close and clean up reference
+        # Save geometry on close (the dialog itself is kept for reuse)
         dialog.finished.connect(lambda: self._save_geometry())
-        dialog.destroyed.connect(lambda: setattr(self, 'main_dialog', None))
 
         # Store references for external access
         dialog._nav_group = nav_group
@@ -486,6 +492,11 @@ class LinearGeosciencePluginMain:
 
         self.main_dialog = dialog
         dialog.show()
+
+    def _refresh_dialog_on_show(self, dialog):
+        """Hook for state that must refresh when the cached dialog is
+        re-shown. The current pages hold no layer-dependent state; any
+        future page that does must repopulate itself here."""
 
     # ------------------------------------------------------------------
     # Sidebar builder
