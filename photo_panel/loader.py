@@ -18,7 +18,7 @@ from qgis.PyQt.QtCore import (
 from qgis.PyQt.QtGui import (
     QImage, QPainter, QPainterPath, QTransform
 )
-from qgis.core import QgsMessageLog, Qgis
+from qgis.core import QgsExifTools, QgsMessageLog, Qgis
 
 from .constants import get_scale_manager, get_default_thumbnail_size
 
@@ -28,6 +28,40 @@ from .constants import get_scale_manager, get_default_thumbnail_size
 # =============================================================================
 
 def read_exif_orientation(filepath: str) -> int:
+    """Read the EXIF orientation tag (1-8), or 1 (normal) on failure.
+
+    Prefers QGIS's own QgsExifTools (also reads JPEG/TIFF/HEIC and is what
+    QGIS uses elsewhere); falls back to the dependency-free byte parser.
+    """
+    try:
+        val = QgsExifTools.readTag(filepath, "Exif.Image.Orientation")
+        if val is not None:
+            orientation = int(val)
+            if 1 <= orientation <= 8:
+                return orientation
+    except Exception:
+        pass
+    return _read_exif_orientation_fallback(filepath)
+
+
+def read_geotag(filepath: str):
+    """Return the photo's GPS position as a QgsPointXY, or None.
+
+    Thin wrapper over QgsExifTools.getGeoTag for future 'use photo GPS'
+    features; safe on QGIS 3.24+ and 4.x.
+    """
+    try:
+        if QgsExifTools.hasGeoTag(filepath):
+            pt = QgsExifTools.getGeoTag(filepath)
+            # getGeoTag returns an invalid/empty point when absent.
+            if pt is not None and not pt.isEmpty():
+                return pt
+    except Exception:
+        pass
+    return None
+
+
+def _read_exif_orientation_fallback(filepath: str) -> int:
     """
     Read EXIF orientation tag from a JPEG file without external dependencies.
 

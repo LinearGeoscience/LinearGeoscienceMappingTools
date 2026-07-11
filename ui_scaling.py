@@ -29,6 +29,14 @@ class UIScaleManager:
     MIN_SCALE_FACTOR = 0.5
     MAX_SCALE_FACTOR = 3.0
 
+    # Defaults so _log_scaling_info never trips over an unset attribute when
+    # _detect_scaling takes an early return (no QApplication / no screen,
+    # e.g. headless runs).
+    scale_factor = 1.0
+    logical_dpi = BASE_DPI
+    physical_dpi = BASE_DPI
+    device_pixel_ratio = 1.0
+
     def __new__(cls):
         """Singleton pattern implementation"""
         if cls._instance is None:
