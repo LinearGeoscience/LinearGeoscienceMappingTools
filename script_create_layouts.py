@@ -73,12 +73,17 @@ LOG_TAG = 'Linear Geoscience'
 
 
 def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
-                              do_tiff=False, do_png=False, log=None, progress=None):
+                              do_tiff=False, do_png=False, log=None,
+                              progress=None, pdf_layer_tree=False):
     """Export named print layouts from the current project to disk.
 
     UI-free and reusable: driven by both the Create Layouts dock and the unified
     Mapping Export. PDF is georeferenced (GeoPDF where supported); GeoTIFF and
     PNG are written with a worldfile so they stay georeferenced.
+
+    pdf_layer_tree: when True and the running QGIS supports it (4.2+), the
+    exported geoPDF mirrors the QGIS layer panel so map layers can be
+    toggled in the PDF viewer.
 
     Args:
         layout_names: layout names present in the current project.
@@ -92,7 +97,8 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
         tuple: (success_count, fail_count)
     """
     gen = iter_export_steps(layout_names, out_dir, dpi=dpi, do_pdf=do_pdf,
-                            do_tiff=do_tiff, do_png=do_png, log=log)
+                            do_tiff=do_tiff, do_png=do_png, log=log,
+                            pdf_layer_tree=pdf_layer_tree)
     while True:
         try:
             done, total = next(gen)
@@ -103,7 +109,8 @@ def export_layouts_to_formats(layout_names, out_dir, dpi=300, do_pdf=True,
 
 
 def iter_export_steps(layout_names, out_dir, dpi=300, do_pdf=True,
-                      do_tiff=False, do_png=False, log=None):
+                      do_tiff=False, do_png=False, log=None,
+                      pdf_layer_tree=False):
     """Generator form of export_layouts_to_formats: yields (done, total)
     per layout so a ChunkRunner can keep the UI responsive/cancelable.
     Layout rendering itself must stay on the main thread (layouts are
@@ -135,6 +142,10 @@ def iter_export_steps(layout_names, out_dir, dpi=300, do_pdf=True,
             if do_pdf:
                 pdf_settings = QgsLayoutExporter.PdfExportSettings()
                 pdf_settings.dpi = dpi
+                # Layer-tree geoPDF (QGIS 4.2+): mirror the QGIS layer panel
+                # so layers can be toggled in the PDF viewer.
+                if pdf_layer_tree and hasattr(pdf_settings, 'useLayerTreeConfig'):
+                    pdf_settings.useLayerTreeConfig = True
                 try:
                     pdf_settings.writeGeoPdf = True
                 except AttributeError:
@@ -1700,6 +1711,21 @@ class MapLayoutGeneratorPanel(QDockWidget):
 
         layout.addLayout(formatLayout)
 
+        # Layer-tree geoPDF option (only meaningful on QGIS 4.2+, where
+        # PdfExportSettings exposes useLayerTreeConfig).
+        self.pdfLayerTreeCheckbox = QCheckBox(
+            "PDF layer tree follows QGIS layer panel (QGIS 4.2+)")
+        self.pdfLayerTreeCheckbox.setChecked(False)
+        try:
+            _supports_layer_tree = hasattr(
+                QgsLayoutExporter.PdfExportSettings(), 'useLayerTreeConfig')
+        except Exception:
+            _supports_layer_tree = False
+        if _supports_layer_tree:
+            layout.addWidget(self.pdfLayerTreeCheckbox)
+        else:
+            self.pdfLayerTreeCheckbox.setVisible(False)
+
         # DPI setting
         dpiLayout = QHBoxLayout()
         dpiLayout.addWidget(QLabel("DPI:"))
@@ -2812,7 +2838,8 @@ class MapLayoutGeneratorPanel(QDockWidget):
             do_pdf=self.exportPdfCheckbox.isChecked(),
             do_tiff=self.exportTiffCheckbox.isChecked(),
             do_png=self.exportPngCheckbox.isChecked(),
-            log=lambda m: self.statusLabel.setText(m))
+            log=lambda m: self.statusLabel.setText(m),
+            pdf_layer_tree=self.pdfLayerTreeCheckbox.isChecked())
 
         def _steps():
             try:
