@@ -12,6 +12,39 @@ import numpy as np
 from .data import normalized_classification
 
 
+def resolve_domain_display(layer, field_index, feature, raw_value):
+    """Resolve a field's stored value to its display value via the field's
+    editor widget (Value Relation / Value Map), falling back to the raw
+    value as a string. Shared by the domain-classification passes.
+
+    None → "NoDomain"; any resolution error → str(raw_value).
+    """
+    if raw_value is None:
+        return "NoDomain"
+    try:
+        setup = layer.editorWidgetSetup(field_index)
+        wtype = setup.type()
+        if wtype == 'ValueRelation':
+            from qgis.core import QgsValueRelationFieldFormatter
+            formatter = QgsValueRelationFieldFormatter()
+            context = layer.createExpressionContext()
+            context.setFeature(feature)
+            display = formatter.representValue(
+                layer, field_index, setup.config(), None, raw_value)
+            if display and display != str(raw_value):
+                return display
+            return str(raw_value)
+        if wtype == 'ValueMap':
+            value_map = setup.config().get('map', {})
+            for display_name, stored_value in value_map.items():
+                if str(stored_value) == str(raw_value):
+                    return display_name
+            return str(raw_value)
+        return str(raw_value)
+    except Exception:
+        return str(raw_value)
+
+
 def unify_fax_code(code):
     """
     Unify FAX codes to standardized format.

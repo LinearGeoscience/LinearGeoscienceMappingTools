@@ -62,7 +62,7 @@ from qgis.gui import (
 from .data import planar_codes, linear_codes, normalized_classification
 from .utils import (
     unify_fax_code, classify_code, dip_direction_to_strike,
-    rake2plunge_bearing, exact_rake2line
+    rake2plunge_bearing, exact_rake2line, resolve_domain_display
 )
 from . import analysis as stereonet_analysis
 from .interaction import StereonetPickHandler
@@ -3520,46 +3520,8 @@ class StereonetPluginCore:
 
             # Get domain value from the selected field, or use a default if no field is selected
             if domain_field and domain_field in fields:
-                dom_val = f[domain_field]
-                if dom_val is None:
-                    dom_val = "NoDomain"
-                else:
-                    # Try to get the display value using QGIS field formatting
-                    try:
-                        # Get the field configuration
-                        field_config = layer.fields().field(domain_field_index)
-                        editor_widget_setup = layer.editorWidgetSetup(domain_field_index)
-
-                        # If it's a value relation or value map widget, get the display value
-                        if editor_widget_setup.type() == 'ValueRelation':
-                            # For value relation widgets, we need to get the display value
-                            from qgis.core import QgsValueRelationFieldFormatter
-                            formatter = QgsValueRelationFieldFormatter()
-                            context = layer.createExpressionContext()
-                            context.setFeature(f)
-                            display_value = formatter.representValue(layer, domain_field_index,
-                                                                     editor_widget_setup.config(), None, dom_val)
-                            if display_value and display_value != str(dom_val):
-                                dom_val = display_value
-                            else:
-                                dom_val = str(dom_val)
-                        elif editor_widget_setup.type() == 'ValueMap':
-                            # For value map widgets
-                            value_map = editor_widget_setup.config().get('map', {})
-                            # Value map stores display_name: stored_value, so we need to reverse lookup
-                            for display_name, stored_value in value_map.items():
-                                if str(stored_value) == str(dom_val):
-                                    dom_val = display_name
-                                    break
-                            else:
-                                dom_val = str(dom_val)
-                        else:
-                            # For other widget types, just use the raw value
-                            dom_val = str(dom_val)
-                    except Exception as e:
-                        # If anything goes wrong with getting display value, fall back to raw value
-                        QgsMessageLog.logMessage(f"Warning: Could not get display value for {domain_field}: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
-                        dom_val = str(dom_val)
+                dom_val = resolve_domain_display(
+                    layer, domain_field_index, f, f[domain_field])
             else:
                 dom_val = "NoDomain"
 
@@ -7142,34 +7104,8 @@ class StereonetPluginCore:
                 continue
 
             # Get display value for domain (same logic as update_data_domains)
-            if domain_val is None:
-                domain_display = "NoDomain"
-            else:
-                try:
-                    editor_widget_setup = layer.editorWidgetSetup(domain_field_index)
-
-                    if editor_widget_setup.type() == 'ValueRelation':
-                        from qgis.core import QgsValueRelationFieldFormatter
-                        formatter = QgsValueRelationFieldFormatter()
-                        context = layer.createExpressionContext()
-                        context.setFeature(f)
-                        display_value = formatter.representValue(layer, domain_field_index,
-                                                                 editor_widget_setup.config(), None, domain_val)
-                        if display_value and display_value != str(domain_val):
-                            domain_display = display_value
-                        else:
-                            domain_display = str(domain_val)
-                    elif editor_widget_setup.type() == 'ValueMap':
-                        value_map = editor_widget_setup.config().get('map', {})
-                        domain_display = str(domain_val)
-                        for display_name, stored_value in value_map.items():
-                            if str(stored_value) == str(domain_val):
-                                domain_display = display_name
-                                break
-                    else:
-                        domain_display = str(domain_val)
-                except Exception as e:
-                    domain_display = str(domain_val)
+            domain_display = resolve_domain_display(
+                layer, domain_field_index, f, domain_val)
 
             # Only process if domain matches
             if domain_display != target_domain:
@@ -7311,34 +7247,8 @@ class StereonetPluginCore:
                 continue
 
             # Get display value for domain (same logic as update_data_domains)
-            if domain_val is None:
-                domain_display = "NoDomain"
-            else:
-                try:
-                    editor_widget_setup = layer.editorWidgetSetup(domain_field_index)
-
-                    if editor_widget_setup.type() == 'ValueRelation':
-                        from qgis.core import QgsValueRelationFieldFormatter
-                        formatter = QgsValueRelationFieldFormatter()
-                        context = layer.createExpressionContext()
-                        context.setFeature(f)
-                        display_value = formatter.representValue(layer, domain_field_index,
-                                                                 editor_widget_setup.config(), None, domain_val)
-                        if display_value and display_value != str(domain_val):
-                            domain_display = display_value
-                        else:
-                            domain_display = str(domain_val)
-                    elif editor_widget_setup.type() == 'ValueMap':
-                        value_map = editor_widget_setup.config().get('map', {})
-                        domain_display = str(domain_val)
-                        for display_name, stored_value in value_map.items():
-                            if str(stored_value) == str(domain_val):
-                                domain_display = display_name
-                                break
-                    else:
-                        domain_display = str(domain_val)
-                except Exception as e:
-                    domain_display = str(domain_val)
+            domain_display = resolve_domain_display(
+                layer, domain_field_index, f, domain_val)
 
             # Only process if domain matches
             if domain_display != target_domain:
