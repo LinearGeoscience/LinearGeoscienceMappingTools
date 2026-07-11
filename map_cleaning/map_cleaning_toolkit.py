@@ -22,10 +22,11 @@
 """
 import os.path
 
-from qgis.PyQt.QtCore import QSettings, Qt
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon, QAction
 from qgis.PyQt.QtWidgets import QMessageBox, QProgressDialog, QDialog
 from qgis.core import QgsApplication, QgsVectorLayer, QgsMessageLog, Qgis
+from qgis.core import QgsSettings
 
 # Import clipping components
 from .clipping.clipper_dockwidget import ClipperDockWidget
@@ -1118,7 +1119,7 @@ class MapCleaningToolkit(object):
         if not self.dockwidget:
             return
 
-        settings = QSettings()
+        settings = QgsSettings()
         settings.setValue(f"{self.settings_key}/visible", self.dockwidget.isVisible())
         settings.setValue(f"{self.settings_key}/geometry", self.dockwidget.saveGeometry())
 
@@ -1130,7 +1131,7 @@ class MapCleaningToolkit(object):
         if not self.dockwidget:
             return
 
-        settings = QSettings()
+        settings = QgsSettings()
 
         geometry = settings.value(f"{self.settings_key}/geometry")
         if geometry:

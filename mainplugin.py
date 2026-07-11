@@ -1,5 +1,6 @@
 import os
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.core import QgsSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QMessageBox, QWidget, QGroupBox, QFrame, QSizePolicy, QScrollArea,
@@ -271,6 +272,13 @@ class LinearGeosciencePluginMain:
     # Plugin lifecycle
     # ------------------------------------------------------------------
     def initGui(self):
+        # Move any legacy bare-QSettings values into the QGIS profile once.
+        try:
+            from .settings import migrate_qsettings_once
+            migrate_qsettings_once()
+        except Exception:
+            pass  # settings migration is best-effort, never blocks load
+
         self.toolbar = self.iface.addToolBar("Linear Geoscience Mapping Tools")
         self.toolbar.setObjectName("LinearGeoscienceMappingTools")
 
@@ -500,7 +508,7 @@ class LinearGeosciencePluginMain:
 
         # Restore state
         self._restore_geometry(dialog)
-        last_page = QSettings().value(SETTING_LAST_PAGE, 0, type=int)
+        last_page = QgsSettings().value(SETTING_LAST_PAGE, 0, type=int)
         last_page = max(0, min(last_page, stacked_widget.count() - 1))
         nav_group.button(last_page).setChecked(True)
         stacked_widget.setCurrentIndex(last_page)
@@ -805,7 +813,7 @@ class LinearGeosciencePluginMain:
             stacked_widget.setCurrentIndex(btn_id)
             if 0 <= btn_id < len(PAGE_DEFS):
                 page_header_label.setText(PAGE_DEFS[btn_id][3])
-            QSettings().setValue(SETTING_LAST_PAGE, btn_id)
+            QgsSettings().setValue(SETTING_LAST_PAGE, btn_id)
 
         nav_group.idClicked.connect(on_button_clicked)
 
@@ -832,10 +840,10 @@ class LinearGeosciencePluginMain:
     # ------------------------------------------------------------------
     def _save_geometry(self):
         if self.main_dialog:
-            QSettings().setValue(SETTING_GEOMETRY, self.main_dialog.saveGeometry())
+            QgsSettings().setValue(SETTING_GEOMETRY, self.main_dialog.saveGeometry())
 
     def _restore_geometry(self, dialog):
-        geom = QSettings().value(SETTING_GEOMETRY)
+        geom = QgsSettings().value(SETTING_GEOMETRY)
         if geom:
             dialog.restoreGeometry(geom)
 

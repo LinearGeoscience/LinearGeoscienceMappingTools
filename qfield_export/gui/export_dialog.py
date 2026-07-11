@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import List
 
 from qgis.core import QgsProject, QgsMapLayer, QgsRasterLayer, Qgis
+from qgis.core import QgsSettings
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt, QUrl, pyqtSlot, QThread, QSettings
+from qgis.PyQt.QtCore import Qt, QUrl, pyqtSlot, QThread
 from qgis.PyQt.QtGui import QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -562,7 +563,7 @@ class ExportDialog(QDialog):
     def set_default_export_path(self):
         """Set a default export path based on saved setting, then project location."""
         # Try last used export directory from QSettings
-        last_dir = QSettings().value(_SETTINGS_LAST_EXPORT_DIR, '')
+        last_dir = QgsSettings().value(_SETTINGS_LAST_EXPORT_DIR, '')
         if last_dir and Path(last_dir).parent.exists():
             self.export_dir_edit.setText(last_dir)
             return
@@ -849,7 +850,7 @@ class ExportDialog(QDialog):
 
         if success:
             # Persist the export directory for next time
-            QSettings().setValue(_SETTINGS_LAST_EXPORT_DIR, str(self.export_dir))
+            QgsSettings().setValue(_SETTINGS_LAST_EXPORT_DIR, str(self.export_dir))
 
             self.status_label.setText("Export completed successfully")
             self.status_label.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 600;")

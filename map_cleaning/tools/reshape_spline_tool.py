@@ -16,7 +16,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QCursor, QPixmap, QColor
 from qgis.core import (
     QgsCoordinateTransform,

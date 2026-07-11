@@ -4,6 +4,7 @@ Dock Widget UI for Map Cleaning Toolkit - Clipping Panel
 Tabbed interface for clipping operations and spline settings
 """
 from qgis.core import Qgis, QgsProject
+from qgis.core import QgsSettings
 from qgis.PyQt.QtCore import QMetaType, pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -955,10 +956,9 @@ class ClipperDockWidget(QDockWidget):
 
     def apply_spline_settings(self):
         """Apply spline settings"""
-        from qgis.PyQt.QtCore import QSettings
         from ..core.utils import SETTINGS_NAME
 
-        settings = QSettings()
+        settings = QgsSettings()
         settings.setValue(f"{SETTINGS_NAME}/tightness", self.tightness_spinbox.value())
         settings.setValue(f"{SETTINGS_NAME}/tolerance", self.tolerance_spinbox.value())
         settings.setValue(f"{SETTINGS_NAME}/max_segments", self.max_segments_spinbox.value())
@@ -975,10 +975,9 @@ class ClipperDockWidget(QDockWidget):
 
     def load_spline_settings(self):
         """Load spline settings from QSettings"""
-        from qgis.PyQt.QtCore import QSettings
         from ..core.utils import SETTINGS_NAME, DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS
 
-        settings = QSettings()
+        settings = QgsSettings()
         tightness = settings.value(f"{SETTINGS_NAME}/tightness", DEFAULT_TIGHTNESS, float)
         tolerance = settings.value(f"{SETTINGS_NAME}/tolerance", DEFAULT_TOLERANCE, float)
         max_segments = settings.value(f"{SETTINGS_NAME}/max_segments", DEFAULT_MAX_SEGMENTS, int)

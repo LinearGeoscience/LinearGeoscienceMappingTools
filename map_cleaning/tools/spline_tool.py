@@ -17,7 +17,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QCursor, QPixmap, QColor
 from qgis.core import (
     Qgis,
@@ -221,7 +221,7 @@ class SplineTool(QgsMapToolEdit):
 
             layer.beginEditCommand("Feature added")
 
-            settings = QSettings()
+            settings = QgsSettings()
             disable_attributes = settings.value("/qgis/digitizing/disable_enter_attribute_values_dialog", False, type=bool)
 
             # Check if feature was added successfully

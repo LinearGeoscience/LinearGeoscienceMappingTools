@@ -11,8 +11,9 @@
 ***************************************************************************
 """
 
-from qgis.PyQt.QtCore import QCoreApplication, QSettings
+from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
+    QgsSettings,
     Qgis,
     QgsFeature,
     QgsGeometry,
@@ -99,9 +100,9 @@ class Polygons2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
         return self.tr(help_str)
 
     def initAlgorithm(self, config=None):
-        tension = QSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
-        tolerance = QSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
-        max_segments = QSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, float)
+        tension = QgsSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
+        tolerance = QgsSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
+        max_segments = QgsSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, float)
 
         self.addParameter(
             QgsProcessingParameterFeatureSource(

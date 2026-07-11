@@ -17,8 +17,8 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QSettings
 from qgis.core import (
+    QgsSettings,
     QgsGeometry,
     QgsPoint,
     QgsPointXY,
@@ -30,11 +30,11 @@ from .utils import DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS, S
 
 def interpolate(points, tolerance=None, tightness=None, max_segments=None):
     if tolerance is None:
-        tolerance = QSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
+        tolerance = QgsSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
     if tightness is None:
-        tightness = QSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
+        tightness = QgsSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
     if max_segments is None:
-        max_segments = QSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
+        max_segments = QgsSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
     points = hermite(points, tolerance, tightness, max_segments)
     return [QgsPointXY(pt) for pt in points]
 
@@ -162,11 +162,11 @@ def interpolate_closed_ring(points, tolerance=None, tightness=None, max_segments
     Unlike open lines, this treats the ring as circular for tangent calculation.
     """
     if tolerance is None:
-        tolerance = QSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
+        tolerance = QgsSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
     if tightness is None:
-        tightness = QSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
+        tightness = QgsSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
     if max_segments is None:
-        max_segments = QSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
+        max_segments = QgsSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
 
     points = hermite_closed(points, tolerance, tightness, max_segments)
     return [QgsPointXY(pt) for pt in points]
