@@ -13,7 +13,7 @@ from qgis.core import (
     QgsRendererCategory,
     QgsVectorLayer,
 )
-from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
+from qgis.PyQt.QtCore import QMetaType, pyqtSignal, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -214,7 +214,7 @@ class PreviewManager:
         if style_mode in ('overlap', 'sliver'):
             # Add _type field if not already present from overlap/sliver features
             if '_type' not in [f.name() for f in source_fields]:
-                provider.addAttributes([QgsField('_type', QVariant.String)])
+                provider.addAttributes([QgsField('_type', QMetaType.Type.QString)])
         self.preview_layer.updateFields()
 
         # Add clipped features

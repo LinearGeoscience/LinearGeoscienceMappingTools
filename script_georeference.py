@@ -37,44 +37,21 @@ except ImportError:
     except ImportError:
         def read_exif_orientation(path):
             return 1
-from qgis.PyQt.QtCore import QVariant, QUrl
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
+from qgis.PyQt.QtCore import QUrl, QMetaType
 from qgis.PyQt.QtGui import QColor, QImageReader
 import sys
 
 
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
+
+
 def create_compatible_field(name, field_type):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-            elif field_type == 'double':
-                return QgsField(name, QMetaType.Type.Double)
-            elif field_type == 'int':
-                return QgsField(name, QMetaType.Type.Int)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
-    
-    # Default fallback
-    return QgsField(name, QVariant.String)
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 # Function to retrieve active geologists with entries in the point layer

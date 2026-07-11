@@ -13,7 +13,7 @@ from qgis.core import (
     QgsGeometry,
     QgsSpatialIndex,
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QMetaType
 from qgis.analysis import QgsGeometrySnapper
 import uuid as uuid_module
 
@@ -972,7 +972,7 @@ def find_polygon_overlaps(layer, progress_dialog=None):
     overlap_fields = QgsFields()
     for field in layer.fields():
         overlap_fields.append(field)
-    overlap_fields.append(QgsField('_type', QVariant.String))
+    overlap_fields.append(QgsField('_type', QMetaType.Type.QString))
 
     overlap_features = []
     overlap_count = 0
@@ -1105,7 +1105,7 @@ def find_polygon_slivers(layer, max_area, min_area=0.0, snap_tolerance=0.001, pr
     sliver_fields = QgsFields()
     for field in layer.fields():
         sliver_fields.append(field)
-    sliver_fields.append(QgsField('_type', QVariant.String))
+    sliver_fields.append(QgsField('_type', QMetaType.Type.QString))
 
     sliver_features = []
     for part in union.asGeometryCollection():

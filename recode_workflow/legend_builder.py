@@ -512,8 +512,8 @@ def field_has_data(layer, field_idx):
 
 
 def _is_string_field(field):
-    from qgis.PyQt.QtCore import QVariant
-    return field.type() == QVariant.String
+    from qgis.PyQt.QtCore import QMetaType
+    return field.type() == QMetaType.Type.QString
 
 
 def discover_section_candidates(project):

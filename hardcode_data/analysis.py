@@ -11,11 +11,7 @@ previewed change records verbatim — it never re-evaluates.
 import uuid
 from dataclasses import dataclass, field
 
-from qgis.PyQt.QtCore import QVariant
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
+from qgis.PyQt.QtCore import QMetaType
 from qgis.core import QgsField
 
 try:
@@ -93,23 +89,16 @@ LAYER_CONFIGS = {
 }
 
 
-def create_compatible_field(name, field_type='string'):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
 
-    # Default fallback
-    return QgsField(name, QVariant.String)
+
+def create_compatible_field(name, field_type='string'):
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 def is_empty(value):

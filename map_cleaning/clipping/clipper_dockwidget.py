@@ -4,7 +4,7 @@ Dock Widget UI for Map Cleaning Toolkit - Clipping Panel
 Tabbed interface for clipping operations and spline settings
 """
 from qgis.core import Qgis, QgsProject
-from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
+from qgis.PyQt.QtCore import QMetaType, pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -76,7 +76,7 @@ def get_candidate_uuid_fields(layer):
         is_uuid_field = any(pattern in field_name_lower for pattern in uuid_patterns)
 
         # Only include string fields as candidates
-        if field.type() == QVariant.String:
+        if field.type() == QMetaType.Type.QString:
             if is_uuid_field:
                 candidates.insert(0, (f"{field.name()} (detected)", field.name()))
             else:

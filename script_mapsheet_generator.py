@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (QWidget, QDockWidget, QComboBox, QVBoxLayout, Q
                                  QRadioButton, QButtonGroup, QGridLayout,
                                  QMessageBox, QTabWidget, QListWidget,
                                  QDialog, QDialogButtonBox)
-from qgis.PyQt.QtCore import Qt, QVariant, pyqtSignal
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.core import (QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
                        QgsField, QgsFields, QgsVectorLayer, QgsRectangle,
                        QgsSymbol, QgsRendererCategory,
@@ -17,10 +17,7 @@ from qgis.core import (QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
 from qgis.PyQt.QtGui import QColor
 from qgis.gui import QgsMapTool, QgsRubberBand
 from qgis.utils import iface
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
+from qgis.PyQt.QtCore import QMetaType
 
 try:
     from .layer_select import layer_display_name
@@ -28,35 +25,16 @@ except ImportError:
     from layer_select import layer_display_name
 
 
-def create_compatible_field(name, field_type):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-            elif field_type == 'double':
-                return QgsField(name, QMetaType.Type.Double)
-            elif field_type == 'int':
-                return QgsField(name, QMetaType.Type.Int)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
 
-    # Default fallback
-    return QgsField(name, QVariant.String)
+
+def create_compatible_field(name, field_type):
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 class PolygonDrawMapTool(QgsMapTool):

@@ -41,7 +41,7 @@ except ImportError:  # standalone
 
 try:  # pragma: no cover - only inside QGIS
     from qgis.core import QgsVectorLayer, QgsField, QgsMessageLog, Qgis
-    from qgis.PyQt.QtCore import QVariant
+    from qgis.PyQt.QtCore import QMetaType
 except Exception:  # pragma: no cover
     QgsVectorLayer = None
     QgsField = None
@@ -82,7 +82,7 @@ def ensure_lgs_columns(layer) -> List[str]:
         if create_compatible_field is not None:
             fields.append(create_compatible_field(name, 'string'))
         else:  # pragma: no cover
-            fields.append(QgsField(name, QVariant.String))
+            fields.append(QgsField(name, QMetaType.Type.QString))
     if layer.dataProvider().addAttributes(fields):
         layer.updateFields()
         return to_add

@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QDialog, QDialogButtonBox, QTreeWidget,
                              QTreeWidgetItem, QHeaderView, QListWidget,
                              QListWidgetItem, QPlainTextEdit)
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import QMetaType, Qt
 from qgis.PyQt.QtGui import QDoubleValidator
 from qgis.PyQt.QtXml import QDomDocument
 from qgis.core import (QgsProject, QgsPrintLayout, QgsReadWriteContext,
@@ -931,11 +931,10 @@ class LegendFieldConfigDialog(QDialog):
     @staticmethod
     def _populated_string_fields(layer, skip_paired=True):
         """Populated string field names of a layer, in field order."""
-        from qgis.PyQt.QtCore import QVariant
         names = []
         for i, field in enumerate(layer.fields()):
             try:
-                if field.type() != QVariant.String:
+                if field.type() != QMetaType.Type.QString:
                     continue
                 if skip_paired and paired_base_field(layer, field.name()):
                     continue

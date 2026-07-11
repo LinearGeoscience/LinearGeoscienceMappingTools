@@ -5,11 +5,7 @@
 # The CRS of the 'Domain' layer is set to match the project's CRS.
 # -----------------------------------------------------------
 
-from qgis.PyQt.QtCore import QVariant
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
+from qgis.PyQt.QtCore import QMetaType
 from qgis.core import (
     QgsField,
     QgsVectorLayer,
@@ -19,23 +15,16 @@ from qgis.core import (
     QgsCoordinateReferenceSystem
 )
 
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
+
+
 def create_compatible_field(name, field_type):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-    
-    # Default fallback
-    return QgsField(name, QVariant.String)
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 def create_domain_polygon_layer(iface):

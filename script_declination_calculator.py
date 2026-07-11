@@ -8,7 +8,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QMessageBox, QHeaderView, QGroupBox,
                                   QCheckBox, QDateEdit, QDoubleSpinBox, QRadioButton,
                                   QButtonGroup, QProgressDialog, QTextEdit)
-from qgis.PyQt.QtCore import Qt, QDate, QVariant
+from qgis.PyQt.QtCore import QMetaType, Qt, QDate
 from qgis.PyQt.QtGui import QIcon, QAction
 from qgis.core import (
     Qgis,QgsProject, QgsVectorLayer, QgsField, edit,
@@ -320,7 +320,7 @@ class CalculateDeclinationDialog(QDialog):
 
         # Create new field
         with edit(self.layer):
-            field = QgsField(field_name, QVariant.Double)
+            field = QgsField(field_name, QMetaType.Type.Double)
             self.layer.addAttribute(field)
 
         # Refresh the combo box

@@ -23,7 +23,7 @@ def debug_log(message: str):
     if DEBUG_UUID_PROCESSING:
         QgsMessageLog.logMessage(f"[DEBUG] {message}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 from typing import Dict, List, Optional
-from qgis.PyQt.QtCore import QThread, pyqtSignal, QVariant
+from qgis.PyQt.QtCore import QMetaType, QThread, pyqtSignal
 from qgis.core import (QgsVectorLayer, QgsFeature, QgsVectorFileWriter,
                        QgsField, QgsCoordinateTransform, QgsProject,
                        QgsFields, QgsFeatureRequest, QgsMessageLog, Qgis)
@@ -483,11 +483,11 @@ class WorkerThread(QThread):
         fields_to_add = QgsFields()
 
         # Add data_added_timestamp field (NEW)
-        timestamp_field = QgsField("data_added_timestamp", QVariant.String)
+        timestamp_field = QgsField("data_added_timestamp", QMetaType.Type.QString)
         fields_to_add.append(timestamp_field)
 
         # Add data_added_batch_id field (NEW)
-        batch_field = QgsField("data_added_batch_id", QVariant.String)
+        batch_field = QgsField("data_added_batch_id", QMetaType.Type.QString)
         fields_to_add.append(batch_field)
 
         # Add selected fields with proper mapping
@@ -720,9 +720,9 @@ class WorkerThread(QThread):
         # single provider call (no edit buffer, no layer reloads)
         new_attributes = []
         if not find_matching_field(master_field_names, "data_added_timestamp"):
-            new_attributes.append(QgsField("data_added_timestamp", QVariant.String))
+            new_attributes.append(QgsField("data_added_timestamp", QMetaType.Type.QString))
         if not find_matching_field(master_field_names, "data_added_batch_id"):
-            new_attributes.append(QgsField("data_added_batch_id", QVariant.String))
+            new_attributes.append(QgsField("data_added_batch_id", QMetaType.Type.QString))
 
         for field_name in selected_fields:
             target_field_name = recoding.field_mappings.get(field_name, field_name)
