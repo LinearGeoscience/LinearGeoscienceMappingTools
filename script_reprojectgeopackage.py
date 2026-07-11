@@ -10,6 +10,11 @@ from qgis.core import (QgsProject, QgsCoordinateReferenceSystem, QgsVectorLayer,
                        QgsRasterFileWriter, QgsProcessingFeedback)
 from qgis.gui import QgsProjectionSelectionWidget
 
+try:
+    from .lgs_tasks import run_in_task
+except ImportError:
+    from lgs_tasks import run_in_task
+
 
 class GeoPackageReprojectDialog(QDialog):
     def __init__(self, parent=None):
@@ -68,9 +73,17 @@ class GeoPackageReprojectDialog(QDialog):
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout()
 
+        bar_row = QHBoxLayout()
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
-        progress_layout.addWidget(self.progress_bar)
+        bar_row.addWidget(self.progress_bar, 1)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setToolTip(
+            "Stop between layers. The partial output file is deleted.")
+        self.cancel_button.clicked.connect(self._cancel_task)
+        self.cancel_button.setVisible(False)
+        bar_row.addWidget(self.cancel_button)
+        progress_layout.addLayout(bar_row)
 
         self.status_label = QLabel("Ready")
         progress_layout.addWidget(self.status_label)
@@ -85,6 +98,9 @@ class GeoPackageReprojectDialog(QDialog):
         layout.addWidget(self.process_button)
 
         self.setLayout(layout)
+
+        self._task = None
+        self._transform_context = None
 
         # Initialize variables
         self.input_gpkg = None
@@ -200,89 +216,113 @@ class GeoPackageReprojectDialog(QDialog):
                 QMessageBox.warning(self, "Warning", "Selected CRS is not valid. Please select a valid CRS.")
                 return
 
+        # Capture main-thread-only state, then run the whole pipeline as a
+        # background task: everything below operates on paths/sqlite and
+        # worker-local layers, never on project layers.
+        self._transform_context = QgsProject.instance().transformContext()
         try:
-            # Create a copy of the input GeoPackage to ensure structure is preserved
-            self.status_label.setText("Creating initial GeoPackage copy...")
-            self.progress_bar.setValue(5)
-            QApplication.processEvents()
+            # The raster branch runs GDAL processing algorithms inside the
+            # worker; the provider registration must happen here first.
+            from processing.core.Processing import Processing
+            Processing.initialize()
+        except Exception:
+            pass
 
-            # Create an initial copy of the input GeoPackage (this preserves structure better than creating empty)
-            self.create_gpkg_copy(self.input_gpkg, self.output_gpkg)
+        self.process_button.setEnabled(False)
+        self.cancel_button.setVisible(True)
+        self._task = run_in_task(
+            "Reproject GeoPackage",
+            lambda cb: self._pipeline(target_crs, cb),
+            on_finished=self._process_done,
+            on_error=self._process_failed,
+            on_cancelled=self._process_cancelled,
+            owner=self, bar=self.progress_bar, label=self.status_label)
 
-            # Get list of layers in the GeoPackage
-            self.status_label.setText("Analyzing input GeoPackage...")
-            self.progress_bar.setValue(15)
-            QApplication.processEvents()
-            vector_layers, nonspatial_tables, raster_layers = self.list_gpkg_contents(self.input_gpkg)
+    def _cancel_task(self):
+        if self._task is not None:
+            self._task.cancel()
+            self.status_label.setText("Cancelling…")
 
-            # Set up progress tracking
-            total_operations = len(vector_layers) + len(nonspatial_tables) + len(raster_layers)
-            progress_per_operation = 80 / max(total_operations, 1)
-            current_progress = 15
+    def _process_done(self, _result):
+        self._task = None
+        self.process_button.setEnabled(True)
+        self.cancel_button.setVisible(False)
+        self.status_label.setText("Processing completed successfully!")
+        self.progress_bar.setValue(100)
+        QMessageBox.information(self, "Success", "GeoPackage processing completed successfully!")
 
-            # Process each vector layer - only reproject if target CRS is specified
-            for i, layer_name in enumerate(vector_layers):
-                # Update progress
-                progress_msg = f"Processing vector layer {i + 1}/{len(vector_layers)}: {layer_name}"
-                self.status_label.setText(progress_msg)
-                current_progress += progress_per_operation
-                self.progress_bar.setValue(int(current_progress))
-                QApplication.processEvents()
+    def _process_failed(self, exc, tb):
+        self._task = None
+        self.process_button.setEnabled(True)
+        self.cancel_button.setVisible(False)
+        self.status_label.setText(f"Error: {str(exc)}")
+        self.progress_bar.setValue(0)
+        QMessageBox.critical(self, "Error", f"An error occurred: {str(exc)}")
 
-                # Process the vector layer - ensuring geometry is preserved
-                self.process_vector_layer(layer_name, target_crs)
+    def _process_cancelled(self):
+        self._task = None
+        self.process_button.setEnabled(True)
+        self.cancel_button.setVisible(False)
+        self.progress_bar.setValue(0)
+        # A partially-written output is useless and misleading — remove it.
+        try:
+            if self.output_gpkg and os.path.exists(self.output_gpkg):
+                os.remove(self.output_gpkg)
+        except Exception:
+            pass
+        self.status_label.setText("Cancelled — partial output removed")
 
-            # Process each non-spatial table (including layer_styles)
-            for i, table_name in enumerate(nonspatial_tables):
-                # Update progress
-                progress_msg = f"Copying non-spatial table {i + 1}/{len(nonspatial_tables)}: {table_name}"
-                self.status_label.setText(progress_msg)
-                current_progress += progress_per_operation
-                self.progress_bar.setValue(int(current_progress))
-                QApplication.processEvents()
+    def _pipeline(self, target_crs, progress_cb):
+        """The full copy/reproject pipeline. Runs on a background task;
+        must not touch widgets or project layers."""
+        progress_cb(5, "Creating initial GeoPackage copy...")
+        # Create an initial copy of the input GeoPackage (this preserves structure better than creating empty)
+        self.create_gpkg_copy(self.input_gpkg, self.output_gpkg)
 
-                # Copy the non-spatial table
-                self.copy_nonspatial_table(table_name)
+        progress_cb(15, "Analyzing input GeoPackage...")
+        vector_layers, nonspatial_tables, raster_layers = self.list_gpkg_contents(self.input_gpkg)
 
-            # Process each raster layer if needed
-            for i, layer_name in enumerate(raster_layers):
-                progress_msg = f"Processing raster layer {i + 1}/{len(raster_layers)}: {layer_name}"
-                self.status_label.setText(progress_msg)
-                current_progress += progress_per_operation
-                self.progress_bar.setValue(int(current_progress))
-                QApplication.processEvents()
+        # Set up progress tracking
+        total_operations = len(vector_layers) + len(nonspatial_tables) + len(raster_layers)
+        progress_per_operation = 80 / max(total_operations, 1)
+        current_progress = 15
 
-                self.process_raster_layer(layer_name, target_crs)
+        # Process each vector layer - only reproject if target CRS is specified
+        for i, layer_name in enumerate(vector_layers):
+            current_progress += progress_per_operation
+            progress_cb(int(current_progress),
+                        f"Processing vector layer {i + 1}/{len(vector_layers)}: {layer_name}")
+            # Process the vector layer - ensuring geometry is preserved
+            self.process_vector_layer(layer_name, target_crs)
 
-            # If target CRS is specified, update all CRS references
-            if target_crs and target_crs.isValid():
-                self.status_label.setText("Updating CRS references...")
-                self.progress_bar.setValue(93)
-                QApplication.processEvents()
-                self.update_gpkg_crs_references(self.output_gpkg, target_crs)
+        # Process each non-spatial table (including layer_styles)
+        for i, table_name in enumerate(nonspatial_tables):
+            current_progress += progress_per_operation
+            progress_cb(int(current_progress),
+                        f"Copying non-spatial table {i + 1}/{len(nonspatial_tables)}: {table_name}")
+            self.copy_nonspatial_table(table_name)
 
-            # Verify all layers have been correctly processed
-            self.status_label.setText("Verifying GeoPackage integrity...")
-            self.progress_bar.setValue(95)
-            QApplication.processEvents()
-            self.verify_gpkg_integrity()
+        # Process each raster layer if needed
+        for i, layer_name in enumerate(raster_layers):
+            current_progress += progress_per_operation
+            progress_cb(int(current_progress),
+                        f"Processing raster layer {i + 1}/{len(raster_layers)}: {layer_name}")
+            self.process_raster_layer(layer_name, target_crs)
 
-            # Finalize and optimize
-            self.status_label.setText("Finalizing GeoPackage...")
-            self.progress_bar.setValue(98)
-            QApplication.processEvents()
-            self.optimize_gpkg(self.output_gpkg)
+        # If target CRS is specified, update all CRS references
+        if target_crs and target_crs.isValid():
+            progress_cb(93, "Updating CRS references...")
+            self.update_gpkg_crs_references(self.output_gpkg, target_crs)
 
-            self.status_label.setText("Processing completed successfully!")
-            self.progress_bar.setValue(100)
-            QMessageBox.information(self, "Success", "GeoPackage processing completed successfully!")
+        # Verify all layers have been correctly processed
+        progress_cb(95, "Verifying GeoPackage integrity...")
+        self.verify_gpkg_integrity()
 
-        except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
-            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
-        finally:
-            if self.progress_bar.value() < 100:
-                self.progress_bar.setValue(100)
+        # Finalize and optimize
+        progress_cb(98, "Finalizing GeoPackage...")
+        self.optimize_gpkg(self.output_gpkg)
+        progress_cb(100, "Done")
+        return True
 
     def create_gpkg_copy(self, input_gpkg, output_gpkg):
         """Create a complete copy of the input GeoPackage structure"""
@@ -314,7 +354,9 @@ class GeoPackageReprojectDialog(QDialog):
             options.driverName = "GPKG"
             options.layerName = temp_layer_name
 
-            transform_context = QgsProject.instance().transformContext()
+            # Captured on the main thread before the task starts.
+            transform_context = (self._transform_context
+                                 or QgsProject.instance().transformContext())
 
             # Write the dummy layer to initialize the GeoPackage
             result = QgsVectorFileWriter.writeAsVectorFormatV3(
@@ -539,8 +581,9 @@ class GeoPackageReprojectDialog(QDialog):
                 options.sourceCRS = vector_layer.crs()
                 options.destCRS = target_crs
 
-                # Get transform context
-                transform_context = QgsProject.instance().transformContext()
+                # Captured on the main thread before the task starts.
+                transform_context = (self._transform_context
+                                     or QgsProject.instance().transformContext())
 
                 # Write to the new GeoPackage
                 result = QgsVectorFileWriter.writeAsVectorFormatV3(
