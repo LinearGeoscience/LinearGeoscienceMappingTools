@@ -177,3 +177,6 @@ docs/_templates/
 # Personal working notes (not committed)
 RECONCILE_GUIDE.md
 RECONCILE_QUICKSTART.md
+
+# QGIS artifact created by headless QgsApplication runs
+symbology-style.db
