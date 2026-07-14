@@ -180,3 +180,6 @@ RECONCILE_QUICKSTART.md
 
 # QGIS artifact created by headless QgsApplication runs
 symbology-style.db
+
+# Build stamp written by scripts/git-hooks (deployed with the plugin, not tracked)
+/build_info.json

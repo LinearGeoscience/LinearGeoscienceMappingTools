@@ -33,6 +33,7 @@ from . import plugin_theme as theme
 # sidebar builder.
 from .map_cleaning import MapCleaningToolkit
 from . import feature_info
+from . import version_info
 
 # QSettings keys
 SETTINGS_PREFIX = "LinearGeoscience"
@@ -258,6 +259,7 @@ class LinearGeosciencePluginMain:
         self.plugin_dir = os.path.dirname(__file__)
         self.toolbar = None
         self.action_main_button = None
+        self.action_about = None
         self.stereonet_core = None
         self.photo_panel = None
         self.map_cleaning = None
@@ -298,6 +300,11 @@ class LinearGeosciencePluginMain:
         # Add to Plugins menu (required for QGIS plugin repository)
         self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_main_button)
 
+        self.action_about = QAction("About...", self.iface.mainWindow())
+        self.action_about.setToolTip("Plugin version and build information")
+        self.action_about.triggered.connect(self.show_about_dialog)
+        self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_about)
+
         # The stereonet dock (+ matplotlib/pandas) is built lazily on first
         # open via _ensure_stereonet(), not at startup.
         self._stereonet_import_error = None
@@ -336,6 +343,11 @@ class LinearGeosciencePluginMain:
             self.iface.removePluginMenu("Linear Geoscience Mapping Tools", self.action_main_button)
             self.action_main_button.triggered.disconnect()
             self.action_main_button = None
+
+        if self.action_about:
+            self.iface.removePluginMenu("Linear Geoscience Mapping Tools", self.action_about)
+            self.action_about.triggered.disconnect()
+            self.action_about = None
 
         if self.map_cleaning:
             try:
@@ -442,6 +454,12 @@ class LinearGeosciencePluginMain:
     # ------------------------------------------------------------------
     # Main dialog  (non-modal)
     # ------------------------------------------------------------------
+    def show_about_dialog(self):
+        """Show the About dialog (version, build stamp, environment)."""
+        from .about_dialog import AboutDialog
+        dlg = AboutDialog(self.iface.mainWindow())
+        dlg.exec()
+
     def open_plugin_dialog(self):
         """Open or bring to front the main plugin dialog (non-modal).
 
@@ -630,10 +648,10 @@ class LinearGeosciencePluginMain:
         ver_sep.setStyleSheet(theme.separator_style())
         lay.addWidget(ver_sep)
 
-        version_info = QLabel("Linear Geoscience Mapping Tools V3.3\nAuthor: Harry West\nJune 2026")
-        version_info.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        version_info.setStyleSheet(theme.version_label_style())
-        lay.addWidget(version_info)
+        version_label = QLabel(version_info.footer_text())
+        version_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        version_label.setStyleSheet(theme.version_label_style())
+        lay.addWidget(version_label)
 
         # QField export button (above template)
         btn_qfield = QPushButton("Export for QField")
