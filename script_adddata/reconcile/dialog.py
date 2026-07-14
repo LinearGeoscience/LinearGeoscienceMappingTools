@@ -965,11 +965,33 @@ class ReconcileDialog(QDialog):
             pass
 
 
-def run_reconcile_tool_dialog(iface):
-    """Entry point used by mainplugin.py."""
+def run_reconcile_tool_dialog(iface, owner=None):
+    """Entry point used by mainplugin.py.
+
+    The dialog is stored on `owner` (the plugin instance) as
+    `owner.reconcile_dialog` so its lifecycle is plugin-owned. Without a
+    retained reference the Python wrapper is garbage-collected while the
+    window is still visible and every slot silently stops firing.
+    """
+    # Re-raise existing dialog if still alive
+    existing = getattr(owner, "reconcile_dialog", None) if owner else None
+    if existing is not None:
+        try:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return existing
+        except RuntimeError:
+            owner.reconcile_dialog = None
+
     parent = iface.mainWindow() if iface else None
     dlg = ReconcileDialog(iface, parent)
     dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    if owner is not None:
+        # Persistent reference to prevent GC; clean up on close
+        dlg.destroyed.connect(
+            lambda: setattr(owner, "reconcile_dialog", None))
+        owner.reconcile_dialog = dlg
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()

@@ -269,6 +269,7 @@ class LinearGeosciencePluginMain:
         self.layout_panel = None
         self.reproject_dialog = None
         self.recode_wizard = None
+        self.reconcile_dialog = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -389,7 +390,8 @@ class LinearGeosciencePluginMain:
         for own_attr, iface_attr, is_dock in (
                 ('layout_panel', '_layout_panel', True),
                 ('reproject_dialog', '_reproject_dialog', False),
-                ('recode_wizard', '_recode_wizard', False)):
+                ('recode_wizard', '_recode_wizard', False),
+                ('reconcile_dialog', '_reconcile_dialog', False)):
             for holder, attr in ((self, own_attr),
                                  (self.iface, iface_attr)):
                 widget = getattr(holder, attr, None)
@@ -919,7 +921,7 @@ class LinearGeosciencePluginMain:
 
     def run_reconcile(self):
         from .script_adddata.reconcile.dialog import run_reconcile_tool_dialog
-        run_reconcile_tool_dialog(self.iface)
+        run_reconcile_tool_dialog(self.iface, owner=self)
 
     def run_qfield_export(self):
         from .qfield_export.gui.export_dialog import ExportDialog
