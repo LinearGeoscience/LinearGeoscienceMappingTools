@@ -34,7 +34,7 @@ about=Combines multiple geoscience mapping scripts and a stereonet dock panel
     Map cleaning tools are based on the Spline Plugin by Radim Blazek and
     Polygon Clipper by Giuseppe De Marco (GPL).
     See THIRD_PARTY_LICENSES files for complete attribution and license details.
-version=4.0
+version=4.1
 tracker=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools/issues
 repository=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
 homepage=https://github.com/LinearGeoscience/LinearGeoscienceMappingTools
@@ -47,7 +47,16 @@ deprecated=False
 hasProcessingProvider=yes
 server=False
 plugin_dependencies=
-changelog=4.0: QGIS 4 / Qt6 support: one codebase runs on both QGIS 3.40 LTR
+changelog=4.1: Stereonet usability: the plot now rescales with the dock
+    panel (controls scroll in their own collapsible pane above a splitter,
+    the net fills all remaining space and re-lays-out after resizes), and a
+    new right-click-and-hold probe shows the great circle of the plane whose
+    pole sits under the cursor with a live dip/dip direction and plunge/trend
+    readout while dragging. Also since 4.0: optional layer-tree geoPDF export
+    (QGIS 4.2+), native QGIS 4 gap-fill and remove-parts map cleaning
+    algorithms, profile-aware settings storage with one-time migration, and
+    an About dialog with live version footer (July 2026)
+    4.0: QGIS 4 / Qt6 support: one codebase runs on both QGIS 3.40 LTR
     (Qt5/PyQt5) and QGIS 4.x (Qt6/PyQt6). All Qt and QGIS enums migrated to
     their fully-scoped forms, QgsField construction moved to QMetaType,
     QAction/QShortcut imported from QtGui, QSvgWidget from QtSvgWidgets with

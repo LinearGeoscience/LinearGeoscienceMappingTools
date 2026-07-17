@@ -50,7 +50,8 @@ from qgis.PyQt.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QScrollArea, QGroupBox, QFileDialog,
     QMessageBox, QLineEdit, QRadioButton, QStackedWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QFormLayout, QSizePolicy, QColorDialog,
-    QMenu, QInputDialog, QDialog, QTextEdit, QListWidget, QListWidgetItem
+    QMenu, QInputDialog, QDialog, QTextEdit, QListWidget, QListWidgetItem,
+    QSplitter
 )
 from qgis.gui import (
     QgsFieldComboBox,
@@ -484,11 +485,10 @@ class StereonetPluginCore:
         if hasattr(self, 'contour_plane_checkbox'):
             self.contour_checkbox = self.contour_plane_checkbox
 
-        scroll_plot = QScrollArea()
-        scroll_plot.setWidget(self.plot_widget)
-        scroll_plot.setWidgetResizable(True)
-        scroll_plot.setFrameShape(QFrame.Shape.NoFrame)  # Remove frame for cleaner look
-        self.tab_widget.addTab(scroll_plot, "Plot")
+        # No whole-tab scroll area here: the plot canvas must track the dock
+        # size directly so the stereonet rescales with the panel. The controls
+        # pane inside setup_plot_tab() has its own scroll area instead.
+        self.tab_widget.addTab(self.plot_widget, "Plot")
 
         # 1) Categories Tab (now second)
         self.categories_widget = QWidget()
@@ -1060,10 +1060,6 @@ class StereonetPluginCore:
 
 
     def setup_plot_tab(self):
-        layout = QVBoxLayout(self.plot_widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(15)
-
         # Visualization controls group
         controls_group = QgsCollapsibleGroupBox("Visualization Settings")
         controls_group.setFlat(True)
@@ -1288,12 +1284,14 @@ class StereonetPluginCore:
         # QLabel that remains the message surface for empty/info states
         self.plot_label = QLabel("Plot will appear here")
         self.plot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.plot_label.setMinimumHeight(400)  # Ensure enough space for plot
+        self.plot_label.setMinimumHeight(220)
         self.plot_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.plot_figure = Figure(figsize=(7, 5), dpi=100)
         self.plot_canvas = FigureCanvasQTAgg(self.plot_figure)
-        self.plot_canvas.setMinimumHeight(400)
+        # Low minimum so short docks shrink the plot instead of forcing
+        # scrollbars; the splitter gives it all remaining height otherwise
+        self.plot_canvas.setMinimumHeight(220)
         self.plot_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.plot_stack = QStackedWidget()
@@ -1310,9 +1308,44 @@ class StereonetPluginCore:
         self.plot_update_timer.setInterval(150)
         self.plot_update_timer.timeout.connect(self.update_plot)
 
-        # Assemble layout
-        layout.addWidget(controls_group)
-        layout.addWidget(self.plot_stack, 1)
+        # Re-render once a canvas resize settles so tight_layout and the
+        # legend/stat-text placement are recomputed for the new size (the
+        # canvas itself already rescales live via matplotlib's resizeEvent)
+        self._last_render_canvas_size = None
+        self._canvas_resize_timer = QTimer(self.plot_widget)
+        self._canvas_resize_timer.setSingleShot(True)
+        self._canvas_resize_timer.setInterval(200)
+        self._canvas_resize_timer.timeout.connect(self._on_canvas_resize_settled)
+        self.plot_canvas.mpl_connect(
+            'resize_event', lambda _event: self._canvas_resize_timer.start())
+
+        # Assemble layout: scrollable controls above, plot filling the rest.
+        # The splitter keeps the canvas out of any scroll flow so it tracks
+        # the dock size (this is what makes the stereonet rescale).
+        controls_container = QWidget()
+        controls_container_layout = QVBoxLayout(controls_container)
+        controls_container_layout.setContentsMargins(10, 10, 10, 10)
+        controls_container_layout.setSpacing(15)
+        controls_container_layout.addWidget(controls_group)
+        controls_container_layout.addStretch()
+
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidget(controls_container)
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.plot_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.plot_splitter.addWidget(controls_scroll)
+        self.plot_splitter.addWidget(self.plot_stack)
+        self.plot_splitter.setStretchFactor(0, 0)
+        self.plot_splitter.setStretchFactor(1, 1)
+        self.plot_splitter.setCollapsible(0, True)
+        self.plot_splitter.setCollapsible(1, False)
+        self.plot_splitter.setSizes([260, 600])
+
+        layout = QVBoxLayout(self.plot_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.plot_splitter)
 
 
     def setup_categories_tab(self):
@@ -4878,10 +4911,29 @@ class StereonetPluginCore:
                 "Plot rendering failed - see the Linear Geoscience log for details.")
             self.show_empty_plot()
             raise
-        self.pick_handler.set_plot(pick_registry)
+        stereonet_ax = next(
+            (a for a in self.plot_figure.axes
+             if getattr(a, 'name', '') == 'stereonet'), None)
+        self.pick_handler.set_plot(pick_registry, ax=stereonet_ax)
         self.plot_stack.setCurrentWidget(self.plot_canvas)
         self.plot_canvas.draw_idle()
+        # Swallow the resize_event this render may itself trigger
+        self._last_render_canvas_size = (
+            self.plot_canvas.width(), self.plot_canvas.height())
         QgsMessageLog.logMessage("Plot updated successfully with legend properly positioned.", 'Linear Geoscience', Qgis.MessageLevel.Info)
+
+    def _on_canvas_resize_settled(self):
+        """Debounced canvas-resize handler: the canvas rescales live while
+        dragging, but tight_layout and the legend/stat-text placement were
+        computed for the render-time size, so re-render once at the new one."""
+        if self.plot_stack is None or self.plot_canvas is None:
+            return
+        if self.plot_stack.currentWidget() is not self.plot_canvas:
+            return  # label page showing - nothing rendered to re-lay-out
+        size = (self.plot_canvas.width(), self.plot_canvas.height())
+        if size == self._last_render_canvas_size:
+            return
+        self.update_plot()
 
 
     def _collect_render_settings(self, profile):
@@ -4935,6 +4987,24 @@ class StereonetPluginCore:
         except Exception:
             plt.close(fig)
             raise
+
+    def _apply_stereonet_layout(self, fig, ax, profile):
+        """Reserve the right margin for the legend and keep the hidden polar
+        (azimuth label) axes glued to the stereonet axes. Shared by the
+        render path and (indirectly, via re-render) canvas resizes."""
+        if profile == 'clipboard':
+            fig.subplots_adjust(right=0.75, bottom=0.1)  # Bottom margin prevents cutoff
+            fig.tight_layout(pad=1.2)  # Increased padding to prevent cutoff
+        else:
+            fig.subplots_adjust(right=0.75)  # Reserves 25% of figure width for the legend
+            fig.tight_layout()
+            if profile == 'screen':
+                # tight_layout overrides the right margin. Exports recover the
+                # overflowing legend/stat text via savefig(bbox_inches='tight'),
+                # but the live canvas hard-clips at the figure edge, so
+                # re-reserve the margin after layout.
+                fig.subplots_adjust(right=0.75)
+        ax._polar.set_position(ax.get_position())
 
     def _render_stereonet_into(self, fig, plotted_data, analysis_flags, settings):
         # Determine if we're plotting only a single dataset
@@ -5444,19 +5514,7 @@ class StereonetPluginCore:
             legend.get_frame().set_alpha(0.9)
 
         # Adjust subplot position to make room for legend
-        if settings.profile == 'clipboard':
-            fig.subplots_adjust(right=0.75, bottom=0.1)  # Bottom margin prevents cutoff
-            fig.tight_layout(pad=1.2)  # Increased padding to prevent cutoff
-        else:
-            fig.subplots_adjust(right=0.75)  # Reserves 25% of figure width for the legend
-            fig.tight_layout()
-            if settings.profile == 'screen':
-                # tight_layout overrides the right margin. Exports recover the
-                # overflowing legend/stat text via savefig(bbox_inches='tight'),
-                # but the live canvas hard-clips at the figure edge, so
-                # re-reserve the margin after layout.
-                fig.subplots_adjust(right=0.75)
-        ax._polar.set_position(ax.get_position())
+        self._apply_stereonet_layout(fig, ax, settings.profile)
 
         # Draw the collected analysis stat lines off-plot in the right
         # margin, starting just below the legend's measured extent so a
