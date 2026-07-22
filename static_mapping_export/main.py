@@ -28,6 +28,7 @@ import sqlite3
 import traceback
 
 from ..recode_workflow.remove_unused import remove_unused_categories
+from ..script_setmapping import build_structural_labeling, is_lgs_structural_labeling
 from ..layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 from .graphics_check import find_unembedded_graphics
 from .mapping_export import (
@@ -313,6 +314,16 @@ class LayerExporter:
                 self.log(f"  Reference scale set to 1:{reference_scale}", "SUCCESS")
             else:
                 self.log(f"  No renderer - reference scale skipped", "INFO")
+
+        # The LGS structural labeling bakes its offsets as map-unit ground
+        # distances for the scale Set Mapping Scale was last run at.
+        # Regenerate them at the export scale so labels sit next to their
+        # points instead of the old scale's distance away.
+        if reference_scale is not None and has_labeling:
+            if is_lgs_structural_labeling(target_layer.labeling()):
+                target_layer.setLabeling(build_structural_labeling(int(reference_scale)))
+                target_layer.setLabelsEnabled(True)
+                self.log(f"  Structural label offsets regenerated for 1:{reference_scale}", "SUCCESS")
 
         self._save_style_to_database(target_layer, has_renderer, has_labeling)
 
