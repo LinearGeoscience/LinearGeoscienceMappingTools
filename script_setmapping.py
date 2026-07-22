@@ -653,37 +653,54 @@ class LayerConfigurator:
             QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        # Get scale-appropriate offset value
-        x_value = self.SCALE_TO_OFFSET.get(scale_value, 1)
-
-        # Create root rule (overlap handling is set on each individual rule)
-        root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
-
-        # Rule 1: Dip field (no callouts)
-        dip_rule = self.create_dip_rule(x_value)
-        root.appendChild(dip_rule)
-
-        # Rule 2: SymbolSuffix field (small, italic, no callouts)
-        suffix_rule = self.create_suffix_rule(x_value)
-        root.appendChild(suffix_rule)
-
-        # Rule 3: Regolith Note (Cartographic placement, no callouts)
-        regolith_rule = self.create_regolith_note_rule()
-        root.appendChild(regolith_rule)
-
-        # Rule 4: Fallback rule (with callouts)
-        fallback_rule = self.create_fallback_rule(x_value)
-        root.appendChild(fallback_rule)
-
-        # Apply rule-based labeling
-        rules = QgsRuleBasedLabeling(root)
-        layer.setLabeling(rules)
+        layer.setLabeling(build_structural_labeling(scale_value))
         layer.setLabelsEnabled(True)
         layer.triggerRepaint()
 
         QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
         QgsMessageLog.logMessage(f"[Label] All rules have 'Allow Overlaps without Penalty' enabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
+
+
+def offset_for_scale(scale_value):
+    """Map-unit label offset distance for a mapping scale.
+
+    Every SCALE_TO_OFFSET entry is exactly 0.006 * scale, so unlisted
+    scales fall back to the same linear fit.
+    """
+    return LayerConfigurator.SCALE_TO_OFFSET.get(scale_value, scale_value * 0.006)
+
+
+def build_structural_labeling(scale_value):
+    """Return the canonical LGS rule-based structural labeling with label
+    offsets baked for scale_value.
+
+    Shared by Set Mapping Scale and the static mapping export, so exported
+    layers can get offsets regenerated to match their export scale.
+    """
+    configurator = LayerConfigurator()
+    x_value = offset_for_scale(scale_value)
+
+    # Root rule (overlap handling is set on each individual rule)
+    root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
+    # Rule 1: Dip field (no callouts)
+    root.appendChild(configurator.create_dip_rule(x_value))
+    # Rule 2: SymbolSuffix field (small, italic, no callouts)
+    root.appendChild(configurator.create_suffix_rule(x_value))
+    # Rule 3: Regolith Note (Cartographic placement, no callouts)
+    root.appendChild(configurator.create_regolith_note_rule())
+    # Rule 4: Fallback rule (with callouts)
+    root.appendChild(configurator.create_fallback_rule(x_value))
+    return QgsRuleBasedLabeling(root)
+
+
+def is_lgs_structural_labeling(labeling):
+    """True if labeling is the LGS rule-based structural labeling built by
+    this module, detected by the rule descriptions it generates."""
+    if not isinstance(labeling, QgsRuleBasedLabeling):
+        return False
+    descriptions = {rule.description() for rule in labeling.rootRule().children()}
+    return {'Dip Labels', 'SymbolSuffix Labels'} <= descriptions
 
 
 def run_configuration():
