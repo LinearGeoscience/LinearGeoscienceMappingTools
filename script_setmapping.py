@@ -475,11 +475,7 @@ class LayerConfigurator:
         settings.autoWrapLength = 35
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Data-defined placement (original expression)
         placement_expression = (
@@ -518,11 +514,7 @@ class LayerConfigurator:
         settings.offsetUnits = Qgis.RenderUnit.MapUnits
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Data-defined properties
         props = QgsPropertyCollection()
@@ -565,12 +557,7 @@ class LayerConfigurator:
         settings.setFormat(self.create_regolith_note_text_format())
 
         # Placement settings - Cartographic (AroundPoint)
-        try:
-            # Try newer enum structure first
-            settings.placement = Qgis.LabelPlacement.AroundPoint
-        except AttributeError:
-            # Fallback to older enum
-            settings.placement = Qgis.LabelPlacement.AroundPoint
+        settings.placement = Qgis.LabelPlacement.AroundPoint
 
         settings.dist = 0.0  # Distance from feature
         settings.distUnits = Qgis.RenderUnit.Millimeters
@@ -579,11 +566,7 @@ class LayerConfigurator:
         settings.priority = 5  # Medium-high priority
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -621,11 +604,7 @@ class LayerConfigurator:
         settings.autoWrapLength = 35
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Improved placement expression - handle invalid DipDirection and moderate offset
         placement_expression = (
