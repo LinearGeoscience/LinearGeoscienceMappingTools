@@ -21,7 +21,10 @@ Behaviour by data shape (see tests for the worked examples):
   neighbouring suggestion so windows never overlap.
 """
 
-# No imports (not even .expression) so tests can load this file directly.
+import math
+
+# No package imports (not even .expression) so tests can load this file
+# directly.
 DEFAULT_TOLERANCE = 5.0   # keep equal to expression.DEFAULT_TOLERANCE
 
 GAP_FLOOR = 2.0        # m — gaps <= this never split a cluster
@@ -83,7 +86,9 @@ def _bin_continuous(pairs):
     step = _nice_step((hi - lo) / float(MAX_SUGGESTIONS))
     bins = {}
     for value, count in pairs:
-        level = round(value / step) * step
+        # floor(x + 0.5) == JS Math.round — keeps the QML mirror identical
+        # (python's round() would use banker's rounding on .5 boundaries).
+        level = math.floor(value / step + 0.5) * step
         entry = bins.setdefault(level, {'count': 0, 'lo': value, 'hi': value})
         entry['count'] += count
         entry['lo'] = min(entry['lo'], value)

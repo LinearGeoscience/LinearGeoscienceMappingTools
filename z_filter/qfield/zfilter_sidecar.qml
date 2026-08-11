@@ -9,7 +9,8 @@
  * QgsVectorLayer — the same mechanism as the desktop Z Filter panel).
  * State is shared with desktop through the lgs_z_* project variables.
  *
- * Mirrors z_filter/expression.py — keep the clause shapes in sync.
+ * Mirrors z_filter/expression.py (clause shapes) and z_filter/levels.py
+ * (level clustering) — keep the implementations in sync.
  */
 
 import QtQuick
@@ -27,8 +28,13 @@ Item {
   readonly property var layerNames: [
     '1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
   readonly property string elevationField: 'Elevation'
+  readonly property var tolPresets: [1, 2.5, 5, 10]
 
-  property var knownLevels: []       // sorted numbers
+  property var userLevels: []        // persisted (lgs_z_levels) — typed only
+  property var suggestions: []       // cluster objects from the last scan
+  property var scanInfo: ({})        // {min, max, withElev, blank}
+  property real autoTol: 0
+  property bool scanned: false
   property bool filterActive: false
 
   // ----------------------------------------------------------------
@@ -88,23 +94,185 @@ Item {
   }
 
   // ----------------------------------------------------------------
-  // Layers
+  // Level clustering (mirror of z_filter/levels.py — keep in sync)
   // ----------------------------------------------------------------
-  function targetLayers() {
-    let layers = []
-    for (const name of layerNames) {
-      try {
-        const matches = qgisProject.mapLayersByName(name)
-        if (matches && matches.length > 0)
-          layers.push({ name: name, layer: matches[0] })
-      } catch (error) {}
+  readonly property real gapFloor: 2.0
+  readonly property real gapFactor: 0.5
+  readonly property real minTol: 1.0
+  readonly property real tolMargin: 0.5
+  readonly property real maxTol: 15.0
+  readonly property int maxSuggestions: 12
+
+  function medianOf(values) {
+    if (values.length === 0)
+      return 0
+    let ordered = values.slice().sort(function (a, b) { return a - b })
+    const mid = Math.floor(ordered.length / 2)
+    if (ordered.length % 2)
+      return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+  }
+
+  function niceStep(raw) {
+    if (raw <= 0)
+      return 1
+    let magnitude = 1
+    while (magnitude * 10 <= raw)
+      magnitude *= 10
+    while (magnitude > raw)
+      magnitude /= 10
+    const factors = [1, 2, 5, 10]
+    for (const factor of factors) {
+      if (magnitude * factor >= raw)
+        return magnitude * factor
     }
-    return layers
+    return magnitude * 10
+  }
+
+  function binContinuous(pairs) {
+    const lo = pairs[0][0]
+    const hi = pairs[pairs.length - 1][0]
+    const step = niceStep((hi - lo) / maxSuggestions)
+    let bins = {}
+    for (const pair of pairs) {
+      const level = Math.round(pair[0] / step) * step
+      if (!(level in bins))
+        bins[level] = { count: 0, lo: pair[0], hi: pair[0] }
+      bins[level].count += pair[1]
+      bins[level].lo = Math.min(bins[level].lo, pair[0])
+      bins[level].hi = Math.max(bins[level].hi, pair[0])
+    }
+    const tol = Math.max(minTol, step / 2)
+    return Object.keys(bins).map(Number)
+        .sort(function (a, b) { return a - b })
+        .map(function (level) {
+          return { level: level, count: bins[level].count,
+                   lo: bins[level].lo, hi: bins[level].hi,
+                   suggested_tol: tol }
+        })
+  }
+
+  function summarizeCluster(pairs) {
+    const lo = pairs[0][0]
+    const hi = pairs[pairs.length - 1][0]
+    const span = hi - lo
+    if (span / 2 + tolMargin > maxTol)
+      return binContinuous(pairs)
+    let total = 0, weighted = 0
+    let modeValue = pairs[0][0], modeCount = pairs[0][1]
+    for (const pair of pairs) {
+      total += pair[1]
+      weighted += pair[0] * pair[1]
+      if (pair[1] > modeCount) {
+        modeValue = pair[0]
+        modeCount = pair[1]
+      }
+    }
+    const level = (modeCount * 2 >= total)
+        ? modeValue : Math.round(weighted / total * 10) / 10
+    const tol = Math.min(maxTol, Math.max(minTol, span / 2 + tolMargin))
+    return [{ level: level, count: total, lo: lo, hi: hi, suggested_tol: tol }]
+  }
+
+  function clusterLevels(valueCounts) {
+    let pairs = []
+    for (const key in valueCounts) {
+      const value = Number(key)
+      const count = valueCounts[key]
+      if (!isNaN(value) && isFinite(value) && count > 0)
+        pairs.push([value, count])
+    }
+    pairs.sort(function (a, b) { return a[0] - b[0] })
+    if (pairs.length === 0)
+      return []
+
+    let gaps = []
+    for (let i = 1; i < pairs.length; i++)
+      gaps.push(pairs[i][0] - pairs[i - 1][0])
+    const threshold = gaps.length
+        ? Math.max(gapFloor, gapFactor * medianOf(gaps)) : gapFloor
+
+    let clusters = []
+    let current = [pairs[0]]
+    for (let i = 1; i < pairs.length; i++) {
+      if (pairs[i][0] - pairs[i - 1][0] > threshold) {
+        clusters.push(current)
+        current = []
+      }
+      current.push(pairs[i])
+    }
+    clusters.push(current)
+
+    let result = []
+    for (const cluster of clusters)
+      result = result.concat(summarizeCluster(cluster))
+    result.sort(function (a, b) { return a.level - b.level })
+
+    // Neighbour clamp: windows must never overlap.
+    for (let i = 0; i < result.length; i++) {
+      let halfGaps = []
+      if (i > 0)
+        halfGaps.push((result[i].level - result[i - 1].level) / 2)
+      if (i < result.length - 1)
+        halfGaps.push((result[i + 1].level - result[i].level) / 2)
+      if (halfGaps.length)
+        result[i].suggested_tol = Math.max(
+            minTol, Math.min(result[i].suggested_tol, Math.min.apply(null, halfGaps)))
+    }
+    return result
+  }
+
+  function suggestTolerance(clusters) {
+    if (clusters.length === 0)
+      return 5
+    return Math.round(medianOf(clusters.map(function (c) {
+      return c.suggested_tol
+    })) * 10) / 10
+  }
+
+  function topSuggestions(clusters, n) {
+    let ranked = clusters.slice().sort(function (a, b) {
+      return (b.count - a.count) || (a.level - b.level)
+    }).slice(0, n)
+    return ranked.sort(function (a, b) { return a.level - b.level })
   }
 
   // ----------------------------------------------------------------
-  // Level list
+  // Layers
   // ----------------------------------------------------------------
+  function layerByName(name) {
+    try {
+      const matches = qgisProject.mapLayersByName(name)
+      if (matches && matches.length > 0)
+        return matches[0]
+    } catch (error) {}
+    return null
+  }
+
+  // ----------------------------------------------------------------
+  // Level list (merged user + suggestions)
+  // ----------------------------------------------------------------
+  function mergedLevels() {
+    let seen = {}
+    for (const value of userLevels)
+      seen[value] = true
+    for (const cluster of suggestions)
+      seen[cluster.level] = true
+    return Object.keys(seen).map(Number).sort(function (a, b) { return a - b })
+  }
+
+  function rebuildLevelModel(current) {
+    const levels = mergedLevels()
+    levelCombo.model = levels.map(fmt)
+    if (current !== undefined) {
+      const index = levels.indexOf(Number(current))
+      if (index !== -1)
+        levelCombo.currentIndex = index
+      else
+        levelCombo.editText = fmt(current)
+    }
+  }
+
   function loadLevels() {
     let values = {}
     for (const part of projVar('lgs_z_levels', '').split(',')) {
@@ -112,23 +280,22 @@ Item {
       if (part.trim() !== '' && !isNaN(number))
         values[number] = true
     }
-    setLevels(Object.keys(values).map(Number))
-  }
-
-  function setLevels(list) {
-    list.sort(function (a, b) { return a - b })
-    knownLevels = list
-    levelCombo.model = knownLevels.map(fmt)
+    userLevels = Object.keys(values).map(Number)
+        .sort(function (a, b) { return a - b })
+    rebuildLevelModel(undefined)
   }
 
   function addLevel(value) {
-    if (knownLevels.indexOf(value) === -1) {
-      let list = knownLevels.slice()
+    // Persist only genuinely user-typed levels; suggestions are recomputed
+    // from data on every scan.
+    if (mergedLevels().indexOf(value) === -1) {
+      let list = userLevels.slice()
       list.push(value)
-      setLevels(list)
-      saveVar('lgs_z_levels', knownLevels.map(fmt).join(','))
+      list.sort(function (a, b) { return a - b })
+      userLevels = list
+      saveVar('lgs_z_levels', userLevels.map(fmt).join(','))
     }
-    levelCombo.currentIndex = knownLevels.indexOf(value)
+    rebuildLevelModel(value)
   }
 
   function currentLevel() {
@@ -141,33 +308,37 @@ Item {
   }
 
   function stepLevel(direction) {
-    if (knownLevels.length === 0)
+    const levels = mergedLevels()
+    if (levels.length === 0)
       return
     const level = currentLevel()
     let target
     if (level === undefined) {
-      target = direction > 0
-          ? knownLevels[0] : knownLevels[knownLevels.length - 1]
+      target = direction > 0 ? levels[0] : levels[levels.length - 1]
     } else {
-      let candidates = knownLevels.filter(function (v) {
+      let candidates = levels.filter(function (v) {
         return direction > 0 ? v > level : v < level
       })
       if (candidates.length === 0)
         return
       target = direction > 0 ? candidates[0] : candidates[candidates.length - 1]
     }
-    levelCombo.currentIndex = knownLevels.indexOf(target)
+    rebuildLevelModel(target)
     if (filterActive)
       applyFilter()
   }
 
-  function harvestLevels() {
-    let values = {}
-    for (const existing of knownLevels)
-      values[existing] = true
-    let scanned = 0
-    for (const entry of targetLayers()) {
-      const layer = entry.layer
+  // ----------------------------------------------------------------
+  // Data scan
+  // ----------------------------------------------------------------
+  function scanData() {
+    let counts = {}
+    let withElev = 0
+    let blank = 0
+    for (const name of layerNames) {
+      const layer = layerByName(name)
+      if (layer === null)
+        continue
       let previous
       try {
         previous = layer.subsetString
@@ -177,9 +348,12 @@ Item {
           const feature = iterator.next()
           const raw = feature.attribute(elevationField)
           const number = Number(raw)
-          if (raw !== undefined && raw !== null && !isNaN(number)) {
-            values[number] = true
-            scanned++
+          if (raw !== undefined && raw !== null && String(raw) !== '' &&
+              !isNaN(number)) {
+            counts[number] = (counts[number] || 0) + 1
+            withElev++
+          } else {
+            blank++
           }
         }
       } catch (error) {
@@ -190,9 +364,33 @@ Item {
         } catch (error) {}
       }
     }
-    setLevels(Object.keys(values).map(Number))
-    saveVar('lgs_z_levels', knownLevels.map(fmt).join(','))
-    toast(qsTr('%1 level(s) known').arg(knownLevels.length))
+    suggestions = clusterLevels(counts)
+    autoTol = suggestions.length ? suggestTolerance(suggestions) : 0
+    let info = { withElev: withElev, blank: blank }
+    const values = Object.keys(counts).map(Number)
+    if (values.length) {
+      info.min = Math.min.apply(null, values)
+      info.max = Math.max.apply(null, values)
+    }
+    scanInfo = info
+    scanned = true
+    rebuildLevelModel(currentLevel())
+  }
+
+  function summaryText() {
+    if (!scanned)
+      return qsTr('Not scanned yet.')
+    if (scanInfo.min === undefined) {
+      return scanInfo.blank
+          ? qsTr('No elevation values yet (%1 blank features)').arg(scanInfo.blank)
+          : qsTr('No features found')
+    }
+    let text = (scanInfo.min === scanInfo.max
+        ? fmt(scanInfo.min) : fmt(scanInfo.min) + '–' + fmt(scanInfo.max)) + ' m'
+    text += '  ·  ' + qsTr('%1 with elevation').arg(scanInfo.withElev)
+    if (scanInfo.blank)
+      text += '  ·  ' + qsTr('%1 blank').arg(scanInfo.blank)
+    return text
   }
 
   // ----------------------------------------------------------------
@@ -210,13 +408,9 @@ Item {
     let applied = 0
 
     for (let i = 0; i < layerNames.length; i++) {
-      const matches = (function () {
-        try { return qgisProject.mapLayersByName(layerNames[i]) }
-        catch (error) { return [] }
-      })()
-      if (!matches || matches.length === 0)
+      const layer = layerByName(layerNames[i])
+      if (layer === null)
         continue
-      const layer = matches[0]
       try {
         // First application: remember the pre-filter subset.
         if (projVar('lgs_z_orig_saved_' + i, '0') !== '1') {
@@ -251,16 +445,13 @@ Item {
   function clearFilter() {
     let restored = 0
     for (let i = 0; i < layerNames.length; i++) {
-      const matches = (function () {
-        try { return qgisProject.mapLayersByName(layerNames[i]) }
-        catch (error) { return [] }
-      })()
-      if (!matches || matches.length === 0)
+      const layer = layerByName(layerNames[i])
+      if (layer === null)
         continue
       try {
         if (projVar('lgs_z_orig_saved_' + i, '0') === '1') {
-          matches[0].subsetString = projVar('lgs_z_orig_' + i, '')
-          matches[0].triggerRepaint()
+          layer.subsetString = projVar('lgs_z_orig_' + i, '')
+          layer.triggerRepaint()
           saveVar('lgs_z_orig_saved_' + i, '0')
           restored++
         }
@@ -281,7 +472,7 @@ Item {
     showNullSwitch.checked = projVar('lgs_z_shownull', '1') === '1'
     const level = Number(projVar('lgs_z_level', ''))
     if (!isNaN(level) && projVar('lgs_z_level', '') !== '') {
-      addLevel(level)
+      rebuildLevelModel(level)
       // Runtime subsets are ephemeral in QField — re-apply the persisted
       // filter when the project (re)opens.
       if (projVar('lgs_z_enabled', '0') === '1')
@@ -335,9 +526,55 @@ Item {
     width: Math.min(mainWindow.width - 40, 420)
     standardButtons: Dialog.Close
 
+    onOpened: {
+      if (!plugin.scanned)
+        plugin.scanData()
+    }
+
     ColumnLayout {
       anchors.fill: parent
       spacing: 12
+
+      Label {
+        Layout.fillWidth: true
+        text: plugin.summaryText()
+        wrapMode: Text.WordWrap
+        font.pointSize: 10
+        opacity: 0.7
+      }
+
+      // Suggested levels — tap to set level + fitted tolerance and filter.
+      Flow {
+        Layout.fillWidth: true
+        spacing: 4
+        visible: plugin.suggestions.length > 0
+
+        Repeater {
+          model: plugin.topSuggestions(plugin.suggestions, plugin.maxSuggestions)
+
+          delegate: Button {
+            required property var modelData
+            flat: true
+            topPadding: 4
+            bottomPadding: 4
+            leftPadding: 10
+            rightPadding: 10
+            text: plugin.fmt(modelData.level) + ' (' + modelData.count + ')'
+            background: Rectangle {
+              color: 'transparent'
+              border.color: Theme.secondaryTextColor
+              border.width: 1
+              radius: 2
+            }
+            onClicked: {
+              plugin.rebuildLevelModel(modelData.level)
+              toleranceField.text = plugin.fmt(modelData.suggested_tol)
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+        }
+      }
 
       Label {
         text: qsTr('Level (elevation)')
@@ -399,6 +636,59 @@ Item {
         }
       }
 
+      // Quick-set ± presets + the data-derived Auto suggestion.
+      Flow {
+        Layout.fillWidth: true
+        spacing: 4
+
+        Repeater {
+          model: plugin.tolPresets
+
+          delegate: Button {
+            required property var modelData
+            flat: true
+            topPadding: 4
+            bottomPadding: 4
+            leftPadding: 10
+            rightPadding: 10
+            text: '±' + plugin.fmt(modelData)
+            background: Rectangle {
+              color: 'transparent'
+              border.color: Theme.secondaryTextColor
+              border.width: 1
+              radius: 2
+            }
+            onClicked: {
+              toleranceField.text = plugin.fmt(modelData)
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+        }
+
+        Button {
+          flat: true
+          topPadding: 4
+          bottomPadding: 4
+          leftPadding: 10
+          rightPadding: 10
+          enabled: plugin.autoTol > 0
+          text: plugin.autoTol > 0
+              ? qsTr('Auto (±%1)').arg(plugin.fmt(plugin.autoTol)) : qsTr('Auto')
+          background: Rectangle {
+            color: 'transparent'
+            border.color: Theme.secondaryTextColor
+            border.width: 1
+            radius: 2
+          }
+          onClicked: {
+            toleranceField.text = plugin.fmt(plugin.autoTol)
+            if (plugin.filterActive)
+              plugin.applyFilter()
+          }
+        }
+      }
+
       RowLayout {
         Layout.fillWidth: true
 
@@ -416,8 +706,8 @@ Item {
 
       Button {
         Layout.fillWidth: true
-        text: qsTr('Scan data for levels')
-        onClicked: plugin.harvestLevels()
+        text: qsTr('Rescan data')
+        onClicked: plugin.scanData()
       }
 
       RowLayout {
