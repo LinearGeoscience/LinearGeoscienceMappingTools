@@ -3,7 +3,7 @@ Pure-python subset-string logic for the Z (elevation) filter.
 
 No qgis imports here — this module is shared by the desktop controller,
 the QField exporter sanitizer, and the unit tests, and its semantics are
-mirrored in JavaScript inside z_filter/qfield/zfilter_sidecar.qml.
+mirrored in JavaScript inside z_filter/qfield/lgs_companion.qml.
 
 Subset strings are OGR/GPKG provider SQL: double-quoted field names,
 plain numeric literals.

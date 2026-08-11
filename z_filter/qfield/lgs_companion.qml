@@ -1,16 +1,23 @@
 /*
- * LGS Z Filter — QField project plugin (sidecar).
+ * LGS Field Companion — QField project plugin (sidecar).
  *
  * Shipped by the LGS QField exporter as <projectname>.qml next to the
  * exported project file, so QField auto-activates it with the project.
+ * Two features, individually enabled at export time via the
+ * LGS-EXPORT-FLAG lines below (rewritten by z_filter/qfield/write_sidecar):
  *
- * Filters the four standard LGS mapping layers to one bench/level
- * elevation by assigning layer.subsetString (a writable Qt property on
- * QgsVectorLayer — the same mechanism as the desktop Z Filter panel).
- * State is shared with desktop through the lgs_z_* project variables.
+ * 1. Z FILTER — filters the four standard LGS mapping layers to one
+ *    bench/level elevation by assigning layer.subsetString (a writable Qt
+ *    property on QgsVectorLayer — same mechanism as the desktop panel).
+ *    State shared with desktop through the lgs_z_* project variables.
+ *    Mirrors z_filter/expression.py (clause shapes) and z_filter/levels.py
+ *    (level clustering) — keep the implementations in sync.
  *
- * Mirrors z_filter/expression.py (clause shapes) and z_filter/levels.py
- * (level clustering) — keep the implementations in sync.
+ * 2. SCALE DISPLAY + LOCK — live "1:2 500" pill overlaid on the map
+ *    canvas; tap it to lock the map to a fixed scale (presets or custom).
+ *    While locked, pinch-zooms snap back to the locked scale (pans stay
+ *    free). Uses QgsQuickMapCanvasMap.zoomScale(center, scale) — a public
+ *    slot — with a writable mapSettings.extent fallback.
  */
 
 import QtQuick
@@ -22,6 +29,10 @@ import Theme
 
 Item {
   id: plugin
+
+  // Rewritten to true/false by the exporter — do not edit the markers.
+  readonly property bool featureZFilter: true // LGS-EXPORT-FLAG:zfilter
+  readonly property bool featureScale: true // LGS-EXPORT-FLAG:scale
 
   property var mainWindow: iface.mainWindow()
 
@@ -481,7 +492,10 @@ Item {
   }
 
   Component.onCompleted: {
-    iface.addItemToPluginsToolbar(pluginButton)
+    if (featureZFilter)
+      iface.addItemToPluginsToolbar(pluginButton)
+    if (featureScale)
+      attachPill()
     startupTimer.start()
   }
 
@@ -489,7 +503,12 @@ Item {
     id: startupTimer
     interval: 1500
     repeat: false
-    onTriggered: plugin.restoreFromProject()
+    onTriggered: {
+      if (plugin.featureZFilter)
+        plugin.restoreFromProject()
+      if (plugin.featureScale)
+        plugin.restoreScaleFromProject()
+    }
   }
 
   // ----------------------------------------------------------------
@@ -737,6 +756,290 @@ Item {
         wrapMode: Text.WordWrap
         font.pointSize: 10
         opacity: 0.7
+      }
+    }
+  }
+
+  // ==================================================================
+  // SCALE DISPLAY + LOCK
+  // ==================================================================
+  property var canvas: null          // iface.mapCanvas() QQuickItem
+  property var scaleSettings: null   // canvas.mapSettings
+  property bool scaleLocked: false
+  property real lockedScale: 0
+  property bool suppressEnforce: false
+  readonly property var scalePresets: [250, 500, 1000, 2500, 5000]
+
+  function formatScale(s) {
+    if (!s || !isFinite(s) || s <= 0)
+      return '1:–'
+    // Round to 3 significant figures, then group digits: "1:2 500".
+    const mag = Math.pow(10, Math.max(0, Math.floor(Math.log(s) / Math.LN10) - 2))
+    const digits = String(Math.round(Math.round(s / mag) * mag))
+    let out = ''
+    for (let i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 === 0)
+        out += ' '
+      out += digits.charAt(i)
+    }
+    return '1:' + out
+  }
+
+  function attachPill() {
+    try {
+      canvas = iface.mapCanvas()
+      scaleSettings = canvas ? canvas.mapSettings : null
+    } catch (error) {
+      canvas = null
+      scaleSettings = null
+    }
+    try {
+      // Overlay the pill on the map canvas (bottom centre).
+      if (canvas && canvas.width !== undefined) {
+        scalePill.parent = canvas
+        scalePill.anchors.horizontalCenter = canvas.horizontalCenter
+        scalePill.anchors.bottom = canvas.bottom
+        scalePill.anchors.bottomMargin = 64
+        scalePill.visible = true
+        return
+      }
+    } catch (error) {}
+    try {
+      // Fallback: live in the plugins toolbar instead.
+      scalePill.visible = true
+      iface.addItemToPluginsToolbar(scalePill)
+    } catch (error) {}
+  }
+
+  function setMapScale(target) {
+    if (!scaleSettings || !(target > 0))
+      return
+    suppressEnforce = true
+    try {
+      const extent = scaleSettings.extent
+      const cx = (extent.xMinimum + extent.xMaximum) / 2
+      const cy = (extent.yMinimum + extent.yMaximum) / 2
+      if (canvas && canvas.mapCanvasWrapper && canvas.mapCanvasWrapper.zoomScale) {
+        // zoomScale(center IN MAP COORDS, ABSOLUTE target scale) —
+        // public slot on QgsQuickMapCanvasMap.
+        canvas.mapCanvasWrapper.zoomScale(Qt.point(cx, cy), target)
+      } else {
+        // Fallback: mapSettings.extent is a writable property.
+        const factor = target / scaleSettings.scale
+        const hw = (extent.xMaximum - extent.xMinimum) * factor / 2
+        const hh = (extent.yMaximum - extent.yMinimum) * factor / 2
+        scaleSettings.extent = GeometryUtils.createRectangleFromPoints(
+            GeometryUtils.point(cx - hw, cy - hh),
+            GeometryUtils.point(cx + hw, cy + hh))
+      }
+    } catch (error) {
+    } finally {
+      suppressEnforce = false
+    }
+  }
+
+  function lockScale(value) {
+    if (!(value > 0))
+      return
+    scaleLocked = true
+    lockedScale = value
+    saveVar('lgs_scale_locked', '1')
+    saveVar('lgs_scale_value', fmt(value))
+    setMapScale(value)
+    toast(qsTr('Scale locked at %1').arg(formatScale(value)))
+  }
+
+  function unlockScale() {
+    scaleLocked = false
+    saveVar('lgs_scale_locked', '0')
+    toast(qsTr('Scale unlocked'))
+  }
+
+  function restoreScaleFromProject() {
+    const value = Number(projVar('lgs_scale_value', ''))
+    if (projVar('lgs_scale_locked', '0') === '1' && !isNaN(value) && value > 0) {
+      scaleLocked = true
+      lockedScale = value
+      setMapScale(value)
+    }
+  }
+
+  Connections {
+    target: plugin.scaleSettings
+    ignoreUnknownSignals: true
+    function onExtentChanged() {
+      if (!plugin.featureScale || !plugin.scaleLocked || plugin.suppressEnforce)
+        return
+      if (Math.abs(plugin.scaleSettings.scale - plugin.lockedScale) /
+          plugin.lockedScale <= 0.01)
+        return  // dead-band: already at the locked scale
+      enforceTimer.restart()
+    }
+  }
+
+  Timer {
+    id: enforceTimer
+    interval: 300
+    repeat: false
+    onTriggered: {
+      if (!plugin.scaleLocked || !plugin.scaleSettings)
+        return
+      if (plugin.canvas && plugin.canvas.pinched === true) {
+        restart()  // pinch still in progress — wait for it to settle
+        return
+      }
+      if (Math.abs(plugin.scaleSettings.scale - plugin.lockedScale) /
+          plugin.lockedScale > 0.01)
+        plugin.setMapScale(plugin.lockedScale)
+    }
+  }
+
+  Rectangle {
+    id: scalePill
+    visible: false
+    width: pillRow.width + 24
+    height: pillText.contentHeight + 12
+    radius: height / 2
+    color: '#99000000'   // semi-opaque black; children stay fully opaque
+
+    Row {
+      id: pillRow
+      anchors.centerIn: parent
+      spacing: 6
+
+      Text {
+        visible: plugin.scaleLocked
+        anchors.verticalCenter: parent.verticalCenter
+        text: '🔒'   // padlock
+        font.pixelSize: 12
+        color: 'white'
+      }
+
+      Text {
+        id: pillText
+        anchors.verticalCenter: parent.verticalCenter
+        font.pixelSize: 14
+        color: 'white'
+        text: plugin.scaleSettings
+            ? plugin.formatScale(plugin.scaleSettings.scale) : '1:–'
+      }
+    }
+
+    TapHandler {
+      onTapped: scaleDialog.open()
+    }
+  }
+
+  Dialog {
+    id: scaleDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Map Scale')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Close
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 12
+
+      Label {
+        Layout.fillWidth: true
+        text: plugin.scaleSettings
+            ? qsTr('Current scale: %1').arg(
+                  plugin.formatScale(plugin.scaleSettings.scale))
+            : qsTr('Current scale unavailable')
+        font.bold: true
+      }
+
+      // Preset scales — tap to lock the map at that scale.
+      Flow {
+        Layout.fillWidth: true
+        spacing: 4
+
+        Repeater {
+          model: plugin.scalePresets
+
+          delegate: Button {
+            required property var modelData
+            flat: true
+            topPadding: 4
+            bottomPadding: 4
+            leftPadding: 10
+            rightPadding: 10
+            text: plugin.formatScale(modelData)
+            background: Rectangle {
+              color: 'transparent'
+              border.color: Theme.secondaryTextColor
+              border.width: 1
+              radius: 2
+            }
+            onClicked: plugin.lockScale(modelData)
+          }
+        }
+      }
+
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: 6
+
+        Label {
+          text: qsTr('Custom  1:')
+        }
+
+        TextField {
+          id: customScaleField
+          Layout.fillWidth: true
+          validator: DoubleValidator { bottom: 1 }
+          inputMethodHints: Qt.ImhFormattedNumbersOnly
+          placeholderText: qsTr('e.g. 750')
+        }
+
+        Button {
+          flat: true
+          topPadding: 4
+          bottomPadding: 4
+          leftPadding: 10
+          rightPadding: 10
+          text: qsTr('Set')
+          background: Rectangle {
+            color: 'transparent'
+            border.color: Theme.secondaryTextColor
+            border.width: 1
+            radius: 2
+          }
+          onClicked: {
+            const value = Number(customScaleField.text)
+            if (!isNaN(value) && value > 0)
+              plugin.lockScale(value)
+          }
+        }
+      }
+
+      RowLayout {
+        Layout.fillWidth: true
+
+        Switch {
+          checked: plugin.scaleLocked
+          onToggled: {
+            if (checked) {
+              if (plugin.scaleSettings)
+                plugin.lockScale(plugin.scaleSettings.scale)
+            } else {
+              plugin.unlockScale()
+            }
+          }
+        }
+
+        Label {
+          Layout.fillWidth: true
+          text: plugin.scaleLocked
+              ? qsTr('Locked at %1 — pinch zooms snap back; panning is free.')
+                    .arg(plugin.formatScale(plugin.lockedScale))
+              : qsTr('Lock scale (freeze zoom at the current scale)')
+          wrapMode: Text.WordWrap
+        }
       }
     }
   }

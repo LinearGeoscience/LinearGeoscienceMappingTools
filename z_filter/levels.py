@@ -4,7 +4,7 @@ the data into a short list of suggested bench/levels, each with a fitted
 ± tolerance.
 
 Pure python, no qgis imports — unit-tested in tests/test_z_levels.py and
-MIRRORED IN JAVASCRIPT inside z_filter/qfield/zfilter_sidecar.qml; keep the
+MIRRORED IN JAVASCRIPT inside z_filter/qfield/lgs_companion.qml; keep the
 two implementations in sync.
 
 Behaviour by data shape (see tests for the worked examples):

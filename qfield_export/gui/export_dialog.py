@@ -428,6 +428,19 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_zfilter_check)
 
+        # Scale display / lock feature of the same companion plugin
+        self.include_scale_check = QCheckBox(
+            "Include scale display (QField plugin)")
+        self.include_scale_check.setChecked(True)
+        self.include_scale_check.setToolTip(
+            "Shows the live map scale on the QField map as a tappable pill — "
+            "tap to lock the map at a fixed scale (presets or custom) for "
+            "consistent mapping."
+        )
+        self.include_scale_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_scale_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -806,7 +819,8 @@ class ExportDialog(QDialog):
         self.converter = OfflineConverter(
             self.project, self.export_dir, selected_layers,
             convert_unsupported=self.convert_unsupported_check.isChecked(),
-            include_zfilter_plugin=self.include_zfilter_check.isChecked()
+            include_zfilter_plugin=self.include_zfilter_check.isChecked(),
+            include_scale_plugin=self.include_scale_check.isChecked()
         )
 
         try:
@@ -845,6 +859,8 @@ class ExportDialog(QDialog):
         self.select_vector_button.setEnabled(enabled)
         self.select_raster_button.setEnabled(enabled)
         self.convert_unsupported_check.setEnabled(enabled)
+        self.include_zfilter_check.setEnabled(enabled)
+        self.include_scale_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

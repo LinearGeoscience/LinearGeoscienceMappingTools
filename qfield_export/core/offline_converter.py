@@ -47,7 +47,8 @@ class OfflineConverter(QObject):
     log_message = pyqtSignal(str)  # detailed log messages
 
     def __init__(self, project: QgsProject, export_dir: Path, selected_layers: List[str],
-                 convert_unsupported: bool = True, include_zfilter_plugin: bool = True):
+                 convert_unsupported: bool = True, include_zfilter_plugin: bool = True,
+                 include_scale_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -56,8 +57,10 @@ class OfflineConverter(QObject):
             export_dir: Directory to export the project to
             selected_layers: List of layer IDs to export
             convert_unsupported: If True, convert unsupported raster formats to GeoTIFF
-            include_zfilter_plugin: If True, ship the Z-filter QField sidecar
-                plugin next to the exported project
+            include_zfilter_plugin: If True, enable the Z-filter feature of the
+                QField companion sidecar shipped next to the exported project
+            include_scale_plugin: If True, enable the map scale display/lock
+                feature of the companion sidecar
         """
         super().__init__()
         self.project = project
@@ -65,6 +68,7 @@ class OfflineConverter(QObject):
         self.selected_layers = selected_layers
         self.convert_unsupported = convert_unsupported
         self.include_zfilter_plugin = include_zfilter_plugin
+        self.include_scale_plugin = include_scale_plugin
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
         self.converted_layers = []  # Track rasters converted from unsupported formats
@@ -135,17 +139,24 @@ class OfflineConverter(QObject):
             )
             normalize_project_file_paths(project_file)
 
-            # Ship the Z-filter QField sidecar plugin (<projectname>.qml) so
-            # level filtering works on the device.
-            if self.include_zfilter_plugin:
+            # Ship the LGS companion QField plugin (<projectname>.qml) with
+            # the features chosen in the export dialog.
+            if self.include_zfilter_plugin or self.include_scale_plugin:
                 try:
-                    z_filter_qfield.write_sidecar(self.export_dir,
-                                                  project_file.stem)
+                    z_filter_qfield.write_sidecar(
+                        self.export_dir, project_file.stem,
+                        zfilter=self.include_zfilter_plugin,
+                        scale=self.include_scale_plugin)
+                    features = ", ".join(
+                        name for name, on in
+                        (("Z filter", self.include_zfilter_plugin),
+                         ("scale display", self.include_scale_plugin)) if on)
                     self.log_message.emit(
-                        f"  ✓ Z Filter QField plugin: {project_file.stem}.qml")
+                        f"  ✓ QField companion plugin ({features}): "
+                        f"{project_file.stem}.qml")
                 except Exception as e:
                     self.warning.emit(
-                        f"Could not write the Z Filter QField plugin: {e}")
+                        f"Could not write the QField companion plugin: {e}")
 
             # Copy attachment folders if they exist
             self._copy_attachment_folders()
