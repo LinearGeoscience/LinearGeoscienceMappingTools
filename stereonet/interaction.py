@@ -16,8 +16,12 @@ Interaction model:
 - Left-click on an empty part of the stereonet axes: clear selection on the
   plotted layers. Clicks outside the axes (legend, margins) are ignored.
 - Right-press and hold: probe - shows the great circle of the plane whose
-  pole sits under the cursor plus a dip/dip-direction and plunge/trend
-  readout; dragging moves it, releasing hides it.
+  pole sits under the cursor plus a two-line dip/dip-direction and
+  plunge/trend readout in the bottom-left corner of the canvas; dragging
+  moves it, releasing hides it.
+- Right double-click: pin the probed plane/line into the plot (stored as
+  data on the controller, so pins survive replots and appear in exports).
+  Right double-click on a pinned pole removes that pin.
 """
 
 import numpy as np
@@ -30,6 +34,8 @@ from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsMessageLog, QgsVectorLayer, Qgis
 
 FALLBACK_HIGHLIGHT_COLOR = '#FFD700'  # QGIS's default yellow selection colour
+
+PIN_HIT_RADIUS_PX = 10.0  # right double-click within this of a pinned pole unpins it
 
 
 class StereonetPickHandler:
@@ -152,6 +158,14 @@ class StereonetPickHandler:
 
     def on_button_press(self, event):
         if event.button == 3:
+            # A double-click arrives as press/release/press(dblclick)/release;
+            # the first press already started a probe, so hide it before
+            # pinning (the trailing release then no-ops on _probe_active)
+            if getattr(event, 'dblclick', False):
+                if self._probe_active:
+                    self._end_probe()
+                self._toggle_pin(event)
+                return
             self._start_probe(event)
             return
         if event.button != 1:
@@ -306,9 +320,12 @@ class StereonetPickHandler:
         self._probe_marker, = ax.plot([], [], marker='o', ms=7, ls='none',
                                       mfc='#C0392B', mec='white', mew=1.0,
                                       animated=True, zorder=16)
-        self._probe_text = ax.text(0.5, -0.04, '', transform=ax.transAxes,
-                                   ha='center', va='top', fontsize=9,
-                                   animated=True, zorder=16,
+        # Figure-anchored (bottom-left corner) so it can never clip at any
+        # canvas size, but axes-owned so ax.draw_artist keeps blitting it
+        self._probe_text = ax.text(0.012, 0.015, '',
+                                   transform=ax.figure.transFigure,
+                                   ha='left', va='bottom', fontsize=9,
+                                   linespacing=1.3, animated=True, zorder=16,
                                    bbox=dict(boxstyle='round,pad=0.3',
                                              fc='white', ec='#999999',
                                              alpha=0.9))
@@ -344,7 +361,7 @@ class StereonetPickHandler:
         self._probe_line.set_data(lon_gc.ravel(), lat_gc.ravel())
         self._probe_marker.set_data([lon], [lat])
         self._probe_text.set_text(
-            u"Plane {:02.0f}°/{:03.0f}° (dip/dip dir)    "
+            u"Plane {:02.0f}°/{:03.0f}° (dip/dip dir)\n"
             u"Line {:02.0f}°→{:03.0f}° (plunge/trend)".format(
                 dip, dip_dir, plunge, bearing))
         self._blit_probe(visible=True)
@@ -373,6 +390,49 @@ class StereonetPickHandler:
         self._probe_active = False
         self._blit_probe(visible=False)
         self._probe_background = None
+
+    # ------------------------------------------------------------------
+    # Pinned probes (right double-click)
+    # ------------------------------------------------------------------
+
+    def _toggle_pin(self, event):
+        res = self._event_lonlat(event)
+        if res is None:
+            return
+        hit = self._find_pin_near(event)
+        if hit is not None:
+            self.controller.remove_stereonet_pin(hit)
+            self._show_status("Stereonet: pin removed")
+            return
+        lon, lat = res
+        plunge, bearing = stereonet_math.geographic2plunge_bearing(lon, lat)
+        strike, dip = stereonet_math.geographic2pole(lon, lat)
+        strike, dip = float(strike[0]), float(dip[0])
+        dip_dir = (strike + 90.0) % 360.0
+        self.controller.add_stereonet_pin({
+            'dip': dip, 'dip_dir': dip_dir, 'strike': strike,
+            'plunge': float(plunge[0]), 'bearing': float(bearing[0]),
+            'lon': lon, 'lat': lat,
+        })
+        self._show_status(
+            "Stereonet: pinned plane {:02.0f}/{:03.0f} "
+            "(right double-click it to remove)".format(dip, dip_dir))
+
+    def _find_pin_near(self, event):
+        """Index of the pin whose pole is within PIN_HIT_RADIUS_PX of the
+        cursor (nearest wins), else None. Hit-tests the stored pole position
+        regardless of display mode so 'Plane only' pins stay removable."""
+        ax = self._probe_ax
+        pins = getattr(self.controller, 'stereonet_pins', None)
+        if ax is None or not pins:
+            return None
+        try:
+            pts = ax.transData.transform([(p['lon'], p['lat']) for p in pins])
+        except Exception:
+            return None
+        d = np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y)
+        i = int(np.argmin(d))
+        return i if d[i] <= PIN_HIT_RADIUS_PX else None
 
     def _schedule(self, mouseevent):
         additive = self._is_additive(mouseevent)

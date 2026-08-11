@@ -18,6 +18,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.transforms import Bbox
 
 # Qt canvas for the interactive screen plot. Importing a Qt canvas class does
 # not disturb the global 'Agg' backend used by the pyplot export paths.
@@ -27,8 +28,13 @@ except ImportError:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 
 from ..vendor import mplstereonet
+from ..vendor.mplstereonet import stereonet_math
 import pandas as pd
 import numpy as np
+
+# Pinned probe planes (right double-click on the stereonet). Grey keeps them
+# visually distinct from the live red probe and reads well in figures.
+PIN_COLOR = '#606060'
 
 # QGIS core modules
 from qgis.core import (
@@ -292,6 +298,8 @@ class StereonetPluginCore:
 
         # Legend ordering checkbox
         self.order_by_domain_checkbox = None
+        self.pin_display_combo = None
+        self.clear_pins_button = None
 
         # "Categories" tab sub-widgets
         self.categories_tabwidget = None
@@ -306,6 +314,11 @@ class StereonetPluginCore:
 
         self.last_plotted_data = []
         self.last_analysis_flags = {}
+
+        # Pinned probe planes (right double-click on the stereonet). Stored
+        # as data so they survive replots and render into exports; session
+        # only - never persisted.
+        self.stereonet_pins = []
 
         # Stored layersAdded/layersRemoved handlers (one per dataset) so they
         # can be disconnected on unload / combo re-creation
@@ -1166,6 +1179,32 @@ class StereonetPluginCore:
         self.order_by_domain_checkbox.stateChanged.connect(self.request_plot_update)
         alternate_mode_layout.addWidget(self.order_by_domain_checkbox)
 
+        # Pinned probe planes (right double-click on the stereonet)
+        pins_layout = QHBoxLayout()
+        pins_layout.setSpacing(8)
+        pins_label = QLabel("Probe pins:")
+        self.pin_display_combo = QComboBox()
+        self.pin_display_combo.addItems(["Plane + pole", "Plane only", "Pole only"])
+        self.pin_display_combo.setToolTip(
+            "How pinned probes are drawn (label always shown).\n"
+            "Pin: right double-click on the stereonet.\n"
+            "Unpin: right double-click on a pinned pole."
+        )
+        self.clear_pins_button = QPushButton("Clear pins")
+        self.clear_pins_button.setToolTip("Remove all pinned probes from the plot")
+        pins_layout.addWidget(pins_label)
+        pins_layout.addWidget(self.pin_display_combo)
+        pins_layout.addWidget(self.clear_pins_button)
+        pins_layout.addStretch()
+        alternate_mode_layout.addLayout(pins_layout)
+
+        # Restore the saved mode before wiring signals so startup never
+        # triggers a save or a spurious replot
+        self._load_pin_display_mode()
+        self.pin_display_combo.currentIndexChanged.connect(self._save_pin_display_mode)
+        self.pin_display_combo.currentIndexChanged.connect(self.request_plot_update)
+        self.clear_pins_button.clicked.connect(self.clear_stereonet_pins)
+
         controls_layout.addWidget(alternate_mode_group)
 
         # Analysis tools - separate for planes and lines
@@ -1966,6 +2005,23 @@ class StereonetPluginCore:
             
             # Save the reset colors to settings
             self.save_structure_colors()
+
+
+    def _save_pin_display_mode(self, *args):
+        """Persist the pin display mode (the pins themselves are session-only)."""
+        settings = QgsSettings()
+        settings.beginGroup("LinearGeosciencePlugin/Stereonet")
+        settings.setValue("pinDisplayMode", self.pin_display_combo.currentText())
+        settings.endGroup()
+
+    def _load_pin_display_mode(self):
+        settings = QgsSettings()
+        settings.beginGroup("LinearGeosciencePlugin/Stereonet")
+        saved = settings.value("pinDisplayMode", "Plane + pole")
+        settings.endGroup()
+        idx = self.pin_display_combo.findText(str(saved))
+        if idx >= 0:
+            self.pin_display_combo.setCurrentIndex(idx)
 
 
     def save_structure_colors(self):
@@ -4592,6 +4648,26 @@ class StereonetPluginCore:
         else:
             self.update_plot()
 
+    # -------------------------------------------------------------------------
+    # Pinned probe planes (called by StereonetPickHandler on right double-click)
+    # -------------------------------------------------------------------------
+
+    def add_stereonet_pin(self, pin):
+        """pin: dict with dip/dip_dir/strike/plunge/bearing and the pole's
+        lon/lat in stereonet data coords (see interaction._toggle_pin)."""
+        self.stereonet_pins.append(pin)
+        self.request_plot_update()
+
+    def remove_stereonet_pin(self, index):
+        if 0 <= index < len(self.stereonet_pins):
+            del self.stereonet_pins[index]
+            self.request_plot_update()
+
+    def clear_stereonet_pins(self):
+        if self.stereonet_pins:
+            self.stereonet_pins.clear()
+            self.request_plot_update()
+
     def _combine_datasets_plotted(self, plotted_data, analysis_flags):
         """Merge plotted categories with the same code across datasets into
         single ds-0 entries (the 'Combine datasets' option).
@@ -4971,7 +5047,18 @@ class StereonetPluginCore:
             analysis_scope=analysis_scope,
             alternate_mode=checked('alternate_plot_mode_checkbox'),
             intersections_enabled=checked('intersection_contour_checkbox'),
+            pin_display_mode=self._pin_display_mode_value(),
         )
+
+    def _pin_display_mode_value(self):
+        """Map the pin display combo text to 'both' | 'plane' | 'pole'."""
+        combo = getattr(self, 'pin_display_combo', None)
+        text = combo.currentText() if combo is not None else ""
+        if text == "Plane only":
+            return 'plane'
+        if text == "Pole only":
+            return 'pole'
+        return 'both'
 
     def _render_stereonet_figure(self, plotted_data, analysis_flags, settings):
         """Build and return the stereonet Figure for the given plotted data.
@@ -4989,22 +5076,112 @@ class StereonetPluginCore:
             raise
 
     def _apply_stereonet_layout(self, fig, ax, profile):
-        """Reserve the right margin for the legend and keep the hidden polar
-        (azimuth label) axes glued to the stereonet axes. Shared by the
-        render path and (indirectly, via re-render) canvas resizes."""
+        """Position the net, azimuth-label overlay and legend for the given
+        render profile. Returns the axes-fraction x of the legend's left edge
+        so the analysis stat text can left-align with it (1.08 = the fixed
+        creation-time anchor, kept for the export profiles)."""
         if profile == 'clipboard':
             fig.subplots_adjust(right=0.75, bottom=0.1)  # Bottom margin prevents cutoff
             fig.tight_layout(pad=1.2)  # Increased padding to prevent cutoff
-        else:
+            ax._polar.set_position(ax.get_position())
+            return 1.08
+        if profile != 'screen':
+            # 'svg': savefig(bbox_inches='tight') recovers any overflow, so
+            # the simple fraction-based layout is fine there
             fig.subplots_adjust(right=0.75)  # Reserves 25% of figure width for the legend
             fig.tight_layout()
-            if profile == 'screen':
-                # tight_layout overrides the right margin. Exports recover the
-                # overflowing legend/stat text via savefig(bbox_inches='tight'),
-                # but the live canvas hard-clips at the figure edge, so
-                # re-reserve the margin after layout.
-                fig.subplots_adjust(right=0.75)
-        ax._polar.set_position(ax.get_position())
+            ax._polar.set_position(ax.get_position())
+            return 1.08
+        # 'screen': the live canvas hard-clips at the figure edge and
+        # tight_layout can't see the polar overlay's azimuth labels or the
+        # outside-anchored legend, so measure and position in pixels instead
+        try:
+            return self._layout_screen_stereonet(fig, ax)
+        except Exception:
+            # Never blank the plot over a layout failure - fall back to the
+            # old fraction-based layout (may clip labels at extreme sizes)
+            fig.subplots_adjust(right=0.75)
+            ax._polar.set_position(ax.get_position())
+            return 1.08
+
+    def _layout_screen_stereonet(self, fig, ax):
+        """Pixel-measured screen layout: size the net so the azimuth label
+        ring and the legend always fit inside the canvas, whatever its size.
+
+        One measure pass is exact: the labels' overhang past the net's
+        bounding square (tick pad + glyph size) and the legend extent are
+        both constant in pixels wherever the axes box ends up, and setting a
+        pixel-square box makes apply_aspect a no-op (data ratio 1, box-
+        adjustable, centered anchor). StereonetAxes.set_position propagates
+        to the polar overlay, keeping the label ring glued."""
+        PAD = 4.0        # px, clearance to the figure edge
+        GAP = 10.0       # px, gap between the label ring and the legend
+        MIN_NET = 150.0  # px, below this the legend loses its reservation
+        FLOOR_NET = 80.0  # px, absolute minimum net diameter
+
+        canvas = fig.canvas
+        canvas.draw()  # realize label/legend extents at the current size
+        renderer = canvas.get_renderer()
+
+        polar = ax._polar
+        square = polar.bbox  # aspect-applied bounding square, display px
+        labels = [t for t in polar.get_xticklabels()
+                  if t.get_visible() and t.get_text()]
+        lab_l = lab_r = lab_t = lab_b = 0.0
+        if labels:
+            bbs = [t.get_window_extent(renderer) for t in labels]
+            lab_l = max(0.0, square.x0 - min(bb.x0 for bb in bbs))
+            lab_r = max(0.0, max(bb.x1 for bb in bbs) - square.x1)
+            lab_t = max(0.0, max(bb.y1 for bb in bbs) - square.y1)
+            lab_b = max(0.0, square.y0 - min(bb.y0 for bb in bbs))
+
+        legend = ax.get_legend()
+        leg_w = bap_px = 0.0
+        if legend is not None and legend.get_texts():
+            leg_w = legend.get_window_extent(renderer).width
+            # The legend draws offset from its anchor by borderaxespad
+            # (in font-size units) - include it or the frame clips by that
+            try:
+                bap_px = renderer.points_to_pixels(
+                    legend.borderaxespad * legend._fontsize)
+            except Exception:
+                bap_px = renderer.points_to_pixels(4.0)  # 0.5 * 8pt default
+
+        fw, fh = fig.bbox.width, fig.bbox.height
+        left = lab_l + PAD
+        top = lab_t + PAD
+        bottom = lab_b + PAD
+        right = max(lab_r, GAP + bap_px + leg_w) + PAD
+
+        side = min(fw - left - right, fh - top - bottom)
+        if side < MIN_NET:
+            # Tiny canvas: the net wins over the legend's reservation (the
+            # legend clamps toward the right edge below and may clip)
+            right = lab_r + PAD
+            side = min(fw - left - right, fh - top - bottom)
+            side = max(min(side, MIN_NET), FLOOR_NET)
+
+        avail_w = fw - left - right
+        avail_h = fh - top - bottom
+        x0 = left + max(0.0, avail_w - side) / 2.0
+        y0 = bottom + max(0.0, avail_h - side) / 2.0
+        ax.set_position(Bbox.from_bounds(x0 / fw, y0 / fh,
+                                         side / fw, side / fh))
+
+        # Re-anchor the legend just right of the label ring, clamped so its
+        # right edge stays on the figure (overlapping the 90deg label beats
+        # clipping legend text). With loc='center left' the legend's drawn
+        # left edge sits borderaxespad right of the anchor; the stat text
+        # below aligns with that drawn edge.
+        stat_x = 1.08
+        if legend is not None and leg_w > 0:
+            net_right = x0 + side
+            anchor_px = min(net_right + lab_r + GAP,
+                            fw - PAD - leg_w - bap_px)
+            anchor_px = max(anchor_px, net_right + 2.0)
+            legend.set_bbox_to_anchor(((anchor_px - x0) / side, 0.5))
+            stat_x = (anchor_px + bap_px - x0) / side
+        return stat_x
 
     def _render_stereonet_into(self, fig, plotted_data, analysis_flags, settings):
         # Determine if we're plotting only a single dataset
@@ -5495,6 +5672,10 @@ class StereonetPluginCore:
         # END OF ADDED CODE
         # ==================================================================
 
+        # Pinned probe planes - drawn from dialog state so they appear in
+        # every render profile (screen, svg, clipboard) and survive replots
+        self._draw_stereonet_pins(ax, settings)
+
         # LEGEND POSITIONING: Place in right side with proper spacing
         legend = ax.legend(
             loc='center left',  # Position at the center left of the legend box
@@ -5514,13 +5695,13 @@ class StereonetPluginCore:
             legend.get_frame().set_alpha(0.9)
 
         # Adjust subplot position to make room for legend
-        self._apply_stereonet_layout(fig, ax, settings.profile)
+        stat_x = self._apply_stereonet_layout(fig, ax, settings.profile)
 
         # Draw the collected analysis stat lines off-plot in the right
-        # margin, starting just below the legend's measured extent so a
-        # tall legend never overlaps them. Must run after the layout calls
-        # above: tight_layout resizes the axes, which changes how much
-        # axes-fraction span the (fixed pixel height) legend covers.
+        # margin, left-aligned with the legend (stat_x) and starting just
+        # below the legend's measured extent so a tall legend never overlaps
+        # them. Must run after the layout call above: it resizes the axes
+        # and (on screen) re-anchors the legend.
         if analysis_stats:
             legend_bottom = 0.30  # fallback if the extent can't be measured
             try:
@@ -5540,13 +5721,36 @@ class StereonetPluginCore:
                 spacing = max(0.03, available / max(len(analysis_stats), 1))
             stat_y = legend_bottom - spacing
             for stat_text, stat_color in analysis_stats:
-                ax.annotate(stat_text, xy=(1.08, stat_y),
+                ax.annotate(stat_text, xy=(stat_x, stat_y),
                             xycoords='axes fraction',
                             ha='left', va='top', fontsize=8,
                             color=stat_color, annotation_clip=False)
                 stat_y -= spacing
 
         return fig, pick_registry
+
+
+    def _draw_stereonet_pins(self, ax, settings):
+        """Draw the pinned probe planes (dashed great circle, pole marker,
+        compact dip/dip-dir label) per settings.pin_display_mode. Pin artists
+        carry no label= so the legend never picks them up."""
+        mode = getattr(settings, 'pin_display_mode', 'both')
+        for pin in self.stereonet_pins:
+            if mode in ('both', 'plane'):
+                lon_gc, lat_gc = stereonet_math.plane(pin['strike'], pin['dip'])
+                ax.plot(lon_gc.ravel(), lat_gc.ravel(), color=PIN_COLOR,
+                        lw=1.2, ls='--', zorder=9)
+            if mode in ('both', 'pole'):
+                ax.plot([pin['lon']], [pin['lat']], marker='o', ms=6,
+                        ls='none', mfc=PIN_COLOR, mec='white', mew=0.8,
+                        zorder=9)
+            # Offset-points anchor keeps the label a fixed physical distance
+            # from the pole at any dpi (screen and 300 dpi exports alike)
+            ax.annotate(u"{:02.0f}/{:03.0f}".format(pin['dip'], pin['dip_dir']),
+                        xy=(pin['lon'], pin['lat']), xycoords='data',
+                        xytext=(5, 5), textcoords='offset points',
+                        fontsize=7, color=PIN_COLOR, zorder=9,
+                        annotation_clip=False)
 
 
     def plot_and_swap(self):
