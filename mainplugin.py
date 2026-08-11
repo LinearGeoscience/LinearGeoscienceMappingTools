@@ -953,7 +953,38 @@ class LinearGeosciencePluginMain:
         from .script_reprojectgeopackage import run
         run(self.iface, owner=self)
 
+    def _confirm_z_filter_off(self, feature_name):
+        """Full-table readers must not run behind an active Z filter.
+
+        Returns True when it is safe to proceed (filter off, or the user
+        agreed to turn it off). Level settings persist, so re-enabling
+        afterwards is one click in the Z Filter panel.
+        """
+        from .z_filter.controller import (
+            ZFilterController, active_z_filter_summary)
+        summary = active_z_filter_summary()
+        if not summary:
+            return True
+        answer = QMessageBox.question(
+            self.iface.mainWindow(),
+            f"{feature_name} — Z filter active",
+            f"The Z elevation filter is active ({summary}).\n\n"
+            f"{feature_name} reads whole tables, so the filter must be "
+            "turned off first. Your level settings are kept — re-enable the "
+            "filter afterwards from the Z Filter panel.\n\n"
+            "Turn the filter off and continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes)
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        ZFilterController(self.iface).clear_filters()
+        if self.z_filter_panel:
+            self.z_filter_panel.sync_from_project()
+        return True
+
     def run_static_mapping_export(self):
+        if not self._confirm_z_filter_off("Mapping Export"):
+            return
         from .static_mapping_export import run_static_mapping_export
         # Build the stereonet core on demand (it feeds the export); None is
         # handled downstream when matplotlib is unavailable.
@@ -969,10 +1000,14 @@ class LinearGeosciencePluginMain:
         run(self.iface)
 
     def run_appenddata(self):
+        if not self._confirm_z_filter_off("Append Mapping Data"):
+            return
         from .script_adddata import run_gpkg_append_tool_dialog
         run_gpkg_append_tool_dialog(self.iface)
 
     def run_reconcile(self):
+        if not self._confirm_z_filter_off("Reconcile / Merge"):
+            return
         from .script_adddata.reconcile.dialog import run_reconcile_tool_dialog
         run_reconcile_tool_dialog(self.iface, owner=self)
 
