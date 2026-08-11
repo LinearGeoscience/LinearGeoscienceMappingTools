@@ -536,3 +536,42 @@ INFO_RECODE_WORKFLOW = """
    <li>Save styles as Default to the Datasource Database.</li>
 </ol>
 """
+
+
+# Pit / Underground Section
+INFO_Z_FILTER = """
+<h1>Z Filter — Level Mapping</h1>
+<p>Filter the display of the standard mapping layers to a single bench or level elevation, for mapping in open pits and underground. All selected layers are filtered simultaneously, so the map only shows the level you are working on.</p>
+<h2>Key Features:</h2>
+<ul>
+   <li><b>Multi-Layer Filtering:</b> FieldNotebook, Overlay, Linework and Basemap are filtered together with one control.</li>
+   <li><b>Level &plusmn; Tolerance:</b> Shows features whose Elevation lies within the tolerance band around the chosen level (e.g. 1250 &plusmn; 5 m).</li>
+   <li><b>Bench Stepping:</b> Step up/down through the known levels with one click as you move between benches.</li>
+   <li><b>Level List from Data:</b> Harvest the distinct Elevation values already in your layers, or type a new level (e.g. a fresh bench RL) — it is remembered in the project.</li>
+   <li><b>No-Elevation Features:</b> By default, features with an empty Elevation stay visible at every level (values are entered manually, so blanks are common). Untick the option for strict filtering.</li>
+   <li><b>Safe &amp; Reversible:</b> Pre-existing layer filters are preserved and restored; the filter state is saved with the project.</li>
+   <li><b>QField Companion:</b> The QField export ships a companion plugin so the same level switching works on the device in the field.</li>
+</ul>
+<h2>Workflow:</h2>
+<ol>
+   <li>Open the panel and confirm the four layer selections.</li>
+   <li>Click <i>Refresh levels from data</i>, or type your first bench/level elevation.</li>
+   <li>Set the tolerance to roughly half your bench height.</li>
+   <li>Toggle the filter on and map; step levels as you move.</li>
+   <li>Toggle off (or <i>Clear all filters</i>) to see everything again.</li>
+</ol>
+<p><b>Note:</b> Data is never modified or deleted — filtering only changes what is displayed. Tools that read whole tables (Reconcile, Append, exports) will offer to suspend the filter while they run.</p>
+"""
+
+INFO_ADD_ELEVATION = """
+<h1>Add Elevation Field</h1>
+<p>Adds the numeric <b>Elevation</b> field used by the Z Filter to the standard mapping layers of projects created before the field existed in the template.</p>
+<h2>Key Features:</h2>
+<ul>
+   <li><b>Safe &amp; Idempotent:</b> Layers that already have the field are left untouched; nothing else is modified.</li>
+   <li><b>Manual Entry:</b> The field has no default value — geologists enter the bench/level RL in the feature form while mapping.</li>
+   <li><b>Edit-Session Aware:</b> Layers with unsaved edits are skipped with a warning (save first, then re-run).</li>
+   <li><b>Custom Forms:</b> If a layer uses a drag-and-drop designer form, you are reminded to add the new field to the form manually.</li>
+</ul>
+<p><b>Note:</b> New projects created from the current mapping template already include the Elevation field on all four layers.</p>
+"""

@@ -54,6 +54,7 @@ PAGE_DEFS = [
     ("Structural Domains", None, "Create and classify structural domains", "Structural Domains"),
     ("Mapsheets & Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
     ("Modify Symbology", None, "Re-classify coding and apply symbology", "Symbology"),
+    ("Pit / Underground", None, "Filter mapping layers by bench or level elevation", "Z Filtering"),
 ]
 
 
@@ -262,6 +263,7 @@ class LinearGeosciencePluginMain:
         self.action_about = None
         self.stereonet_core = None
         self.photo_panel = None
+        self.z_filter_panel = None
         self.map_cleaning = None
         self.main_dialog = None  # non-modal dialog reference
         # Plugin-owned singletons for the tools that used to stash them on
@@ -383,6 +385,21 @@ class LinearGeosciencePluginMain:
             self.photo_panel.deleteLater()
             self.photo_panel = None
 
+        if self.z_filter_panel:
+            try:
+                # Disconnects project signals; applied filters stay in the
+                # project (they are project state, deliberately persistent).
+                self.z_filter_panel.shutdown()
+            except Exception as e:
+                from qgis.core import QgsMessageLog, Qgis
+                QgsMessageLog.logMessage(
+                    f"Z filter panel shutdown failed during unload: {e}",
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
+                )
+            self.iface.removeDockWidget(self.z_filter_panel)
+            self.z_filter_panel.deleteLater()
+            self.z_filter_panel = None
+
         # Plugin-owned singletons: tear down on unload so a reload rebuilds
         # fresh instead of re-raising a stale one. Also sweep up the old
         # iface-stashed attributes so panels created by a previous plugin
@@ -446,6 +463,20 @@ class LinearGeosciencePluginMain:
                 self.photo_panel.hide()
             else:
                 self.photo_panel.show()
+
+    def toggle_z_filter_panel(self):
+        if not self.z_filter_panel:
+            from .z_filter import run_z_filter_panel
+            self.z_filter_panel = run_z_filter_panel(self.iface)
+        else:
+            if self.z_filter_panel.isVisible():
+                self.z_filter_panel.hide()
+            else:
+                self.z_filter_panel.show()
+
+    def run_add_elevation_field(self):
+        from .z_filter import run_add_elevation_field
+        run_add_elevation_field(self.iface)
 
     def toggle_map_cleaning_panel(self):
         # trigger() flips the checkable toolbar action and runs its toggle_panel
@@ -608,6 +639,15 @@ class LinearGeosciencePluginMain:
         btn_photo.clicked.connect(self.toggle_photo_panel)
         lay.addWidget(btn_photo)
 
+        btn_zfilter = QPushButton("Launch Z Filter")
+        btn_zfilter.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_zfilter.setMinimumHeight(scale.dimension(34))
+        btn_zfilter.setToolTip(
+            "Filter the mapping layers to one bench/level elevation")
+        btn_zfilter.setStyleSheet(qa_style)
+        btn_zfilter.clicked.connect(self.toggle_z_filter_panel)
+        lay.addWidget(btn_zfilter)
+
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
@@ -723,6 +763,7 @@ class LinearGeosciencePluginMain:
         stacked.addWidget(self._build_page_domains())
         stacked.addWidget(self._build_page_layouts())
         stacked.addWidget(self._build_page_symbology())
+        stacked.addWidget(self._build_page_zfilter())
 
         return content_area, stacked, page_header
 
@@ -820,6 +861,18 @@ class LinearGeosciencePluginMain:
         grp = FeatureGroup("Re-classify & Symbology", self.plugin_dir, page)
         grp.addFeature("Recode & Restyle Wizard", None,
                         feature_info.INFO_RECODE_WORKFLOW, self.run_recode_workflow)
+        lay.addWidget(grp)
+        lay.addStretch()
+        return page
+
+    def _build_page_zfilter(self):
+        page, lay = self._make_page()
+        grp = FeatureGroup("Pit / Underground Level Filtering", self.plugin_dir, page)
+        grp.addFeature("Open Z Filter Panel", None,
+                        feature_info.INFO_Z_FILTER, self.toggle_z_filter_panel)
+        grp.addSeparator()
+        grp.addFeature("Add Elevation Field", None,
+                        feature_info.INFO_ADD_ELEVATION, self.run_add_elevation_field)
         lay.addWidget(grp)
         lay.addStretch()
         return page

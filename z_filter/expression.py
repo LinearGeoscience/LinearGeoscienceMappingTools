@@ -26,6 +26,7 @@ ENTRY_TOLERANCE = "z_filter/tolerance"
 ENTRY_SHOW_NULL = "z_filter/show_null"
 ENTRY_LEVELS = "z_filter/levels"
 ENTRY_LAYER_IDS = "z_filter/layer_ids"
+ENTRY_LAYER_CHECKED = "z_filter/layer_checked"
 ENTRY_ORIG_SUBSET_PREFIX = "z_filter/orig_subset/"
 
 # Project variables mirrored for the QField sidecar plugin.
