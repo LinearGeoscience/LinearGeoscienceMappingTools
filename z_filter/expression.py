@@ -24,6 +24,8 @@ ENTRY_ENABLED = "z_filter/enabled"
 ENTRY_LEVEL = "z_filter/level"
 ENTRY_TOLERANCE = "z_filter/tolerance"
 ENTRY_SHOW_NULL = "z_filter/show_null"
+# User-TYPED levels only; data-derived suggestions are recomputed on every
+# scan (z_filter/levels.py) and never persisted.
 ENTRY_LEVELS = "z_filter/levels"
 ENTRY_LAYER_IDS = "z_filter/layer_ids"
 ENTRY_LAYER_CHECKED = "z_filter/layer_checked"

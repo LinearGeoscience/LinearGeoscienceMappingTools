@@ -7,13 +7,14 @@ delegated to ZFilterController; this file is UI, state restore and prompts.
 """
 
 from qgis.core import Qgis, QgsProject
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QDoubleValidator
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDockWidget,
     QDoubleSpinBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -33,7 +34,23 @@ except ImportError:
 
 from .controller import ZFilterController
 from .expression import ELEVATION_FIELD, format_number
+from .levels import (
+    TOL_PRESETS,
+    cluster_levels,
+    suggest_tolerance,
+    top_suggestions,
+    value_range,
+)
 from . import field_setup
+
+# Auto-scans (panel open, layer change) skip layers bigger than this;
+# the manual "Rescan data" button scans everything.
+AUTO_SCAN_FEATURE_CAP = 250_000
+
+_CHIP_STYLE = (
+    "QToolButton { border: 1px solid palette(mid); border-radius: 2px;"
+    " padding: 2px 8px; background: palette(base); }"
+    "QToolButton:hover { background: palette(midlight); }")
 
 
 class ZFilterDockWidget(QDockWidget):
@@ -51,8 +68,18 @@ class ZFilterDockWidget(QDockWidget):
         super().__init__(parent)
         self.iface = iface
         self.controller = ZFilterController(iface, parent=self)
-        self._levels = []          # sorted known levels
+        self._user_levels = []     # persisted — levels the user typed
+        self._suggestions = []     # cluster dicts from the last data scan
+        self._auto_tol = None      # suggest_tolerance() of the last scan
+        self._scan = None          # last scan_elevations() report
+        self._scanned = False      # auto-scan once per session
         self._restoring = False    # suppress auto-apply during state restore
+
+        # Debounce automatic rescans when layer selections change.
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setSingleShot(True)
+        self._rescan_timer.setInterval(400)
+        self._rescan_timer.timeout.connect(lambda: self._on_rescan(manual=False))
 
         self.setup_ui()
         self._connect_project_signals()
@@ -127,6 +154,20 @@ class ZFilterDockWidget(QDockWidget):
         level_layout.setSpacing(4)
         level_layout.setContentsMargins(6, 6, 6, 6)
 
+        # What the data holds: "320–410 m · 1240 with elevation · 56 blank"
+        self.summary_label = QLabel("Not scanned yet.")
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet("color: palette(mid); font-size: 8pt;")
+        level_layout.addWidget(self.summary_label)
+
+        # Suggested-level chips (filled by _rebuild_chips after a scan).
+        self.chips_widget = QWidget()
+        self.chips_grid = QGridLayout(self.chips_widget)
+        self.chips_grid.setContentsMargins(0, 2, 0, 2)
+        self.chips_grid.setSpacing(4)
+        self.chips_widget.setVisible(False)
+        level_layout.addWidget(self.chips_widget)
+
         level_row = QHBoxLayout()
         level_row.setSpacing(4)
         self.level_combo = QComboBox()
@@ -153,11 +194,13 @@ class ZFilterDockWidget(QDockWidget):
         level_row.addWidget(self.up_btn)
         level_layout.addLayout(level_row)
 
-        self.harvest_btn = QPushButton("Refresh levels from data")
-        self.harvest_btn.setToolTip(
-            "Scan the selected layers for distinct Elevation values")
-        self.harvest_btn.clicked.connect(self._on_harvest)
-        level_layout.addWidget(self.harvest_btn)
+        self.rescan_btn = QPushButton("Rescan data")
+        self.rescan_btn.setToolTip(
+            "Scan the selected layers for elevation values and refresh the "
+            "suggested levels (large layers are always included on a manual "
+            "rescan)")
+        self.rescan_btn.clicked.connect(lambda: self._on_rescan(manual=True))
+        level_layout.addWidget(self.rescan_btn)
 
         level_group.setLayout(level_layout)
         main_layout.addWidget(level_group)
@@ -184,6 +227,28 @@ class ZFilterDockWidget(QDockWidget):
         tol_row.addWidget(self.tolerance_spin)
         tol_row.addStretch()
         options_layout.addLayout(tol_row)
+
+        # Quick-set ± presets + the data-derived "Auto" suggestion.
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(4)
+        for preset in TOL_PRESETS:
+            btn = QToolButton()
+            btn.setText(f"±{format_number(preset)}")
+            btn.setStyleSheet(_CHIP_STYLE)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _checked, v=preset: self._set_tolerance(v))
+            preset_row.addWidget(btn)
+        self.auto_tol_btn = QToolButton()
+        self.auto_tol_btn.setText("Auto")
+        self.auto_tol_btn.setStyleSheet(_CHIP_STYLE)
+        self.auto_tol_btn.setEnabled(False)
+        self.auto_tol_btn.setToolTip("Suggested tolerance from the data "
+                                     "(scan first)")
+        self.auto_tol_btn.clicked.connect(self._on_auto_tolerance)
+        preset_row.addWidget(self.auto_tol_btn)
+        preset_row.addStretch()
+        options_layout.addLayout(preset_row)
 
         self.show_null_check = QCheckBox("Always show features with no Elevation")
         self.show_null_check.setChecked(True)
@@ -265,7 +330,10 @@ class ZFilterDockWidget(QDockWidget):
             for i, check in enumerate(self.layer_checks):
                 flags = state['layer_checked']
                 check.setChecked(flags[i] if i < len(flags) else True)
-            self._levels = state['levels']
+            self._user_levels = state['levels']
+            self._suggestions = []
+            self._scan = None
+            self._auto_tol = None
             self._repopulate_level_combo(current=state['level'])
             self.tolerance_spin.setValue(state['tolerance'])
             self.show_null_check.setChecked(state['show_null'])
@@ -277,15 +345,30 @@ class ZFilterDockWidget(QDockWidget):
                 self._set_status("")
         finally:
             self._restoring = False
+        # Repopulate the summary + suggestion chips for the loaded project.
+        if self.isVisible():
+            QTimer.singleShot(0, lambda: self._on_rescan(manual=False))
+        else:
+            self._scanned = False  # showEvent will scan when next opened
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._scanned:
+            QTimer.singleShot(0, lambda: self._on_rescan(manual=False))
 
     # ------------------------------------------------------------------
     # Level list handling
     # ------------------------------------------------------------------
+    def _merged_levels(self):
+        """User-typed levels plus current data suggestions, sorted."""
+        return sorted(set(self._user_levels) |
+                      {c['level'] for c in self._suggestions})
+
     def _repopulate_level_combo(self, current=None):
         blocked = self.level_combo.blockSignals(True)
         try:
             self.level_combo.clear()
-            for value in self._levels:
+            for value in self._merged_levels():
                 self.level_combo.addItem(format_number(value), value)
             if current is not None:
                 text = format_number(current)
@@ -307,10 +390,14 @@ class ZFilterDockWidget(QDockWidget):
             return None
 
     def _add_level(self, value):
-        if value not in self._levels:
-            self._levels = sorted(set(self._levels) | {value})
-            self.controller.persist_levels(self._levels)
+        """Remember a level the user typed. Suggestion levels are already in
+        the combo and are recomputed per scan, so they are never persisted."""
+        if value in self._merged_levels():
             self._repopulate_level_combo(current=value)
+            return
+        self._user_levels = sorted(set(self._user_levels) | {value})
+        self.controller.persist_levels(self._user_levels)
+        self._repopulate_level_combo(current=value)
 
     def _on_level_entered(self):
         value = self.current_level()
@@ -323,33 +410,117 @@ class ZFilterDockWidget(QDockWidget):
         self._maybe_apply()
 
     def _step_level(self, direction):
-        if not self._levels:
+        levels = self._merged_levels()
+        if not levels:
             return
         current = self.current_level()
         if current is None:
-            target = self._levels[0] if direction > 0 else self._levels[-1]
+            target = levels[0] if direction > 0 else levels[-1]
         else:
             if direction > 0:
-                higher = [v for v in self._levels if v > current]
+                higher = [v for v in levels if v > current]
                 if not higher:
                     return
                 target = higher[0]
             else:
-                lower = [v for v in self._levels if v < current]
+                lower = [v for v in levels if v < current]
                 if not lower:
                     return
                 target = lower[-1]
         self._repopulate_level_combo(current=target)
         self._maybe_apply()
 
-    def _on_harvest(self):
+    # ------------------------------------------------------------------
+    # Data scan + suggestions
+    # ------------------------------------------------------------------
+    def _on_rescan(self, manual=False):
         layers = [combo_current_layer(c) for c in self.layer_combos]
-        harvested = self.controller.harvest_levels(layers)
-        self._levels = sorted(set(self._levels) | set(harvested))
-        self.controller.persist_levels(self._levels)
+        self._scan = self.controller.scan_elevations(
+            layers, feature_cap=None if manual else AUTO_SCAN_FEATURE_CAP)
+        self._scanned = True
+        self._suggestions = cluster_levels(self._scan['value_counts'])
+        self._auto_tol = (suggest_tolerance(self._suggestions)
+                          if self._suggestions else None)
+        self.auto_tol_btn.setEnabled(self._auto_tol is not None)
+        if self._auto_tol is not None:
+            self.auto_tol_btn.setToolTip(
+                f"Suggested from the data: ±{format_number(self._auto_tol)} m")
+        self._update_summary_label()
+        self._rebuild_chips()
         self._repopulate_level_combo(current=self.current_level())
-        self._set_status(f"{len(self._levels)} level(s) known "
-                         f"({len(harvested)} found in data).")
+        if self._suggestions:
+            self._set_status(f"{len(self._suggestions)} suggested level(s) "
+                             f"from {self._scan['with_elev']} features.")
+
+    def _update_summary_label(self):
+        scan = self._scan
+        if scan is None:
+            self.summary_label.setText("Not scanned yet.")
+            return
+        parts = []
+        span = value_range(scan['value_counts'])
+        if span:
+            lo, hi, _count = span
+            parts.append(f"{format_number(lo)}–{format_number(hi)} m"
+                         if lo != hi else f"{format_number(lo)} m")
+            parts.append(f"{scan['with_elev']} with elevation")
+            if scan['blank']:
+                parts.append(f"{scan['blank']} blank")
+        elif scan['total']:
+            parts.append(f"No elevation values yet "
+                         f"({scan['blank']} blank features)")
+        else:
+            parts.append("No features in the selected layers")
+        if scan['truncated']:
+            parts.append("skipped (large): " + ", ".join(scan['truncated']) +
+                         " — press Rescan data")
+        self.summary_label.setText("  ·  ".join(parts))
+
+    def _rebuild_chips(self):
+        while self.chips_grid.count():
+            item = self.chips_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        suggestions = top_suggestions(self._suggestions)
+        for i, cluster in enumerate(suggestions):
+            chip = QToolButton()
+            chip.setText(f"{format_number(cluster['level'])} "
+                         f"({cluster['count']})")
+            chip.setStyleSheet(_CHIP_STYLE)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            span = (f"{format_number(cluster['lo'])}–"
+                    f"{format_number(cluster['hi'])} m"
+                    if cluster['lo'] != cluster['hi']
+                    else f"{format_number(cluster['level'])} m")
+            chip.setToolTip(
+                f"{format_number(cluster['level'])} m — {cluster['count']} "
+                f"feature(s) ({span}), suggested "
+                f"±{format_number(cluster['suggested_tol'])} m")
+            chip.clicked.connect(
+                lambda _checked, c=cluster: self._on_chip_clicked(c))
+            self.chips_grid.addWidget(chip, i // 3, i % 3)
+        self.chips_widget.setVisible(bool(suggestions))
+
+    def _on_chip_clicked(self, cluster):
+        """One click: set the level AND its fitted tolerance, then apply."""
+        self._repopulate_level_combo(current=cluster['level'])
+        blocked = self.tolerance_spin.blockSignals(True)
+        self.tolerance_spin.setValue(cluster['suggested_tol'])
+        self.tolerance_spin.blockSignals(blocked)
+        self._update_toggle_text()
+        self._maybe_apply()
+
+    def _set_tolerance(self, value):
+        blocked = self.tolerance_spin.blockSignals(True)
+        self.tolerance_spin.setValue(value)
+        self.tolerance_spin.blockSignals(blocked)
+        self._update_toggle_text()
+        self._maybe_apply()
+
+    def _on_auto_tolerance(self):
+        if self._auto_tol is not None:
+            self._set_tolerance(self._auto_tol)
 
     # ------------------------------------------------------------------
     # Filter application
@@ -371,6 +542,7 @@ class ZFilterDockWidget(QDockWidget):
         if self._restoring:
             return
         self._persist_selection()
+        self._rescan_timer.start()  # debounced summary/suggestion refresh
         self._maybe_apply()
 
     def _on_settings_changed(self, *_args):

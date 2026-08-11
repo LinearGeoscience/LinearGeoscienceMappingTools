@@ -14,11 +14,13 @@ Persisted state lives in two places:
   which reads and updates them on the device.
 """
 
+from collections import Counter
 from contextlib import contextmanager
 
 from qgis.core import (
     Qgis,
     QgsExpressionContextUtils,
+    QgsFeatureRequest,
     QgsMessageLog,
     QgsProject,
 )
@@ -184,13 +186,24 @@ class ZFilterController(QObject):
             _log(f"Z filter cleared: {', '.join(restored)}")
         return restored
 
-    def harvest_levels(self, layers):
-        """Distinct Elevation values across the layers (unfiltered view).
+    def scan_elevations(self, layers, feature_cap=250_000):
+        """Count the Elevation values across the layers (unfiltered view).
 
         Filtered layers are temporarily restored to their original subset so
-        the provider sees every row, then re-filtered.
+        every row is seen, then re-filtered. Layers whose feature count alone
+        exceeds feature_cap are skipped whole and reported in 'truncated'
+        (pass feature_cap=None for a manual, uncapped rescan).
+
+        Returns {
+            'value_counts': {float: int},   # global, across all layers
+            'per_layer': [{'name', 'total', 'with_elev', 'blank'}, ...],
+            'with_elev': int, 'blank': int, 'total': int,
+            'truncated': [layer names skipped],
+        }
         """
-        values = set()
+        value_counts = Counter()
+        per_layer = []
+        truncated = []
         with suspended_filters():
             for layer in layers:
                 if layer is None:
@@ -198,18 +211,37 @@ class ZFilterController(QObject):
                 idx = layer.fields().indexOf(ELEVATION_FIELD)
                 if idx == -1:
                     continue
+                total = layer.featureCount()
+                if feature_cap is not None and total > feature_cap:
+                    truncated.append(layer.name())
+                    continue
+                request = QgsFeatureRequest()
+                request.setFlags(Qgis.FeatureRequestFlag.NoGeometry)
+                request.setSubsetOfAttributes([idx])
+                with_elev = blank = 0
                 try:
-                    raw = layer.dataProvider().uniqueValues(idx)
+                    # Iterate the layer (not the provider) so edit-buffer
+                    # values are counted the same way the filter sees them.
+                    for feature in layer.getFeatures(request):
+                        try:
+                            value_counts[float(feature.attribute(idx))] += 1
+                            with_elev += 1
+                        except (TypeError, ValueError):
+                            blank += 1  # NULL / non-numeric
                 except Exception as e:  # provider hiccup — skip this layer
-                    _log(f"Z filter harvest failed on {layer.name()}: {e}",
+                    _log(f"Z filter scan failed on {layer.name()}: {e}",
                          Qgis.MessageLevel.Warning)
                     continue
-                for value in raw:
-                    try:
-                        values.add(float(value))
-                    except (TypeError, ValueError):
-                        continue  # NULL / non-numeric
-        return sorted(values)
+                per_layer.append({'name': layer.name(), 'total': total,
+                                  'with_elev': with_elev, 'blank': blank})
+        return {
+            'value_counts': dict(value_counts),
+            'per_layer': per_layer,
+            'with_elev': sum(entry['with_elev'] for entry in per_layer),
+            'blank': sum(entry['blank'] for entry in per_layer),
+            'total': sum(entry['total'] for entry in per_layer),
+            'truncated': truncated,
+        }
 
     # ------------------------------------------------------------------
     # Persistence
