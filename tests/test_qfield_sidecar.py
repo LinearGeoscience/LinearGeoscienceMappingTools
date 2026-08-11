@@ -90,6 +90,17 @@ class TestWriteSidecar(unittest.TestCase):
             text = fh.read()
         self.assertEqual(text.count('{'), text.count('}'))
 
+    def test_qml_mirrors_extra_layer_support(self):
+        # Drift tripwires for the hand-synced JS mirror of expression.py:
+        # extra layers arrive via lgs_z_extra and range layers need the
+        # range clause. If these disappear, the desktop panel and the
+        # device disagree about what gets filtered.
+        with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
+            text = fh.read()
+        for needle in ('lgs_z_extra', 'zRangeClause', 'clauseForTarget',
+                       'flatSpan', 'lgs_z_orig_x_'):
+            self.assertIn(needle, text, needle)
+
 
 if __name__ == '__main__':
     unittest.main()

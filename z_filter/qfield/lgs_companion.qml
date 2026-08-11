@@ -12,6 +12,11 @@
  *    State shared with desktop through the lgs_z_* project variables.
  *    Mirrors z_filter/expression.py (clause shapes) and z_filter/levels.py
  *    (level clustering) — keep the implementations in sync.
+ *    Extra layers (UG survey points, floor strings) ride along via the
+ *    lgs_z_extra variable — authored by the desktop panel only, never
+ *    edited on the device. Entries are resolved BY NAME (first match), so
+ *    duplicate layer names pick the first; their original subsets persist
+ *    under lgs_z_orig_x_<slug>, clear of the canonical lgs_z_orig_0..3.
  *
  * 2. SCALE DISPLAY + LOCK — live "1:2 500" pill overlaid on the map
  *    canvas; tap it to lock the map to a fixed scale (presets or custom).
@@ -40,6 +45,9 @@ Item {
     '1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
   readonly property string elevationField: 'Elevation'
   readonly property var tolPresets: [1, 2.5, 5, 10]
+  // mirror of z_filter/expression.py::FLAT_SPAN — range features flatter
+  // than this vote in the scan, wider spans (ramps) abstain
+  readonly property real flatSpan: 2.0
 
   property var userLevels: []        // persisted (lgs_z_levels) — typed only
   property var suggestions: []       // cluster objects from the last scan
@@ -88,14 +96,34 @@ Item {
     return String(Number(value))
   }
 
-  function zClause(level, tol, showNull) {
+  // mirror of z_filter/expression.py::z_clause
+  function zClauseField(field, level, tol, showNull) {
     const lo = Number(level) - Number(tol)
     const hi = Number(level) + Number(tol)
-    const core = '"' + elevationField + '" >= ' + fmt(lo) +
-                 ' AND "' + elevationField + '" <= ' + fmt(hi)
+    const core = '"' + field + '" >= ' + fmt(lo) +
+                 ' AND "' + field + '" <= ' + fmt(hi)
     if (showNull)
-      return '("' + elevationField + '" IS NULL OR (' + core + '))'
+      return '("' + field + '" IS NULL OR (' + core + '))'
     return '(' + core + ')'
+  }
+
+  // mirror of z_filter/expression.py::z_range_clause — overlap semantics,
+  // NULL guard on the max field only
+  function zRangeClause(fieldMin, fieldMax, level, tol, showNull) {
+    const lo = Number(level) - Number(tol)
+    const hi = Number(level) + Number(tol)
+    const core = '"' + fieldMax + '" >= ' + fmt(lo) +
+                 ' AND "' + fieldMin + '" <= ' + fmt(hi)
+    if (showNull)
+      return '("' + fieldMax + '" IS NULL OR (' + core + '))'
+    return '(' + core + ')'
+  }
+
+  // mirror of z_filter/expression.py::clause_for_spec
+  function clauseForTarget(t, level, tol, showNull) {
+    if (t.mode === 'range')
+      return zRangeClause(t.fieldMin, t.fieldMax, level, tol, showNull)
+    return zClauseField(t.field || elevationField, level, tol, showNull)
   }
 
   function combineSubset(orig, clause) {
@@ -260,6 +288,56 @@ Item {
     return null
   }
 
+  function slugName(name) {
+    return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_')
+  }
+
+  // Extra layers authored by the desktop panel (lgs_z_extra JSON).
+  // mirror of z_filter/expression.py::parse_extra_layers
+  function extraTargets(includeUnchecked) {
+    try {
+      const data = JSON.parse(projVar('lgs_z_extra', ''))
+      if (!data || !Array.isArray(data.layers))
+        return []
+      return data.layers.filter(function (e) {
+        if (!e || !e.name)
+          return false
+        if (!includeUnchecked && e.checked === false)
+          return false
+        if (e.mode === 'range')
+          return !!(e.field_min && e.field_max)
+        return e.mode === 'single' && !!e.field
+      })
+    } catch (error) {
+      return []
+    }
+  }
+
+  // Canonical four + extras, each with the project-variable key that
+  // stores its pre-filter subset. Extra keys derive from the desktop
+  // layer id when present — names can slug-collide ("Level 100" vs
+  // "Level-100"), ids cannot. Pass includeUnchecked to also get entries
+  // the desktop unchecked (apply/clear must restore those).
+  function allTargets(includeUnchecked) {
+    let targets = []
+    for (let i = 0; i < layerNames.length; i++) {
+      targets.push({ name: layerNames[i], mode: 'single', checked: true,
+                     field: elevationField, key: 'lgs_z_orig_' + i })
+    }
+    for (const e of extraTargets(includeUnchecked)) {
+      let t = { name: e.name, mode: e.mode, checked: e.checked !== false,
+                key: 'lgs_z_orig_x_' + slugName(e.id || e.name) }
+      if (e.mode === 'range') {
+        t.fieldMin = e.field_min
+        t.fieldMax = e.field_max
+      } else {
+        t.field = e.field
+      }
+      targets.push(t)
+    }
+    return targets
+  }
+
   // ----------------------------------------------------------------
   // Level list (merged user + suggestions)
   // ----------------------------------------------------------------
@@ -346,10 +424,13 @@ Item {
     let counts = {}
     let withElev = 0
     let blank = 0
-    for (const name of layerNames) {
-      const layer = layerByName(name)
+    let spanning = 0
+    for (const t of allTargets()) {
+      const layer = layerByName(t.name)
       if (layer === null)
         continue
+      const fields = t.mode === 'range'
+          ? [t.fieldMin, t.fieldMax] : [t.field || elevationField]
       let previous
       try {
         previous = layer.subsetString
@@ -357,15 +438,32 @@ Item {
         let iterator = LayerUtils.createFeatureIterator(layer)
         while (iterator.hasNext()) {
           const feature = iterator.next()
-          const raw = feature.attribute(elevationField)
-          const number = Number(raw)
-          if (raw !== undefined && raw !== null && String(raw) !== '' &&
-              !isNaN(number)) {
-            counts[number] = (counts[number] || 0) + 1
-            withElev++
-          } else {
-            blank++
+          let values = []
+          for (const field of fields) {
+            const raw = feature.attribute(field)
+            const number = Number(raw)
+            if (raw === undefined || raw === null || String(raw) === '' ||
+                isNaN(number)) {
+              values = null
+              break
+            }
+            values.push(number)
           }
+          if (values === null) {
+            blank++
+            continue
+          }
+          // Range features vote their midpoint only when flat; spanning
+          // ramps abstain (mirror of controller.scan_elevations).
+          if (values.length === 2 &&
+              Math.abs(values[1] - values[0]) > flatSpan) {
+            spanning++
+            continue
+          }
+          const value = values.length === 2
+              ? (values[0] + values[1]) / 2 : values[0]
+          counts[value] = (counts[value] || 0) + 1
+          withElev++
         }
       } catch (error) {
       } finally {
@@ -377,7 +475,7 @@ Item {
     }
     suggestions = clusterLevels(counts)
     autoTol = suggestions.length ? suggestTolerance(suggestions) : 0
-    let info = { withElev: withElev, blank: blank }
+    let info = { withElev: withElev, blank: blank, spanning: spanning }
     const values = Object.keys(counts).map(Number)
     if (values.length) {
       info.min = Math.min.apply(null, values)
@@ -401,6 +499,8 @@ Item {
     text += '  ·  ' + qsTr('%1 with elevation').arg(scanInfo.withElev)
     if (scanInfo.blank)
       text += '  ·  ' + qsTr('%1 blank').arg(scanInfo.blank)
+    if (scanInfo.spanning)
+      text += '  ·  ' + qsTr('%1 spanning levels').arg(scanInfo.spanning)
     return text
   }
 
@@ -415,23 +515,38 @@ Item {
     }
     const tol = Number(toleranceField.text)
     const tolerance = isNaN(tol) ? 5 : tol
-    const clause = zClause(level, tolerance, showNullSwitch.checked)
     let applied = 0
 
-    for (let i = 0; i < layerNames.length; i++) {
-      const layer = layerByName(layerNames[i])
+    for (const t of allTargets(true)) {
+      const layer = layerByName(t.name)
       if (layer === null)
         continue
+      const savedKey = t.key.replace('orig', 'orig_saved')
+      if (!t.checked) {
+        // Deselected on desktop since we last filtered it — restore.
+        restoreTarget(layer, t.key, savedKey)
+        continue
+      }
       try {
         // First application: remember the pre-filter subset.
-        if (projVar('lgs_z_orig_saved_' + i, '0') !== '1') {
-          saveVar('lgs_z_orig_' + i, layer.subsetString || '')
-          saveVar('lgs_z_orig_saved_' + i, '1')
+        if (projVar(savedKey, '0') !== '1') {
+          saveVar(t.key, layer.subsetString || '')
+          saveVar(savedKey, '1')
         }
-        const original = projVar('lgs_z_orig_' + i, '')
-        layer.subsetString = combineSubset(original, clause)
-        layer.triggerRepaint()
-        applied++
+        const original = projVar(t.key, '')
+        const combined = combineSubset(
+            original,
+            clauseForTarget(t, level, tolerance, showNullSwitch.checked))
+        layer.subsetString = combined
+        if (layer.subsetString === combined) {
+          layer.triggerRepaint()
+          applied++
+        } else {
+          // Provider rejected the clause (e.g. the fields don't exist on
+          // this copy) — put the original back rather than half-filter.
+          layer.subsetString = original
+          saveVar(savedKey, '0')
+        }
       } catch (error) {}
     }
 
@@ -453,20 +568,30 @@ Item {
           .arg(fmt(level)).arg(fmt(tolerance)).arg(applied))
   }
 
+  // Restore a layer's pre-filter subset if one was saved. Returns 1 when
+  // a restore happened (mirror of controller._restore_layer).
+  function restoreTarget(layer, key, savedKey) {
+    try {
+      if (projVar(savedKey, '0') === '1') {
+        layer.subsetString = projVar(key, '')
+        layer.triggerRepaint()
+        saveVar(savedKey, '0')
+        return 1
+      }
+    } catch (error) {}
+    return 0
+  }
+
   function clearFilter() {
     let restored = 0
-    for (let i = 0; i < layerNames.length; i++) {
-      const layer = layerByName(layerNames[i])
+    // Include desktop-unchecked entries: they may still hold a saved
+    // original from an earlier apply on this device.
+    for (const t of allTargets(true)) {
+      const layer = layerByName(t.name)
       if (layer === null)
         continue
-      try {
-        if (projVar('lgs_z_orig_saved_' + i, '0') === '1') {
-          layer.subsetString = projVar('lgs_z_orig_' + i, '')
-          layer.triggerRepaint()
-          saveVar('lgs_z_orig_saved_' + i, '0')
-          restored++
-        }
-      } catch (error) {}
+      restored += restoreTarget(layer, t.key,
+                                t.key.replace('orig', 'orig_saved'))
     }
     filterActive = false
     saveVar('lgs_z_enabled', '0')

@@ -28,10 +28,14 @@ from ..utils.qgis_utils import (
 )
 
 try:
-    from ...z_filter.expression import strip_z_subset
+    from ...z_filter.expression import (
+        ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE, parse_extra_layers,
+        strip_z_subset_any)
     from ...z_filter import qfield as z_filter_qfield
 except ImportError:  # standalone use outside the plugin package
-    from z_filter.expression import strip_z_subset
+    from z_filter.expression import (
+        ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE, parse_extra_layers,
+        strip_z_subset_any)
     from z_filter import qfield as z_filter_qfield
 
 
@@ -489,15 +493,18 @@ class OfflineConverter(QObject):
             })
             return False
 
-    @staticmethod
-    def _strip_z_filter_from_spec(layer_spec: str) -> str:
+    def _strip_z_filter_from_spec(self, layer_spec: str) -> str:
         """Remove a Z-filter clause from the subset= part of a datasource
         layer spec (e.g. "layername=X|subset=..."), keeping any pre-existing
-        user filter the Z clause was AND-ed onto."""
+        user filter the Z clause was AND-ed onto. Covers the Elevation
+        clause, the conventional Z_Min/Z_Max range clause, and any custom
+        fields the extra-layer specs name (e.g. RL)."""
+        specs = parse_extra_layers(
+            self.project.readEntry(Z_FILTER_SCOPE, ENTRY_EXTRA_LAYERS, "")[0])
         parts = []
         for part in layer_spec.split('|'):
             if part.startswith('subset='):
-                remainder = strip_z_subset(part[len('subset='):])
+                remainder = strip_z_subset_any(part[len('subset='):], specs)
                 if remainder:
                     parts.append('subset=' + remainder)
             else:

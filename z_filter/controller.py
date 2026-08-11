@@ -29,25 +29,50 @@ from qgis.PyQt.QtCore import QObject
 from .expression import (
     ELEVATION_FIELD,
     ENTRY_ENABLED,
+    ENTRY_EXTRA_LAYERS,
     ENTRY_LAYER_CHECKED,
     ENTRY_LAYER_IDS,
     ENTRY_LEVEL,
     ENTRY_LEVELS,
     ENTRY_ORIG_SUBSET_PREFIX,
     ENTRY_SHOW_NULL,
+    ENTRY_SLOT_IDS,
     ENTRY_TOLERANCE,
+    FLAT_SPAN,
     SCOPE,
     VAR_ENABLED,
+    VAR_EXTRA,
     VAR_LEVEL,
     VAR_LEVELS,
     VAR_SHOW_NULL,
     VAR_TOLERANCE,
+    clause_for_spec,
     combine,
+    format_extra_layers,
     format_levels,
     format_number,
+    parse_extra_layers,
     parse_levels,
-    z_clause,
+    spec_field_names,
 )
+
+
+# Spec used when a caller passes a bare layer instead of a (layer, spec)
+# target — the canonical mapping layers filter on Elevation.
+DEFAULT_SPEC = {'mode': 'single', 'field': ELEVATION_FIELD}
+
+
+def normalize_targets(items):
+    """Promote bare layers to (layer, spec) targets; pass targets through."""
+    targets = []
+    for item in items or []:
+        if isinstance(item, tuple):
+            layer, spec = item
+        else:
+            layer, spec = item, DEFAULT_SPEC
+        if layer is not None:
+            targets.append((layer, spec or DEFAULT_SPEC))
+    return targets
 
 
 def _log(message, level=Qgis.MessageLevel.Info):
@@ -122,20 +147,23 @@ class ZFilterController(QObject):
     # Core operations
     # ------------------------------------------------------------------
     def apply_filter(self, layers, level, tolerance, show_null):
-        """Filter each layer to level ± tolerance. Returns a report dict:
+        """Filter each target to level ± tolerance. Accepts bare layers or
+        (layer, spec) targets (see normalize_targets). Returns a report dict:
         applied / skipped (name, reason) / errors (name, message)."""
         project = QgsProject.instance()
         report = {'applied': [], 'skipped': [], 'errors': []}
-        clause = z_clause(level, tolerance, show_null)
         applied_ids = []
 
-        for layer in layers:
-            if layer is None:
-                continue
-            if layer.fields().indexOf(ELEVATION_FIELD) == -1:
+        for layer, spec in normalize_targets(layers):
+            fields = spec_field_names(spec)
+            missing = [f for f in fields
+                       if layer.fields().indexOf(f) == -1]
+            if missing:
                 report['skipped'].append(
-                    (layer.name(), f'no "{ELEVATION_FIELD}" field'))
+                    (layer.name(),
+                     'no ' + '/'.join(f'"{f}"' for f in missing) + ' field'))
                 continue
+            clause = clause_for_spec(spec, level, tolerance, show_null)
             if layer.isEditable():
                 buf = layer.editBuffer()
                 if buf and buf.isModified():
@@ -187,17 +215,24 @@ class ZFilterController(QObject):
         return restored
 
     def scan_elevations(self, layers, feature_cap=250_000):
-        """Count the Elevation values across the layers (unfiltered view).
+        """Count the elevation values across the targets (unfiltered view).
 
-        Filtered layers are temporarily restored to their original subset so
-        every row is seen, then re-filtered. Layers whose feature count alone
-        exceeds feature_cap are skipped whole and reported in 'truncated'
-        (pass feature_cap=None for a manual, uncapped rescan).
+        Accepts bare layers or (layer, spec) targets. Filtered layers are
+        temporarily restored to their original subset so every row is seen,
+        then re-filtered. Layers whose feature count alone exceeds
+        feature_cap are skipped whole and reported in 'truncated' (pass
+        feature_cap=None for a manual, uncapped rescan).
+
+        Range-mode targets vote their midpoint when the feature is flat
+        (span <= FLAT_SPAN); spanning features (ramps) are counted in
+        'spanning' but stay out of the histogram so mid-ramp values never
+        become level suggestions.
 
         Returns {
             'value_counts': {float: int},   # global, across all layers
-            'per_layer': [{'name', 'total', 'with_elev', 'blank'}, ...],
-            'with_elev': int, 'blank': int, 'total': int,
+            'per_layer': [{'name', 'total', 'with_elev', 'blank',
+                           'spanning'}, ...],
+            'with_elev': int, 'blank': int, 'total': int, 'spanning': int,
             'truncated': [layer names skipped],
         }
         """
@@ -205,11 +240,10 @@ class ZFilterController(QObject):
         per_layer = []
         truncated = []
         with suspended_filters():
-            for layer in layers:
-                if layer is None:
-                    continue
-                idx = layer.fields().indexOf(ELEVATION_FIELD)
-                if idx == -1:
+            for layer, spec in normalize_targets(layers):
+                indexes = [layer.fields().indexOf(f)
+                           for f in spec_field_names(spec)]
+                if -1 in indexes:
                     continue
                 total = layer.featureCount()
                 if feature_cap is not None and total > feature_cap:
@@ -217,29 +251,38 @@ class ZFilterController(QObject):
                     continue
                 request = QgsFeatureRequest()
                 request.setFlags(Qgis.FeatureRequestFlag.NoGeometry)
-                request.setSubsetOfAttributes([idx])
-                with_elev = blank = 0
+                request.setSubsetOfAttributes(indexes)
+                with_elev = blank = spanning = 0
                 try:
                     # Iterate the layer (not the provider) so edit-buffer
                     # values are counted the same way the filter sees them.
                     for feature in layer.getFeatures(request):
                         try:
-                            value_counts[float(feature.attribute(idx))] += 1
-                            with_elev += 1
+                            values = [float(feature.attribute(idx))
+                                      for idx in indexes]
                         except (TypeError, ValueError):
                             blank += 1  # NULL / non-numeric
+                            continue
+                        if len(values) == 2 and \
+                                abs(values[1] - values[0]) > FLAT_SPAN:
+                            spanning += 1  # ramp — abstains from histogram
+                            continue
+                        value_counts[sum(values) / len(values)] += 1
+                        with_elev += 1
                 except Exception as e:  # provider hiccup — skip this layer
                     _log(f"Z filter scan failed on {layer.name()}: {e}",
                          Qgis.MessageLevel.Warning)
                     continue
                 per_layer.append({'name': layer.name(), 'total': total,
-                                  'with_elev': with_elev, 'blank': blank})
+                                  'with_elev': with_elev, 'blank': blank,
+                                  'spanning': spanning})
         return {
             'value_counts': dict(value_counts),
             'per_layer': per_layer,
             'with_elev': sum(entry['with_elev'] for entry in per_layer),
             'blank': sum(entry['blank'] for entry in per_layer),
             'total': sum(entry['total'] for entry in per_layer),
+            'spanning': sum(entry['spanning'] for entry in per_layer),
             'truncated': truncated,
         }
 
@@ -258,8 +301,13 @@ class ZFilterController(QObject):
             tolerance = 5.0
         show_null, _ = project.readBoolEntry(SCOPE, ENTRY_SHOW_NULL, True)
         levels_csv, _ = project.readEntry(SCOPE, ENTRY_LEVELS, "")
-        layer_ids, _ = project.readEntry(SCOPE, ENTRY_LAYER_IDS, "")
+        # Slot combos persist separately from the applied-layer set; fall
+        # back to the old shared key for projects saved before the split.
+        layer_ids, have_slots = project.readEntry(SCOPE, ENTRY_SLOT_IDS, "")
+        if not have_slots:
+            layer_ids, _ = project.readEntry(SCOPE, ENTRY_LAYER_IDS, "")
         checked, _ = project.readEntry(SCOPE, ENTRY_LAYER_CHECKED, "")
+        extra_json, _ = project.readEntry(SCOPE, ENTRY_EXTRA_LAYERS, "")
         return {
             'enabled': enabled,
             'level': float(level) if level else None,
@@ -268,6 +316,7 @@ class ZFilterController(QObject):
             'levels': parse_levels(levels_csv),
             'layer_ids': [lid for lid in layer_ids.split(',') if lid],
             'layer_checked': [c == '1' for c in checked.split(',') if c],
+            'extra_layers': parse_extra_layers(extra_json),
         }
 
     def persist_levels(self, levels):
@@ -278,9 +327,19 @@ class ZFilterController(QObject):
 
     def persist_layer_selection(self, layer_ids, checked_flags):
         project = QgsProject.instance()
-        project.writeEntry(SCOPE, ENTRY_LAYER_IDS, ','.join(layer_ids))
+        # ENTRY_LAYER_IDS is deliberately not written here — it now means
+        # "currently filtered layers" and belongs to _persist_state.
+        project.writeEntry(SCOPE, ENTRY_SLOT_IDS, ','.join(layer_ids))
         project.writeEntry(SCOPE, ENTRY_LAYER_CHECKED,
                            ','.join('1' if c else '0' for c in checked_flags))
+
+    def persist_extra_layers(self, entries):
+        """Persist the extra-layer specs (entry + lgs_z_extra mirror)."""
+        project = QgsProject.instance()
+        payload = format_extra_layers(entries)
+        project.writeEntry(SCOPE, ENTRY_EXTRA_LAYERS, payload)
+        QgsExpressionContextUtils.setProjectVariable(project, VAR_EXTRA,
+                                                     payload)
 
     def _persist_state(self, project, applied_ids, level, tolerance, show_null,
                        enabled):
