@@ -131,7 +131,9 @@ class TestWriteSidecar(unittest.TestCase):
                        'flatSpan', 'lgs_z_orig_x_',
                        # Adjacent-levels, opacity toggle and level stepping:
                        'lgs_z_adjacent', 'clauseForTargetMulti',
-                       'lgs_opacity', 'opacityLayers', 'stepLevel'):
+                       'lgs_opacity', 'opacityLayers', 'stepLevel',
+                       # Per-layer opacity panel (v6):
+                       'opacityDialog', 'applyLayerOpacity'):
             self.assertIn(needle, text, needle)
 
 

@@ -29,11 +29,13 @@
  *    free). Uses QgsQuickMapCanvasMap.zoomScale(center, scale) — a public
  *    slot — with a writable mapSettings.extent fallback.
  *
- * 3. IMAGERY OPACITY — "IMG" pill cycling the exported raster layers
- *    through 100% → 50% → 25% → hidden, for drawing linework over
- *    imagery. The raster layer names are baked in at export via the
+ * 3. IMAGERY OPACITY — "Opacity" pill opening a per-raster panel: each
+ *    exported raster gets a 100/50/25/Off row (plus an "All layers" row
+ *    when there are several), for drawing linework over imagery. The
+ *    raster layer names are baked in at export via the
  *    LGS-EXPORT-DATA:opacitylayers line (no reliable way to enumerate
- *    rasters from QML on the device).
+ *    rasters from QML on the device). Per-layer values persist as a JSON
+ *    object in lgs_opacity; a legacy plain number applies to all layers.
  */
 
 import QtQuick
@@ -1262,12 +1264,11 @@ Item {
         anchors.centerIn: parent
         font.pixelSize: 14
         color: 'white'
-        text: 'IMG ' + (plugin.imageryOpacity === 0
-            ? qsTr('off') : Math.round(plugin.imageryOpacity * 100))
+        text: plugin.opacityLabel
       }
 
       TapHandler {
-        onTapped: plugin.cycleImageryOpacity()
+        onTapped: opacityDialog.open()
       }
     }
   }
@@ -1398,72 +1399,229 @@ Item {
   // ==================================================================
   // IMAGERY OPACITY
   // ==================================================================
-  readonly property var opacitySteps: [1, 0.5, 0.25, 0]
-  property real imageryOpacity: 1
-  property bool opacitySupported: true
-  property int resolvedImageryCount: 0
+  Dialog {
+    id: opacityDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Imagery Opacity')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Close
 
-  function resolvedImageryLayers() {
-    let layers = []
-    for (const name of opacityLayers) {
-      const layer = layerByName(name)
-      if (layer !== null)
-        layers.push(layer)
+    // [{name}] — one row per resolved, supported raster. Values are read
+    // live from imageryOpacities so button highlights follow taps.
+    property var rasterNames: []
+
+    onAboutToShow: rasterNames = plugin.resolvedImageryNames()
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 8
+
+      // One-tap group control, shown only when there is a group.
+      RowLayout {
+        Layout.fillWidth: true
+        visible: opacityDialog.rasterNames.length > 1
+        spacing: 4
+
+        Label {
+          Layout.fillWidth: true
+          elide: Text.ElideRight
+          text: qsTr('All layers')
+          font.bold: true
+        }
+
+        Repeater {
+          model: plugin.opacitySteps
+
+          delegate: Button {
+            required property var modelData
+            flat: true
+            topPadding: 4
+            bottomPadding: 4
+            leftPadding: 10
+            rightPadding: 10
+            text: modelData === 0 ? qsTr('Off')
+                                  : Math.round(modelData * 100)
+            background: Rectangle {
+              color: 'transparent'
+              border.color: Theme.secondaryTextColor
+              border.width: 1
+              radius: 2
+            }
+            onClicked: plugin.applyAllOpacity(modelData)
+          }
+        }
+      }
+
+      Repeater {
+        model: opacityDialog.rasterNames
+
+        delegate: RowLayout {
+          id: opacityRow
+          required property var modelData
+          Layout.fillWidth: true
+          spacing: 4
+
+          Label {
+            Layout.fillWidth: true
+            elide: Text.ElideRight
+            text: opacityRow.modelData
+          }
+
+          Repeater {
+            model: plugin.opacitySteps
+
+            delegate: Button {
+              id: stepButton
+              required property var modelData
+              readonly property bool current:
+                  Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
+                           - modelData) < 0.01
+              flat: true
+              topPadding: 4
+              bottomPadding: 4
+              leftPadding: 10
+              rightPadding: 10
+              text: modelData === 0 ? qsTr('Off')
+                                    : Math.round(modelData * 100)
+              font.bold: current
+              background: Rectangle {
+                color: 'transparent'
+                border.color: stepButton.current
+                    ? Theme.mainColor : Theme.secondaryTextColor
+                border.width: stepButton.current ? 2 : 1
+                radius: 2
+              }
+              onClicked: plugin.applyLayerOpacity(
+                             opacityRow.modelData, modelData, false)
+            }
+          }
+        }
+      }
     }
-    return layers
   }
 
-  function applyImageryOpacity(value, quiet) {
-    const layers = resolvedImageryLayers()
-    if (layers.length === 0)
-      return
+  readonly property var opacitySteps: [1, 0.5, 0.25, 0]
+  property var imageryOpacities: ({})    // layer name -> current value
+  property var opacityUnsupported: ({})  // layer name -> true (row hidden)
+  property bool opacitySupported: true   // false once EVERY layer refuses
+  property int resolvedImageryCount: 0
+  property string opacityLabel: 'Opacity'
+
+  function resolvedImageryNames() {
+    let names = []
+    for (const name of opacityLayers) {
+      if (layerByName(name) !== null && !opacityUnsupported[name])
+        names.push(name)
+    }
+    return names
+  }
+
+  function layerOpacityValue(name) {
+    const value = imageryOpacities[name]
+    return value === undefined ? 1 : value
+  }
+
+  function applyLayerOpacity(name, value, quiet) {
+    const layer = layerByName(name)
+    if (layer === null)
+      return false
     let ok = false
-    for (const layer of layers) {
-      try {
-        // opacity is a writable Q_PROPERTY on QgsMapLayer (3.18+) — same
-        // mechanism as the Z filter's layer.subsetString assignments.
-        layer.opacity = value
-        if (Math.abs(Number(layer.opacity) - value) < 0.01)
-          ok = true
-        layer.triggerRepaint()
-      } catch (error) {}
-    }
+    try {
+      // opacity is a writable Q_PROPERTY on QgsMapLayer (3.18+) — same
+      // mechanism as the Z filter's layer.subsetString assignments.
+      layer.opacity = value
+      if (Math.abs(Number(layer.opacity) - value) < 0.01)
+        ok = true
+      layer.triggerRepaint()
+    } catch (error) {}
     if (!ok) {
-      // Assignment silently no-oped on every layer: hide the pill rather
-      // than offer a control that does nothing.
-      opacitySupported = false
+      // Assignment silently no-oped: drop this layer's row; hide the pill
+      // entirely once no layer accepts the property. Copy-on-write so the
+      // var property emits its change signal (same-reference assignments
+      // may not).
+      let unsupported = Object.assign({}, opacityUnsupported)
+      unsupported[name] = true
+      opacityUnsupported = unsupported
+      resolvedImageryCount = resolvedImageryNames().length
+      if (resolvedImageryCount === 0)
+        opacitySupported = false
       if (!quiet)
-        toast(qsTr('Imagery opacity not supported'))
-      return
+        toast(qsTr('%1: opacity not supported').arg(name))
+      return false
     }
-    imageryOpacity = value
-    saveVar('lgs_opacity', fmt(value))
+    let values = Object.assign({}, imageryOpacities)
+    values[name] = value
+    imageryOpacities = values
+    saveVar('lgs_opacity', JSON.stringify(values))
+    refreshOpacityLabel()
     try {
       iface.mapCanvas().refresh()
     } catch (error) {}
     if (!quiet)
+      toast(value === 0 ? qsTr('%1 hidden').arg(name)
+                        : qsTr('%1 %2%').arg(name).arg(Math.round(value * 100)))
+    return true
+  }
+
+  function applyAllOpacity(value, quiet) {
+    let applied = 0
+    for (const name of resolvedImageryNames()) {
+      if (applyLayerOpacity(name, value, true))
+        applied++
+    }
+    if (!quiet && applied > 0)
       toast(value === 0 ? qsTr('Imagery hidden')
                         : qsTr('Imagery %1%').arg(Math.round(value * 100)))
   }
 
-  function cycleImageryOpacity() {
-    // Nearest step to the current value, then advance (wrapping).
-    let index = 0
-    let best = Infinity
-    for (let i = 0; i < opacitySteps.length; i++) {
-      const distance = Math.abs(opacitySteps[i] - imageryOpacity)
-      if (distance < best) {
-        best = distance
-        index = i
+  function refreshOpacityLabel() {
+    // "Opacity 50" when every raster sits on one value, bare "Opacity"
+    // when they differ.
+    const names = resolvedImageryNames()
+    let shared
+    for (const name of names) {
+      const value = layerOpacityValue(name)
+      if (shared === undefined)
+        shared = value
+      else if (Math.abs(shared - value) >= 0.01) {
+        opacityLabel = qsTr('Opacity')
+        return
       }
     }
-    applyImageryOpacity(opacitySteps[(index + 1) % opacitySteps.length])
+    if (shared === undefined || Math.abs(shared - 1) < 0.01)
+      opacityLabel = qsTr('Opacity')
+    else
+      opacityLabel = shared === 0
+          ? qsTr('Opacity off')
+          : qsTr('Opacity %1').arg(Math.round(shared * 100))
   }
 
   function restoreOpacityFromProject() {
-    resolvedImageryCount = resolvedImageryLayers().length
-    const value = Number(projVar('lgs_opacity', '1'))
-    if (!isNaN(value) && value >= 0 && value < 1)
-      applyImageryOpacity(value, true)
+    resolvedImageryCount = resolvedImageryNames().length
+    const raw = projVar('lgs_opacity', '')
+    if (raw === '') {
+      refreshOpacityLabel()
+      return
+    }
+    const legacy = Number(raw)
+    if (!isNaN(legacy)) {
+      // Pre-per-layer exports stored one shared number.
+      if (legacy >= 0 && legacy < 1)
+        applyAllOpacity(legacy, true)
+      refreshOpacityLabel()
+      return
+    }
+    try {
+      const values = JSON.parse(raw)
+      for (const name of resolvedImageryNames()) {
+        const value = Number(values[name])
+        if (!isNaN(value) && value >= 0 && value < 1)
+          applyLayerOpacity(name, value, true)
+      }
+    } catch (error) {}
+    refreshOpacityLabel()
   }
 }
