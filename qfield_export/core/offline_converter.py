@@ -341,6 +341,11 @@ class OfflineConverter(QObject):
                     'is_web_service': True  # Flag to skip datasource update
                 }
                 self.log_message.emit(f"  ✓ Web service layer preserved (requires internet connection)")
+                if isinstance(layer, QgsRasterLayer):
+                    # XYZ basemaps (Google/Bing/OSM tiles) use the 'wms'
+                    # provider and land here, not in the raster branch —
+                    # the imagery opacity toggle must still know about them.
+                    self._raster_layer_names.append(layer.name())
                 return True
 
             if isinstance(layer, QgsVectorLayer):
