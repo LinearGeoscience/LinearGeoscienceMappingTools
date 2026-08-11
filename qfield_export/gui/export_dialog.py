@@ -441,6 +441,19 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_scale_check)
 
+        # Imagery opacity toggle feature of the same companion plugin
+        self.include_opacity_check = QCheckBox(
+            "Include imagery opacity toggle (QField plugin)")
+        self.include_opacity_check.setChecked(True)
+        self.include_opacity_check.setToolTip(
+            "Adds a small button on the QField map that dims or hides the "
+            "exported imagery/raster layers while drawing linework "
+            "(100% → 50% → 25% → off)."
+        )
+        self.include_opacity_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_opacity_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -820,7 +833,8 @@ class ExportDialog(QDialog):
             self.project, self.export_dir, selected_layers,
             convert_unsupported=self.convert_unsupported_check.isChecked(),
             include_zfilter_plugin=self.include_zfilter_check.isChecked(),
-            include_scale_plugin=self.include_scale_check.isChecked()
+            include_scale_plugin=self.include_scale_check.isChecked(),
+            include_opacity_plugin=self.include_opacity_check.isChecked()
         )
 
         try:
@@ -861,6 +875,7 @@ class ExportDialog(QDialog):
         self.convert_unsupported_check.setEnabled(enabled)
         self.include_zfilter_check.setEnabled(enabled)
         self.include_scale_check.setEnabled(enabled)
+        self.include_opacity_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

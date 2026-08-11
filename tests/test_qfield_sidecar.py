@@ -6,6 +6,7 @@ Run from the plugin root:
 """
 
 import importlib.util
+import json
 import os
 import re
 import tempfile
@@ -33,6 +34,16 @@ def _flag_values(text):
     return values
 
 
+def _data_values(text):
+    """Extract {marker_name: json_text} from a sidecar's data lines."""
+    values = {}
+    for match in re.finditer(
+            r'^\s*readonly property var \w+: (\[.*\]) '
+            r'// LGS-EXPORT-DATA:(\w+)$', text, re.MULTILINE):
+        values[match.group(2)] = match.group(1)
+    return values
+
+
 class TestWriteSidecar(unittest.TestCase):
 
     def setUp(self):
@@ -44,33 +55,52 @@ class TestWriteSidecar(unittest.TestCase):
         with open(path, encoding="utf-8") as fh:
             return path, fh.read()
 
-    def test_source_has_both_markers_true(self):
+    def test_source_has_all_markers_true(self):
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
-            flags = _flag_values(fh.read())
-        self.assertEqual(flags, {'zfilter': 'true', 'scale': 'true'})
+            source = fh.read()
+        self.assertEqual(_flag_values(source),
+                         {'zfilter': 'true', 'scale': 'true',
+                          'opacity': 'true'})
+        # Data lines ship empty in source; the exporter fills them.
+        self.assertEqual(_data_values(source), {'opacitylayers': '[]'})
 
     def test_all_flag_combinations(self):
         for zfilter in (True, False):
             for scale in (True, False):
-                path, text = self._write(zfilter=zfilter, scale=scale)
-                flags = _flag_values(text)
-                self.assertEqual(flags['zfilter'], str(zfilter).lower(),
-                                 (zfilter, scale))
-                self.assertEqual(flags['scale'], str(scale).lower(),
-                                 (zfilter, scale))
+                for opacity in (True, False):
+                    path, text = self._write(zfilter=zfilter, scale=scale,
+                                             opacity=opacity)
+                    flags = _flag_values(text)
+                    combo = (zfilter, scale, opacity)
+                    self.assertEqual(flags['zfilter'], str(zfilter).lower(),
+                                     combo)
+                    self.assertEqual(flags['scale'], str(scale).lower(),
+                                     combo)
+                    self.assertEqual(flags['opacity'], str(opacity).lower(),
+                                     combo)
 
     def test_output_path_uses_project_stem(self):
         path, _text = self._write()
         self.assertEqual(os.path.basename(path), "proj.qml")
 
     def test_only_flag_lines_differ_from_source(self):
-        _path, text = self._write(zfilter=False, scale=False)
+        # opacity_layers=None rewrites the data line to [] — identical to
+        # source — so only the three flag lines may differ.
+        _path, text = self._write(zfilter=False, scale=False, opacity=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 2, diff)
+        self.assertEqual(len(diff), 3, diff)
         self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
+
+    def test_opacity_layers_data_line(self):
+        names = ['Ortho 2024', 'Say "hi"']
+        _path, text = self._write(opacity_layers=names)
+        data = _data_values(text)
+        self.assertEqual(data['opacitylayers'], json.dumps(names))
+        # Round-trips through JSON despite the embedded quote.
+        self.assertEqual(json.loads(data['opacitylayers']), names)
 
     def test_missing_marker_raises(self):
         broken = os.path.join(self.tmp.name, "broken.qml")
@@ -98,7 +128,10 @@ class TestWriteSidecar(unittest.TestCase):
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             text = fh.read()
         for needle in ('lgs_z_extra', 'zRangeClause', 'clauseForTarget',
-                       'flatSpan', 'lgs_z_orig_x_'):
+                       'flatSpan', 'lgs_z_orig_x_',
+                       # Adjacent-levels, opacity toggle and level stepping:
+                       'lgs_z_adjacent', 'clauseForTargetMulti',
+                       'lgs_opacity', 'opacityLayers', 'stepLevel'):
             self.assertIn(needle, text, needle)
 
 

@@ -29,14 +29,16 @@ from ..utils.qgis_utils import (
 
 try:
     from ...z_filter.expression import (
-        ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE, parse_extra_layers,
-        strip_z_subset_any)
+        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE,
+        Z_LAYERS, parse_extra_layers, strip_z_subset_any)
     from ...z_filter import qfield as z_filter_qfield
 except ImportError:  # standalone use outside the plugin package
     from z_filter.expression import (
-        ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE, parse_extra_layers,
-        strip_z_subset_any)
+        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE,
+        Z_LAYERS, parse_extra_layers, strip_z_subset_any)
     from z_filter import qfield as z_filter_qfield
+
+from .default_stamp import stamp_elevation_defaults
 
 
 class OfflineConverter(QObject):
@@ -52,7 +54,8 @@ class OfflineConverter(QObject):
 
     def __init__(self, project: QgsProject, export_dir: Path, selected_layers: List[str],
                  convert_unsupported: bool = True, include_zfilter_plugin: bool = True,
-                 include_scale_plugin: bool = True):
+                 include_scale_plugin: bool = True,
+                 include_opacity_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -65,6 +68,8 @@ class OfflineConverter(QObject):
                 QField companion sidecar shipped next to the exported project
             include_scale_plugin: If True, enable the map scale display/lock
                 feature of the companion sidecar
+            include_opacity_plugin: If True, enable the imagery opacity toggle
+                feature of the companion sidecar (acts on exported rasters)
         """
         super().__init__()
         self.project = project
@@ -73,6 +78,8 @@ class OfflineConverter(QObject):
         self.convert_unsupported = convert_unsupported
         self.include_zfilter_plugin = include_zfilter_plugin
         self.include_scale_plugin = include_scale_plugin
+        self.include_opacity_plugin = include_opacity_plugin
+        self._raster_layer_names = []  # names the opacity toggle acts on
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
         self.converted_layers = []  # Track rasters converted from unsupported formats
@@ -145,16 +152,21 @@ class OfflineConverter(QObject):
 
             # Ship the LGS companion QField plugin (<projectname>.qml) with
             # the features chosen in the export dialog.
-            if self.include_zfilter_plugin or self.include_scale_plugin:
+            if (self.include_zfilter_plugin or self.include_scale_plugin
+                    or self.include_opacity_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
                         zfilter=self.include_zfilter_plugin,
-                        scale=self.include_scale_plugin)
+                        scale=self.include_scale_plugin,
+                        opacity=self.include_opacity_plugin,
+                        opacity_layers=self._raster_layer_names)
                     features = ", ".join(
                         name for name, on in
                         (("Z filter", self.include_zfilter_plugin),
-                         ("scale display", self.include_scale_plugin)) if on)
+                         ("scale display", self.include_scale_plugin),
+                         ("imagery opacity", self.include_opacity_plugin))
+                        if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "
                         f"{project_file.stem}.qml")
@@ -410,6 +422,7 @@ class OfflineConverter(QObject):
                         'is_web_service': True
                     }
                     self.log_message.emit(f"  ✓ Web raster layer preserved (requires internet connection)")
+                    self._raster_layer_names.append(layer.name())
                     return True
 
                 # Check for unsupported raster formats
@@ -430,6 +443,7 @@ class OfflineConverter(QObject):
                                 'to_file': new_path.name
                             })
                             self.log_message.emit(f"  ✓ Converted to: {new_path.name}")
+                            self._raster_layer_names.append(layer.name())
                             return True
                         else:
                             # Conversion failed - fall back to copying as-is
@@ -468,6 +482,7 @@ class OfflineConverter(QObject):
                     }
                     action_past = "Extracted" if action == "Extracting" else "Copied"
                     self.log_message.emit(f"  ✓ {action_past} to: {new_path.name}")
+                    self._raster_layer_names.append(layer.name())
                     return True
                 else:
                     self.log_message.emit(f"  ✗ {action} failed")
@@ -704,6 +719,26 @@ class OfflineConverter(QObject):
                         else:
                             # Use relative path
                             datasource.text = f"./{new_source_path.name}"
+
+            # Auto-stamp Elevation defaults: with the Z-filter sidecar on
+            # board, newly digitized features inherit the active level via
+            # a default-value expression on the Elevation field (the
+            # sidecar maintains the lgs_z_* variables at runtime).
+            if self.include_zfilter_plugin:
+                targets = [(name, ELEVATION_FIELD) for name in Z_LAYERS]
+                extra_json, _ok = self.project.readEntry(
+                    Z_FILTER_SCOPE, ENTRY_EXTRA_LAYERS, "")
+                for entry in parse_extra_layers(extra_json):
+                    # Range-mode extras are never stamped: one level into
+                    # min+max would fabricate flat features (wrong for the
+                    # ramps range mode exists to represent).
+                    if entry['mode'] == 'single' and entry['checked']:
+                        targets.append((entry['name'], entry['field']))
+                stamped = stamp_elevation_defaults(root, targets)
+                if stamped:
+                    self.log_message.emit(
+                        "  ✓ Elevation auto-stamp default set on: "
+                        + ", ".join(stamped))
 
             # Remove layers that were not exported
             layers_parent = root.find('.//projectlayers')

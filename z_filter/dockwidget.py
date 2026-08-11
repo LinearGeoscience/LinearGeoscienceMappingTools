@@ -743,6 +743,11 @@ class ZFilterDockWidget(QDockWidget):
             list(layers) + extra_targets, level, self.tolerance_spin.value(),
             self.show_null_check.isChecked())
         self._persist_selection()
+        # Re-detect before persisting: materialization just added real
+        # Z fields, so geom-source specs re-resolve as attr-source — the
+        # QField sidecar ignores 'geom' entries (their fields may not
+        # exist on a project exported before the first Apply).
+        self._refresh_extra_layers()
         self._persist_extra_layers()
         self._update_toggle_text()
 

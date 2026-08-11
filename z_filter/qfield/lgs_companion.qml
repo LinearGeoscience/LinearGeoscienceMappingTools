@@ -3,8 +3,9 @@
  *
  * Shipped by the LGS QField exporter as <projectname>.qml next to the
  * exported project file, so QField auto-activates it with the project.
- * Two features, individually enabled at export time via the
- * LGS-EXPORT-FLAG lines below (rewritten by z_filter/qfield/write_sidecar):
+ * Features are individually enabled at export time via the
+ * LGS-EXPORT-FLAG lines below (rewritten by z_filter/qfield/write_sidecar);
+ * LGS-EXPORT-DATA lines carry export-time data the same way:
  *
  * 1. Z FILTER — filters the four standard LGS mapping layers to one
  *    bench/level elevation by assigning layer.subsetString (a writable Qt
@@ -17,12 +18,22 @@
  *    edited on the device. Entries are resolved BY NAME (first match), so
  *    duplicate layer names pick the first; their original subsets persist
  *    under lgs_z_orig_x_<slug>, clear of the canonical lgs_z_orig_0..3.
+ *    While active, ▼/▲ pills on the canvas step between known levels, and
+ *    the "Include adjacent levels" switch widens the subset to the bench
+ *    below + current + above (device-only clause shape — the desktop
+ *    never parses device subsets, they're ephemeral).
  *
  * 2. SCALE DISPLAY + LOCK — live "1:2 500" pill overlaid on the map
  *    canvas; tap it to lock the map to a fixed scale (presets or custom).
  *    While locked, pinch-zooms snap back to the locked scale (pans stay
  *    free). Uses QgsQuickMapCanvasMap.zoomScale(center, scale) — a public
  *    slot — with a writable mapSettings.extent fallback.
+ *
+ * 3. IMAGERY OPACITY — "IMG" pill cycling the exported raster layers
+ *    through 100% → 50% → 25% → hidden, for drawing linework over
+ *    imagery. The raster layer names are baked in at export via the
+ *    LGS-EXPORT-DATA:opacitylayers line (no reliable way to enumerate
+ *    rasters from QML on the device).
  */
 
 import QtQuick
@@ -38,6 +49,9 @@ Item {
   // Rewritten to true/false by the exporter — do not edit the markers.
   readonly property bool featureZFilter: true // LGS-EXPORT-FLAG:zfilter
   readonly property bool featureScale: true // LGS-EXPORT-FLAG:scale
+  readonly property bool featureOpacity: true // LGS-EXPORT-FLAG:opacity
+  // Filled with the exported raster layer names by the exporter.
+  readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
 
   property var mainWindow: iface.mainWindow()
 
@@ -124,6 +138,25 @@ Item {
     if (t.mode === 'range')
       return zRangeClause(t.fieldMin, t.fieldMax, level, tol, showNull)
     return zClauseField(t.field || elevationField, level, tol, showNull)
+  }
+
+  // Adjacent-levels variant: OR of one window per level, single outer
+  // NULL guard. Device-only clause shape — the desktop never parses
+  // device subsets (they are ephemeral), so no desktop mirror exists.
+  // Delegates for a single level so that output stays byte-identical to
+  // clauseForTarget.
+  function clauseForTargetMulti(t, levels, tols, showNull) {
+    if (levels.length === 1)
+      return clauseForTarget(t, levels[0], tols[0], showNull)
+    let parts = []
+    for (let i = 0; i < levels.length; i++)
+      parts.push(clauseForTarget(t, levels[i], tols[i], false))
+    const joined = parts.join(' OR ')
+    const nullField = t.mode === 'range'
+        ? t.fieldMax : (t.field || elevationField)
+    if (showNull)
+      return '("' + nullField + '" IS NULL OR (' + joined + '))'
+    return '(' + joined + ')'
   }
 
   function combineSubset(orig, clause) {
@@ -304,6 +337,11 @@ Item {
           return false
         if (!includeUnchecked && e.checked === false)
           return false
+        // source 'geom' means the desktop has not materialized the Z
+        // fields yet (project exported before the first Apply) — there is
+        // nothing to filter on; the spec flips to 'attr' after Apply.
+        if (!includeUnchecked && e.source === 'geom')
+          return false
         if (e.mode === 'range')
           return !!(e.field_min && e.field_max)
         return e.mode === 'single' && !!e.field
@@ -408,13 +446,57 @@ Item {
       let candidates = levels.filter(function (v) {
         return direction > 0 ? v > level : v < level
       })
-      if (candidates.length === 0)
+      if (candidates.length === 0) {
+        // Overlay pill taps must never feel dead at the list ends.
+        toast(direction > 0 ? qsTr('No higher level') : qsTr('No lower level'))
         return
+      }
       target = direction > 0 ? candidates[0] : candidates[candidates.length - 1]
     }
     rebuildLevelModel(target)
     if (filterActive)
       applyFilter()
+  }
+
+  // Nearest known level strictly below / above, for the adjacent-levels
+  // switch: [below?, level, above?] (ends omitted at the list edges).
+  function neighbourLevels(level) {
+    let below, above
+    for (const value of mergedLevels()) {
+      if (value < level && (below === undefined || value > below))
+        below = value
+      if (value > level && (above === undefined || value < above))
+        above = value
+    }
+    let out = []
+    if (below !== undefined)
+      out.push(below)
+    out.push(level)
+    if (above !== undefined)
+      out.push(above)
+    return out
+  }
+
+  // Tolerance for a neighbour window: the cluster-fitted value when the
+  // scan knows this level, else the user's tolerance — then clamped to
+  // half the gap to the nearest other known level (same rule as
+  // clusterLevels) so adjacent windows never overlap.
+  function tolForLevel(level, fallbackTol) {
+    let tol = Number(fallbackTol)
+    for (const cluster of suggestions) {
+      if (cluster.level === level) {
+        tol = cluster.suggested_tol
+        break
+      }
+    }
+    let halfGaps = []
+    for (const value of mergedLevels()) {
+      if (value !== level)
+        halfGaps.push(Math.abs(value - level) / 2)
+    }
+    if (halfGaps.length)
+      tol = Math.min(tol, Math.min.apply(null, halfGaps))
+    return Math.max(minTol, tol)
   }
 
   // ----------------------------------------------------------------
@@ -515,6 +597,13 @@ Item {
     }
     const tol = Number(toleranceField.text)
     const tolerance = isNaN(tol) ? 5 : tol
+    // Adjacent switch widens to [below?, level, above?]. The selected
+    // level always keeps the user's typed tolerance; only neighbour
+    // windows get fitted/clamped ones.
+    const levels = adjacentSwitch.checked ? neighbourLevels(level) : [level]
+    const tols = levels.map(function (value) {
+      return value === level ? tolerance : tolForLevel(value, tolerance)
+    })
     let applied = 0
 
     for (const t of allTargets(true)) {
@@ -536,7 +625,7 @@ Item {
         const original = projVar(t.key, '')
         const combined = combineSubset(
             original,
-            clauseForTarget(t, level, tolerance, showNullSwitch.checked))
+            clauseForTargetMulti(t, levels, tols, showNullSwitch.checked))
         layer.subsetString = combined
         if (layer.subsetString === combined) {
           layer.triggerRepaint()
@@ -561,11 +650,16 @@ Item {
     saveVar('lgs_z_level', fmt(level))
     saveVar('lgs_z_tolerance', fmt(tolerance))
     saveVar('lgs_z_shownull', showNullSwitch.checked ? '1' : '0')
+    saveVar('lgs_z_adjacent', adjacentSwitch.checked ? '1' : '0')
     try {
       iface.mapCanvas().refresh()
     } catch (error) {}
-    toast(qsTr('Level %1 ± %2 m (%3 layers)')
-          .arg(fmt(level)).arg(fmt(tolerance)).arg(applied))
+    if (levels.length > 1)
+      toast(qsTr('Levels %1 (%2 layers)')
+            .arg(levels.map(fmt).join(' · ')).arg(applied))
+    else
+      toast(qsTr('Level %1 ± %2 m (%3 layers)')
+            .arg(fmt(level)).arg(fmt(tolerance)).arg(applied))
   }
 
   // Restore a layer's pre-filter subset if one was saved. Returns 1 when
@@ -606,6 +700,7 @@ Item {
     loadLevels()
     toleranceField.text = projVar('lgs_z_tolerance', '5')
     showNullSwitch.checked = projVar('lgs_z_shownull', '1') === '1'
+    adjacentSwitch.checked = projVar('lgs_z_adjacent', '0') === '1'
     const level = Number(projVar('lgs_z_level', ''))
     if (!isNaN(level) && projVar('lgs_z_level', '') !== '') {
       rebuildLevelModel(level)
@@ -622,8 +717,8 @@ Item {
     // Always wire up the map settings: the 1:20 zoom-in safety clamp must
     // run even when the scale display feature is disabled at export.
     initScaleSettings()
-    if (featureScale)
-      attachPill()
+    if (featureScale || featureZFilter || featureOpacity)
+      attachOverlay()
     startupTimer.start()
   }
 
@@ -636,6 +731,8 @@ Item {
         plugin.restoreFromProject()
       if (plugin.featureScale)
         plugin.restoreScaleFromProject()
+      if (plugin.featureOpacity)
+        plugin.restoreOpacityFromProject()
     }
   }
 
@@ -851,6 +948,26 @@ Item {
         }
       }
 
+      RowLayout {
+        Layout.fillWidth: true
+
+        Switch {
+          id: adjacentSwitch
+          checked: false
+          onToggled: {
+            plugin.saveVar('lgs_z_adjacent', checked ? '1' : '0')
+            if (plugin.filterActive)
+              plugin.applyFilter()
+          }
+        }
+
+        Label {
+          text: qsTr('Include adjacent levels')
+          wrapMode: Text.WordWrap
+          Layout.fillWidth: true
+        }
+      }
+
       Button {
         Layout.fillWidth: true
         text: qsTr('Rescan data')
@@ -879,7 +996,9 @@ Item {
       Label {
         Layout.fillWidth: true
         text: plugin.filterActive
-            ? qsTr('Filter is ON — only the selected level is shown.')
+            ? (adjacentSwitch.checked
+               ? qsTr('Filter is ON — selected level and adjacent levels are shown.')
+               : qsTr('Filter is ON — only the selected level is shown.'))
             : qsTr('Filter is off — all data is shown.')
         wrapMode: Text.WordWrap
         font.pointSize: 10
@@ -926,22 +1045,23 @@ Item {
     }
   }
 
-  function attachPill() {
+  function attachOverlay() {
     try {
-      // Overlay the pill on the map canvas (bottom centre).
+      // Overlay the pill bar on the map canvas (bottom centre — same spot
+      // the scale pill lived alone before it grew neighbours).
       if (canvas && canvas.width !== undefined) {
-        scalePill.parent = canvas
-        scalePill.anchors.horizontalCenter = canvas.horizontalCenter
-        scalePill.anchors.bottom = canvas.bottom
-        scalePill.anchors.bottomMargin = 64
-        scalePill.visible = true
+        overlayBar.parent = canvas
+        overlayBar.anchors.horizontalCenter = canvas.horizontalCenter
+        overlayBar.anchors.bottom = canvas.bottom
+        overlayBar.anchors.bottomMargin = 64
+        overlayBar.visible = true
         return
       }
     } catch (error) {}
     try {
       // Fallback: live in the plugins toolbar instead.
-      scalePill.visible = true
-      iface.addItemToPluginsToolbar(scalePill)
+      overlayBar.visible = true
+      iface.addItemToPluginsToolbar(overlayBar)
     } catch (error) {}
   }
 
@@ -1039,39 +1159,116 @@ Item {
     }
   }
 
-  Rectangle {
-    id: scalePill
+  // Canvas overlay bar: every pill lives here so features never fight
+  // over the bottom-centre spot. Invisible pills take no space in a Row.
+  Row {
+    id: overlayBar
     visible: false
-    width: pillRow.width + 24
-    height: pillText.contentHeight + 12
-    radius: height / 2
-    color: '#99000000'   // semi-opaque black; children stay fully opaque
+    spacing: 8
 
-    Row {
-      id: pillRow
-      anchors.centerIn: parent
-      spacing: 6
-
-      Text {
-        visible: plugin.scaleLocked
-        anchors.verticalCenter: parent.verticalCenter
-        text: '🔒'   // padlock
-        font.pixelSize: 12
-        color: 'white'
-      }
+    Rectangle {
+      id: levelDownPill
+      visible: plugin.featureZFilter && plugin.filterActive
+      anchors.verticalCenter: parent.verticalCenter
+      width: 44
+      height: levelDownText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
 
       Text {
-        id: pillText
-        anchors.verticalCenter: parent.verticalCenter
+        id: levelDownText
+        anchors.centerIn: parent
         font.pixelSize: 14
         color: 'white'
-        text: plugin.scaleSettings
-            ? plugin.formatScale(plugin.scaleSettings.scale) : '1:–'
+        text: '▼'
+      }
+
+      TapHandler {
+        onTapped: plugin.stepLevel(-1)
       }
     }
 
-    TapHandler {
-      onTapped: scaleDialog.open()
+    Rectangle {
+      id: levelUpPill
+      visible: plugin.featureZFilter && plugin.filterActive
+      anchors.verticalCenter: parent.verticalCenter
+      width: 44
+      height: levelUpText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: levelUpText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        text: '▲'
+      }
+
+      TapHandler {
+        onTapped: plugin.stepLevel(+1)
+      }
+    }
+
+    Rectangle {
+      id: scalePill
+      visible: plugin.featureScale
+      anchors.verticalCenter: parent.verticalCenter
+      width: pillRow.width + 24
+      height: pillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'   // semi-opaque black; children stay fully opaque
+
+      Row {
+        id: pillRow
+        anchors.centerIn: parent
+        spacing: 6
+
+        Text {
+          visible: plugin.scaleLocked
+          anchors.verticalCenter: parent.verticalCenter
+          text: '🔒'   // padlock
+          font.pixelSize: 12
+          color: 'white'
+        }
+
+        Text {
+          id: pillText
+          anchors.verticalCenter: parent.verticalCenter
+          font.pixelSize: 14
+          color: 'white'
+          text: plugin.scaleSettings
+              ? plugin.formatScale(plugin.scaleSettings.scale) : '1:–'
+        }
+      }
+
+      TapHandler {
+        onTapped: scaleDialog.open()
+      }
+    }
+
+    Rectangle {
+      id: imageryPill
+      visible: plugin.featureOpacity && plugin.opacitySupported &&
+               plugin.resolvedImageryCount > 0
+      anchors.verticalCenter: parent.verticalCenter
+      width: imageryText.contentWidth + 24
+      height: imageryText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: imageryText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        text: 'IMG ' + (plugin.imageryOpacity === 0
+            ? qsTr('off') : Math.round(plugin.imageryOpacity * 100))
+      }
+
+      TapHandler {
+        onTapped: plugin.cycleImageryOpacity()
+      }
     }
   }
 
@@ -1196,5 +1393,77 @@ Item {
         opacity: 0.7
       }
     }
+  }
+
+  // ==================================================================
+  // IMAGERY OPACITY
+  // ==================================================================
+  readonly property var opacitySteps: [1, 0.5, 0.25, 0]
+  property real imageryOpacity: 1
+  property bool opacitySupported: true
+  property int resolvedImageryCount: 0
+
+  function resolvedImageryLayers() {
+    let layers = []
+    for (const name of opacityLayers) {
+      const layer = layerByName(name)
+      if (layer !== null)
+        layers.push(layer)
+    }
+    return layers
+  }
+
+  function applyImageryOpacity(value, quiet) {
+    const layers = resolvedImageryLayers()
+    if (layers.length === 0)
+      return
+    let ok = false
+    for (const layer of layers) {
+      try {
+        // opacity is a writable Q_PROPERTY on QgsMapLayer (3.18+) — same
+        // mechanism as the Z filter's layer.subsetString assignments.
+        layer.opacity = value
+        if (Math.abs(Number(layer.opacity) - value) < 0.01)
+          ok = true
+        layer.triggerRepaint()
+      } catch (error) {}
+    }
+    if (!ok) {
+      // Assignment silently no-oped on every layer: hide the pill rather
+      // than offer a control that does nothing.
+      opacitySupported = false
+      if (!quiet)
+        toast(qsTr('Imagery opacity not supported'))
+      return
+    }
+    imageryOpacity = value
+    saveVar('lgs_opacity', fmt(value))
+    try {
+      iface.mapCanvas().refresh()
+    } catch (error) {}
+    if (!quiet)
+      toast(value === 0 ? qsTr('Imagery hidden')
+                        : qsTr('Imagery %1%').arg(Math.round(value * 100)))
+  }
+
+  function cycleImageryOpacity() {
+    // Nearest step to the current value, then advance (wrapping).
+    let index = 0
+    let best = Infinity
+    for (let i = 0; i < opacitySteps.length; i++) {
+      const distance = Math.abs(opacitySteps[i] - imageryOpacity)
+      if (distance < best) {
+        best = distance
+        index = i
+      }
+    }
+    applyImageryOpacity(opacitySteps[(index + 1) % opacitySteps.length])
+  }
+
+  function restoreOpacityFromProject() {
+    resolvedImageryCount = resolvedImageryLayers().length
+    const value = Number(projVar('lgs_opacity', '1'))
+    if (!isNaN(value) && value >= 0 && value < 1)
+      applyImageryOpacity(value, true)
   }
 }
