@@ -415,6 +415,19 @@ class ExportDialog(QDialog):
         self.convert_unsupported_check.setVisible(False)  # Hidden until unsupported layers detected
         layout.addWidget(self.convert_unsupported_check)
 
+        # Z-filter QField companion plugin checkbox
+        self.include_zfilter_check = QCheckBox(
+            "Include Z-Filter level switcher (QField plugin)")
+        self.include_zfilter_check.setChecked(True)
+        self.include_zfilter_check.setToolTip(
+            "Ships a small QField plugin next to the exported project so the "
+            "mapping layers can be filtered by bench/level elevation on the "
+            "device. The export itself always contains ALL levels."
+        )
+        self.include_zfilter_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_zfilter_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -733,6 +746,30 @@ class ExportDialog(QDialog):
     @pyqtSlot()
     def start_export(self):
         """Start the export process on a background thread."""
+        # The converter reads the project file from disk, so it must exist
+        # and be current.
+        if not self.project.fileName():
+            QMessageBox.warning(
+                self, "Save Project First",
+                "The project has not been saved yet. Save it to a file, "
+                "then export.")
+            return
+        if self.project.isDirty():
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "The project has unsaved changes. The export reads the "
+                "saved project file, so it should be saved first.\n\n"
+                "Save now and continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            if not self.project.write():
+                QMessageBox.warning(
+                    self, "Save Failed",
+                    "Could not save the project — export cancelled.")
+                return
+
         # Validate input
         export_dir = self.export_dir_edit.text().strip()
         if not export_dir:
@@ -768,8 +805,20 @@ class ExportDialog(QDialog):
         self.export_dir = Path(export_dir)
         self.converter = OfflineConverter(
             self.project, self.export_dir, selected_layers,
-            convert_unsupported=self.convert_unsupported_check.isChecked()
+            convert_unsupported=self.convert_unsupported_check.isChecked(),
+            include_zfilter_plugin=self.include_zfilter_check.isChecked()
         )
+
+        try:
+            from ...z_filter.controller import active_z_filter_summary
+            summary = active_z_filter_summary(self.project)
+        except Exception:
+            summary = None
+        if summary:
+            self.add_log(
+                f"Z filter is active ({summary}) — the export ships all "
+                "levels unfiltered; the QField plugin restores the level on "
+                "the device.")
 
         # Connect signals
         self.converter.progress_updated.connect(self.update_progress)

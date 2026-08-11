@@ -27,6 +27,13 @@ from ..utils.qgis_utils import (
     log_message
 )
 
+try:
+    from ...z_filter.expression import strip_z_subset
+    from ...z_filter import qfield as z_filter_qfield
+except ImportError:  # standalone use outside the plugin package
+    from z_filter.expression import strip_z_subset
+    from z_filter import qfield as z_filter_qfield
+
 
 class OfflineConverter(QObject):
     """
@@ -40,7 +47,7 @@ class OfflineConverter(QObject):
     log_message = pyqtSignal(str)  # detailed log messages
 
     def __init__(self, project: QgsProject, export_dir: Path, selected_layers: List[str],
-                 convert_unsupported: bool = True):
+                 convert_unsupported: bool = True, include_zfilter_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -49,12 +56,15 @@ class OfflineConverter(QObject):
             export_dir: Directory to export the project to
             selected_layers: List of layer IDs to export
             convert_unsupported: If True, convert unsupported raster formats to GeoTIFF
+            include_zfilter_plugin: If True, ship the Z-filter QField sidecar
+                plugin next to the exported project
         """
         super().__init__()
         self.project = project
         self.export_dir = Path(export_dir)
         self.selected_layers = selected_layers
         self.convert_unsupported = convert_unsupported
+        self.include_zfilter_plugin = include_zfilter_plugin
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
         self.converted_layers = []  # Track rasters converted from unsupported formats
@@ -124,6 +134,18 @@ class OfflineConverter(QObject):
                 "Normalizing paths for mobile devices..."
             )
             normalize_project_file_paths(project_file)
+
+            # Ship the Z-filter QField sidecar plugin (<projectname>.qml) so
+            # level filtering works on the device.
+            if self.include_zfilter_plugin:
+                try:
+                    z_filter_qfield.write_sidecar(self.export_dir,
+                                                  project_file.stem)
+                    self.log_message.emit(
+                        f"  ✓ Z Filter QField plugin: {project_file.stem}.qml")
+                except Exception as e:
+                    self.warning.emit(
+                        f"Could not write the Z Filter QField plugin: {e}")
 
             # Copy attachment folders if they exist
             self._copy_attachment_folders()
@@ -456,6 +478,21 @@ class OfflineConverter(QObject):
             })
             return False
 
+    @staticmethod
+    def _strip_z_filter_from_spec(layer_spec: str) -> str:
+        """Remove a Z-filter clause from the subset= part of a datasource
+        layer spec (e.g. "layername=X|subset=..."), keeping any pre-existing
+        user filter the Z clause was AND-ed onto."""
+        parts = []
+        for part in layer_spec.split('|'):
+            if part.startswith('subset='):
+                remainder = strip_z_subset(part[len('subset='):])
+                if remainder:
+                    parts.append('subset=' + remainder)
+            else:
+                parts.append(part)
+        return '|'.join(parts)
+
     def _copy_vector_layer(self, layer: QgsVectorLayer) -> Optional[Path]:
         """
         Copy a vector layer file to the export directory, preserving its format.
@@ -634,8 +671,16 @@ class OfflineConverter(QObject):
                         if '|' in layer_info['original_source']:
                             original_parts = layer_info['original_source'].split('|', 1)
                             if len(original_parts) > 1:
-                                layer_spec = original_parts[1]
-                                datasource.text = f"./{new_source_path.name}|{layer_spec}"
+                                # Never bake an active Z filter into the
+                                # exported datasource — it would permanently
+                                # strip the other levels on the device (the
+                                # sidecar plugin re-applies it at runtime).
+                                layer_spec = self._strip_z_filter_from_spec(
+                                    original_parts[1])
+                                if layer_spec:
+                                    datasource.text = f"./{new_source_path.name}|{layer_spec}"
+                                else:
+                                    datasource.text = f"./{new_source_path.name}"
                             else:
                                 datasource.text = f"./{new_source_path.name}"
                         else:
