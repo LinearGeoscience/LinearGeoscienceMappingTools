@@ -494,6 +494,9 @@ Item {
   Component.onCompleted: {
     if (featureZFilter)
       iface.addItemToPluginsToolbar(pluginButton)
+    // Always wire up the map settings: the 1:20 zoom-in safety clamp must
+    // run even when the scale display feature is disabled at export.
+    initScaleSettings()
     if (featureScale)
       attachPill()
     startupTimer.start()
@@ -769,6 +772,9 @@ Item {
   property real lockedScale: 0
   property bool suppressEnforce: false
   readonly property var scalePresets: [250, 500, 1000, 2500, 5000]
+  // QField crashes when zoomed in to extreme scales — never allow the map
+  // past 1:minSafeScale. Always active, independent of the scale lock.
+  readonly property real minSafeScale: 20
 
   function formatScale(s) {
     if (!s || !isFinite(s) || s <= 0)
@@ -785,7 +791,7 @@ Item {
     return '1:' + out
   }
 
-  function attachPill() {
+  function initScaleSettings() {
     try {
       canvas = iface.mapCanvas()
       scaleSettings = canvas ? canvas.mapSettings : null
@@ -793,6 +799,9 @@ Item {
       canvas = null
       scaleSettings = null
     }
+  }
+
+  function attachPill() {
     try {
       // Overlay the pill on the map canvas (bottom centre).
       if (canvas && canvas.width !== undefined) {
@@ -841,6 +850,7 @@ Item {
   function lockScale(value) {
     if (!(value > 0))
       return
+    value = Math.max(Number(value), minSafeScale)
     scaleLocked = true
     lockedScale = value
     saveVar('lgs_scale_locked', '1')
@@ -868,7 +878,17 @@ Item {
     target: plugin.scaleSettings
     ignoreUnknownSignals: true
     function onExtentChanged() {
-      if (!plugin.featureScale || !plugin.scaleLocked || plugin.suppressEnforce)
+      if (plugin.suppressEnforce)
+        return
+      // Safety clamp first (always on): snap straight back if the map went
+      // past 1:minSafeScale — QField crashes at extreme zoom-in.
+      if (plugin.scaleSettings &&
+          plugin.scaleSettings.scale > 0 &&
+          plugin.scaleSettings.scale < plugin.minSafeScale) {
+        plugin.setMapScale(plugin.minSafeScale)
+        return
+      }
+      if (!plugin.featureScale || !plugin.scaleLocked)
         return
       if (Math.abs(plugin.scaleSettings.scale - plugin.lockedScale) /
           plugin.lockedScale <= 0.01)
@@ -1040,6 +1060,15 @@ Item {
               : qsTr('Lock scale (freeze zoom at the current scale)')
           wrapMode: Text.WordWrap
         }
+      }
+
+      Label {
+        Layout.fillWidth: true
+        text: qsTr('Zoom-in is always capped at %1 (closer zooms crash the app).')
+              .arg(plugin.formatScale(plugin.minSafeScale))
+        wrapMode: Text.WordWrap
+        font.pointSize: 10
+        opacity: 0.7
       }
     }
   }
