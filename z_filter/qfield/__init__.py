@@ -23,6 +23,7 @@ _FLAG_MARKERS = {
     "zfilter": "LGS-EXPORT-FLAG:zfilter",
     "scale": "LGS-EXPORT-FLAG:scale",
     "opacity": "LGS-EXPORT-FLAG:opacity",
+    "clipping": "LGS-EXPORT-FLAG:clipping",
 }
 
 _DATA_MARKERS = {
@@ -31,13 +32,13 @@ _DATA_MARKERS = {
 
 
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
-                  opacity=True, opacity_layers=None):
+                  opacity=True, clipping=True, opacity_layers=None):
     """Write the companion plugin next to the exported project file.
 
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
-    zfilter / scale / opacity: enable the Z filter / scale display /
-        imagery opacity features
+    zfilter / scale / opacity / clipping: enable the Z filter / scale
+        display / imagery opacity / polygon clip features
     opacity_layers: names of the exported raster layers the opacity
         toggle should act on (baked into the QML as a JSON array)
 
@@ -48,7 +49,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
     with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
         text = fh.read()
     for name, enabled in (("zfilter", zfilter), ("scale", scale),
-                          ("opacity", opacity)):
+                          ("opacity", opacity), ("clipping", clipping)):
         marker = _FLAG_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property bool \w+: )(?:true|false)( // %s)$"

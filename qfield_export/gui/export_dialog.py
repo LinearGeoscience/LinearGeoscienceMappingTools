@@ -454,6 +454,19 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_opacity_check)
 
+        # Polygon clip tool feature of the same companion plugin
+        self.include_clipping_check = QCheckBox(
+            "Include polygon clip tool (QField plugin)")
+        self.include_clipping_check.setChecked(True)
+        self.include_clipping_check.setToolTip(
+            "Adds a Clip button on the QField map: tap the polygon(s) to "
+            "keep, tap the polygon(s) to cut, and the overlap is removed on "
+            "the device — polygons split apart become separate features."
+        )
+        self.include_clipping_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_clipping_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -834,7 +847,8 @@ class ExportDialog(QDialog):
             convert_unsupported=self.convert_unsupported_check.isChecked(),
             include_zfilter_plugin=self.include_zfilter_check.isChecked(),
             include_scale_plugin=self.include_scale_check.isChecked(),
-            include_opacity_plugin=self.include_opacity_check.isChecked()
+            include_opacity_plugin=self.include_opacity_check.isChecked(),
+            include_clipping_plugin=self.include_clipping_check.isChecked()
         )
 
         try:
@@ -876,6 +890,7 @@ class ExportDialog(QDialog):
         self.include_zfilter_check.setEnabled(enabled)
         self.include_scale_check.setEnabled(enabled)
         self.include_opacity_check.setEnabled(enabled)
+        self.include_clipping_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

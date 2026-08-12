@@ -36,6 +36,20 @@
  *    LGS-EXPORT-DATA:opacitylayers line (no reliable way to enumerate
  *    rasters from QML on the device). Per-layer values persist as a JSON
  *    object in lgs_opacity; a legacy plain number applies to all layers.
+ *
+ * 4. CLIP ISOLATED — "✂ Clip" pill starting a guided two-step clip on
+ *    the LGS polygon layers: tap the polygon(s) to KEEP, then the
+ *    polygon(s) to CUT; the KEEP footprint is subtracted from the CUT
+ *    polygons (port of the desktop Map Cleaning Toolkit clip_isolated,
+ *    map_cleaning/clipping/clipper_core.py — keep the semantics in
+ *    sync). Geometry math runs through the QGIS expression engine via
+ *    ExpressionEvaluator (difference/make_valid/union/area), because
+ *    QgsGeometry methods are not invokable from QML; results round-trip
+ *    as WKT. Bisected polygons become separate features with copied
+ *    attributes and fresh UUIDs (fid/id/ogc_fid left to the provider —
+ *    same rules as copy_attributes_without_fid). Edits are applied in
+ *    one edit session (adds before deletes) with a one-level,
+ *    session-only undo. Requires QField 4.x.
  */
 
 import QtQuick
@@ -52,6 +66,7 @@ Item {
   readonly property bool featureZFilter: true // LGS-EXPORT-FLAG:zfilter
   readonly property bool featureScale: true // LGS-EXPORT-FLAG:scale
   readonly property bool featureOpacity: true // LGS-EXPORT-FLAG:opacity
+  readonly property bool featureClipping: true // LGS-EXPORT-FLAG:clipping
   // Filled with the exported raster layer names by the exporter.
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
 
@@ -719,7 +734,7 @@ Item {
     // Always wire up the map settings: the 1:20 zoom-in safety clamp must
     // run even when the scale display feature is disabled at export.
     initScaleSettings()
-    if (featureScale || featureZFilter || featureOpacity)
+    if (featureScale || featureZFilter || featureOpacity || featureClipping)
       attachOverlay()
     startupTimer.start()
   }
@@ -735,6 +750,8 @@ Item {
         plugin.restoreScaleFromProject()
       if (plugin.featureOpacity)
         plugin.restoreOpacityFromProject()
+      if (plugin.featureClipping)
+        plugin.initClipping()
     }
   }
 
@@ -1271,6 +1288,29 @@ Item {
         onTapped: opacityDialog.open()
       }
     }
+
+    Rectangle {
+      id: clipPill
+      visible: plugin.featureClipping && plugin.clipStep === 0 &&
+               plugin.clipAvailable
+      anchors.verticalCenter: parent.verticalCenter
+      width: clipPillText.contentWidth + 24
+      height: clipPillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: clipPillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        text: qsTr('✂ Clip')
+      }
+
+      TapHandler {
+        onTapped: plugin.enterClipMode()
+      }
+    }
   }
 
   Dialog {
@@ -1623,5 +1663,949 @@ Item {
       }
     } catch (error) {}
     refreshOpacityLabel()
+  }
+
+  // ================================================================
+  // CLIP ISOLATED — port of the desktop clip_isolated
+  // (map_cleaning/clipping/clipper_core.py). Field-friendly wording:
+  // KEEP = desktop "cutter" (stays whole), CUT = desktop "target"
+  // (loses the overlapped area). The desktop QgsGeometrySnapper step is
+  // intentionally skipped — qgis.analysis is not reachable from QML and
+  // snapping is cleanup, not correctness.
+  // ================================================================
+
+  // Priority order for the tap-to-pick layer lock; mirror of the LGS
+  // template polygon layers (singlepart POLYGON, fid PK, UUID field).
+  readonly property var clipLayerNames: ['2 - Overlay', '4 - Basemap']
+  // mirror of detect_uuid_field (clipper_dockwidget.py)
+  readonly property var uuidPatterns: [
+    'uuid', 'guid', 'globalid', 'unique_id', 'uniqueid', 'feature_uuid']
+  // mirror of MIN_AREA_THRESHOLD (slivers below this are dropped)
+  readonly property real minPartArea: 1e-8
+
+  property int clipStep: 0        // 0=off, 1=pick KEEP, 2=pick CUT, 3=done
+  property var clipLayer: null    // locked on the first successful hit
+  property var keepFeatures: []   // [{id, feature}] — desktop cutters
+  property var cutFeatures: []    // [{id, feature}] — desktop targets
+  property var clipUndo: null     // one-level undo payload, session-only
+  property bool clipAvailable: false
+  property string clipResultText: ''
+
+  ExpressionEvaluator {
+    id: clipEvaluator
+    project: qgisProject
+  }
+
+  // Evaluate a QGIS expression against a layer (+ optional feature).
+  // Returns '' on any failure so callers can treat empty as "no result"
+  // — never as "empty geometry", which reports as WKT '... EMPTY'.
+  function evalExpr(layer, feature, expr) {
+    try {
+      clipEvaluator.layer = layer
+      if (feature !== null && feature !== undefined)
+        clipEvaluator.feature = feature
+      clipEvaluator.expressionText = expr
+      const raw = clipEvaluator.evaluate()
+      if (raw === undefined || raw === null)
+        return ''
+      const text = String(raw)
+      return text === 'undefined' || text === 'null' ? '' : text
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function candidateClipLayers() {
+    let layers = []
+    for (const name of clipLayerNames) {
+      const layer = layerByName(name)
+      if (layer !== null)
+        layers.push(layer)
+    }
+    return layers
+  }
+
+  function initClipping() {
+    try {
+      clipAvailable = candidateClipLayers().length > 0
+    } catch (error) {
+      clipAvailable = false
+    }
+  }
+
+  function clipLayerLabel() {
+    try {
+      return clipLayer ? String(clipLayer.name) : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Mode lifecycle
+  // ----------------------------------------------------------------
+  function enterClipMode() {
+    try {
+      if (!canvas || canvas.width === undefined) {
+        toast(qsTr('Clip unavailable — no map canvas'))
+        return
+      }
+      clipCatcher.parent = canvas
+      clipCatcher.anchors.fill = canvas
+      clipBanner.parent = canvas
+      clipBanner.anchors.horizontalCenter = canvas.horizontalCenter
+      clipBanner.anchors.top = canvas.top
+      clipBanner.anchors.topMargin = 60
+      keepFeatures = []
+      cutFeatures = []
+      clipLayer = null
+      clipResultText = ''
+      clipStep = 1
+      toast(qsTr('Tap the polygons to KEEP'))
+    } catch (error) {
+      toast(qsTr('Clip unavailable'))
+    }
+  }
+
+  function exitClipMode() {
+    try {
+      if (clipLayer !== null)
+        clipLayer.removeSelection()
+    } catch (error) {}
+    clipStep = 0
+    keepFeatures = []
+    cutFeatures = []
+    clipLayer = null
+    clipResultText = ''
+  }
+
+  // ----------------------------------------------------------------
+  // Tap handling / hit-testing
+  // ----------------------------------------------------------------
+  function clipTapOnUi(pos) {
+    // Ignore taps that land on the banner or the pill bar — overlapping
+    // TapHandlers may deliver the same tap to the canvas catcher too.
+    try {
+      const b = clipBanner.mapFromItem(clipCatcher, pos.x, pos.y)
+      if (b.x >= 0 && b.y >= 0 &&
+          b.x <= clipBanner.width && b.y <= clipBanner.height)
+        return true
+    } catch (error) {}
+    try {
+      const o = overlayBar.mapFromItem(clipCatcher, pos.x, pos.y)
+      if (o.x >= 0 && o.y >= 0 &&
+          o.x <= overlayBar.width && o.y <= overlayBar.height)
+        return true
+    } catch (error) {}
+    return false
+  }
+
+  function clipTapTolerance() {
+    // Finger slop in map units (~12 pt around the tap point).
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (!isNaN(perPoint) && perPoint > 0)
+        return perPoint * 12
+    } catch (error) {}
+    try {
+      const extent = canvas.mapSettings.extent
+      return (extent.xMaximum - extent.xMinimum) / canvas.width * 12
+    } catch (error) {}
+    return 1
+  }
+
+  function findClipHit(pos) {
+    const pt = canvas.mapSettings.screenToCoordinate(
+        Qt.point(pos.x, pos.y))
+    const tol = clipTapTolerance()
+    const probe = "intersects($geometry, buffer(geom_from_wkt('POINT(" +
+        pt.x + ' ' + pt.y + ")'), " + tol + '))'
+    // The iterator honours the layer subsetString, so an active Z filter
+    // means only VISIBLE polygons are tappable — clip what you see.
+    const layers = clipLayer !== null ? [clipLayer] : candidateClipLayers()
+    for (const layer of layers) {
+      let best = null
+      let bestArea = -1
+      let iterator = null
+      try {
+        iterator = LayerUtils.createFeatureIteratorFromExpression(
+            layer, probe)
+        while (iterator.hasNext()) {
+          const feature = iterator.next()
+          // Stacked polygons: the small overlying unit is almost always
+          // the intent, so the smallest hit wins.
+          const area = Number(evalExpr(layer, feature, 'area($geometry)'))
+          if (best === null || (!isNaN(area) &&
+                                (bestArea < 0 || area < bestArea))) {
+            best = feature
+            if (!isNaN(area))
+              bestArea = area
+          }
+        }
+      } catch (error) {}
+      try {
+        if (iterator !== null)
+          iterator.close()
+      } catch (error) {}
+      if (best !== null)
+        return { layer: layer, feature: best }
+    }
+    return null
+  }
+
+  function clipPickIndex(list, fid) {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === fid)
+        return i
+    }
+    return -1
+  }
+
+  function toggleClipPick(list, fid, feature) {
+    // Copy-on-write so the var property emits its change signal.
+    let next = []
+    let removed = false
+    for (const entry of list) {
+      if (entry.id === fid) {
+        removed = true
+        continue
+      }
+      next.push(entry)
+    }
+    if (!removed)
+      next.push({ id: fid, feature: feature })
+    return next
+  }
+
+  function updateClipSelection() {
+    if (clipLayer === null)
+      return
+    let fids = []
+    for (const entry of keepFeatures)
+      fids.push(entry.id)
+    if (clipStep === 2) {
+      for (const entry of cutFeatures)
+        fids.push(entry.id)
+    }
+    try {
+      if (fids.length === 0) {
+        clipLayer.removeSelection()
+        return
+      }
+      LayerUtils.selectFeaturesInLayer(clipLayer, fids)
+    } catch (error) {
+      try {
+        clipLayer.selectByIds(fids)
+      } catch (error2) {}
+    }
+  }
+
+  function handleClipTap(pos) {
+    try {
+      if (clipStep !== 1 && clipStep !== 2)
+        return
+      if (clipTapOnUi(pos))
+        return
+      const hit = findClipHit(pos)
+      if (hit === null) {
+        toast(qsTr('No polygon here'))
+        return
+      }
+      if (clipLayer === null) {
+        clipLayer = hit.layer
+        toast(qsTr('Using layer: %1').arg(clipLayerLabel()))
+      }
+      const fid = hit.feature.id
+      if (clipStep === 1) {
+        if (clipPickIndex(cutFeatures, fid) !== -1) {
+          toast(qsTr('Already marked CUT'))
+          return
+        }
+        keepFeatures = toggleClipPick(keepFeatures, fid, hit.feature)
+      } else {
+        if (clipPickIndex(keepFeatures, fid) !== -1) {
+          toast(qsTr('Already marked KEEP'))
+          return
+        }
+        cutFeatures = toggleClipPick(cutFeatures, fid, hit.feature)
+      }
+      updateClipSelection()
+    } catch (error) {}
+  }
+
+  // ----------------------------------------------------------------
+  // Attribute helpers (mirror of copy_attributes_without_fid)
+  // ----------------------------------------------------------------
+  function attributeNames(layer, feature) {
+    // JSON round-trip through the expression engine — avoids relying on
+    // the QgsFields gadget surface.
+    try {
+      const raw = evalExpr(layer, feature, 'to_json(map_akeys(attributes()))')
+      const names = JSON.parse(raw)
+      if (Array.isArray(names) && names.length > 0)
+        return names
+    } catch (error) {}
+    try {
+      const names = feature.fields.names
+      if (names !== undefined && names.length > 0)
+        return names
+    } catch (error) {}
+    return []
+  }
+
+  function detectUuidField(names) {
+    for (const name of names) {
+      const lower = String(name).toLowerCase()
+      for (const pattern of uuidPatterns) {
+        if (lower.indexOf(pattern) !== -1)
+          return name
+      }
+    }
+    return null
+  }
+
+  function makeClipUuid(layer) {
+    const value = evalExpr(layer, null, "uuid('WithoutBraces')")
+    if (value.length === 36)
+      return value
+    // Fallback: version-4 shape from Math.random (no crypto in QML JS).
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,
+        function(c) {
+          const r = Math.random() * 16 | 0
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+        })
+  }
+
+  function copyClipAttributes(target, source, names, uuidField, freshUuid) {
+    // fid/id/ogc_fid stay null so the provider assigns them (GeoPackage
+    // UNIQUE PK). Everything else is copied — including Elevation, which
+    // deliberately overwrites the auto-stamp default so new pieces keep
+    // the source level and stay visible under an active Z filter.
+    for (const name of names) {
+      const lower = String(name).toLowerCase()
+      if (lower === 'fid' || lower === 'id' || lower === 'ogc_fid')
+        continue
+      try {
+        if (uuidField !== null && name === uuidField)
+          target.setAttribute(name, freshUuid)
+        else
+          target.setAttribute(name, source.attribute(name))
+      } catch (error) {}
+    }
+    return target
+  }
+
+  // ----------------------------------------------------------------
+  // WKT plumbing (results of expression-engine geometry math)
+  // ----------------------------------------------------------------
+  function wktTopLevelGroups(body) {
+    // Depth-0 parenthesis groups: MULTIPOLYGON body -> one per polygon.
+    let groups = []
+    let depth = 0
+    let start = -1
+    for (let i = 0; i < body.length; i++) {
+      const ch = body.charAt(i)
+      if (ch === '(') {
+        if (depth === 0)
+          start = i
+        depth++
+      } else if (ch === ')') {
+        depth--
+        if (depth === 0 && start !== -1) {
+          groups.push(body.substring(start, i + 1))
+          start = -1
+        }
+      }
+    }
+    return groups
+  }
+
+  function wktTopLevelMembers(body) {
+    // Depth-0 comma split: GEOMETRYCOLLECTION body -> member geometries.
+    let members = []
+    let depth = 0
+    let start = 0
+    for (let i = 0; i < body.length; i++) {
+      const ch = body.charAt(i)
+      if (ch === '(')
+        depth++
+      else if (ch === ')')
+        depth--
+      else if (ch === ',' && depth === 0) {
+        members.push(body.substring(start, i).trim())
+        start = i + 1
+      }
+    }
+    const tail = body.substring(start).trim()
+    if (tail !== '')
+      members.push(tail)
+    return members
+  }
+
+  function splitMultiPolygonWkt(wkt) {
+    // 'POLYGON (…)' -> [itself]; 'MULTIPOLYGON (…)' -> one POLYGON per
+    // part; 'GEOMETRYCOLLECTION (…)' -> recurse keeping polygonal
+    // members (mirror of extract_polygon_parts_from_geometry).
+    let parts = []
+    const text = String(wkt).trim()
+    const open = text.indexOf('(')
+    if (open === -1)
+      return parts
+    const kind = text.substring(0, open).trim().toUpperCase()
+    const body = text.substring(open + 1, text.lastIndexOf(')'))
+    if (kind.indexOf('MULTIPOLYGON') === 0) {
+      for (const group of wktTopLevelGroups(body))
+        parts.push('POLYGON ' + group)
+    } else if (kind.indexOf('GEOMETRYCOLLECTION') === 0) {
+      for (const member of wktTopLevelMembers(body))
+        parts = parts.concat(splitMultiPolygonWkt(member))
+    } else if (kind.indexOf('POLYGON') === 0) {
+      parts.push(text)
+    }
+    return parts
+  }
+
+  // ----------------------------------------------------------------
+  // Clip engine (mirror of clip_isolated, clipper_core.py:584)
+  // ----------------------------------------------------------------
+  function buildCutterUnionWkt() {
+    // QgsGeometry.unaryUnion equivalent: fold union() over the KEEP
+    // geometries in the expression engine, make_valid the result.
+    try {
+      let expr = null
+      for (const entry of keepFeatures) {
+        const wkt = evalExpr(clipLayer, entry.feature,
+                             'geom_to_wkt($geometry)')
+        if (wkt === '')
+          continue
+        const geomExpr = "geom_from_wkt('" + wkt + "')"
+        expr = expr === null
+            ? geomExpr : 'union(' + expr + ', ' + geomExpr + ')'
+      }
+      if (expr === null)
+        return ''
+      return evalExpr(clipLayer, keepFeatures[0].feature,
+                      'geom_to_wkt(make_valid(' + expr + '))')
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function clipDifferenceWkt(feature, unionWkt) {
+    // buffer(0) normalises make_valid GeometryCollections into pure
+    // polygons and drops line/point debris; if it misbehaves fall back
+    // to the raw difference and let the WKT splitter cope.
+    const core = 'make_valid(difference(make_valid($geometry), ' +
+        "geom_from_wkt('" + unionWkt + "')))"
+    let wkt = evalExpr(clipLayer, feature,
+                       'geom_to_wkt(buffer(' + core + ', 0))')
+    if (wkt === '')
+      wkt = evalExpr(clipLayer, feature, 'geom_to_wkt(' + core + ')')
+    return wkt
+  }
+
+  function applyClipEdits(layer, newFeatures, deleteIds) {
+    // One edit session, adds strictly before deletes (data-safe order).
+    let ok = false
+    try {
+      layer.startEditing()
+      for (const feature of newFeatures)
+        LayerUtils.addFeature(layer, feature)
+      for (const fid of deleteIds) {
+        let deleted = false
+        try {
+          deleted = layer.deleteFeature(fid)
+        } catch (error) {}
+        if (!deleted) {
+          // Fallback: selection-based deletion (both invokable).
+          try {
+            layer.selectByIds([fid])
+            layer.deleteSelectedFeatures()
+          } catch (error2) {}
+        }
+      }
+      ok = layer.commitChanges()
+      if (!ok)
+        layer.rollBack()
+    } catch (error) {
+      try {
+        layer.rollBack()
+      } catch (error2) {}
+      ok = false
+    }
+    return ok
+  }
+
+  function collectFidsByExpression(layer, expr) {
+    let fids = []
+    let iterator = null
+    try {
+      iterator = LayerUtils.createFeatureIteratorFromExpression(layer, expr)
+      while (iterator.hasNext())
+        fids.push(iterator.next().id)
+    } catch (error) {}
+    try {
+      if (iterator !== null)
+        iterator.close()
+    } catch (error) {}
+    return fids
+  }
+
+  function executeClip() {
+    try {
+      const layer = clipLayer
+      if (layer === null || keepFeatures.length === 0 ||
+          cutFeatures.length === 0)
+        return
+      clipResultText = qsTr('Clipping…')
+      const names = attributeNames(layer, cutFeatures[0].feature)
+      const uuidField = detectUuidField(names)
+      const unionWkt = buildCutterUnionWkt()
+      if (unionWkt === '') {
+        toast(qsTr('Clip failed — could not merge the KEEP polygons'))
+        clipResultText = ''
+        return
+      }
+      let deleteIds = []
+      let undoDeleted = []      // [{wkt, feature}] captured pre-edit
+      let newFeatures = []
+      let newUuids = []
+      let clippedCount = 0
+      let removedCount = 0
+      let pieceCount = 0
+      let untouchedCount = 0
+      let failedCount = 0
+      for (const entry of cutFeatures) {
+        const feature = entry.feature
+        const touches = evalExpr(layer, feature,
+            "intersects($geometry, geom_from_wkt('" + unionWkt + "'))")
+        if (touches !== 'true' && touches !== '1') {
+          // Non-intersecting targets stay completely untouched
+          // (fid and UUID stable — matches desktop).
+          untouchedCount++
+          continue
+        }
+        const sourceWkt = evalExpr(layer, feature,
+                                   'geom_to_wkt($geometry)')
+        const diffWkt = clipDifferenceWkt(feature, unionWkt)
+        if (diffWkt === '' && sourceWkt !== '') {
+          // Evaluation failed — never treat a failure as "fully
+          // covered": leave the feature alone rather than delete it.
+          failedCount++
+          continue
+        }
+        let parts = []
+        if (diffWkt !== '' && diffWkt.toUpperCase().indexOf('EMPTY') === -1)
+          parts = splitMultiPolygonWkt(diffWkt)
+        let kept = []
+        for (const part of parts) {
+          const area = Number(evalExpr(layer, null,
+              "area(geom_from_wkt('" + part + "'))"))
+          // Keep the part when the area check itself fails.
+          if (isNaN(area) || area > minPartArea)
+            kept.push(part)
+        }
+        deleteIds.push(entry.id)
+        undoDeleted.push({ wkt: sourceWkt, feature: feature })
+        if (kept.length === 0) {
+          removedCount++
+          continue
+        }
+        clippedCount++
+        for (const part of kept) {
+          const geometry = GeometryUtils.createGeometryFromWkt(part)
+          let created = FeatureUtils.createFeature(layer, geometry)
+          const freshUuid = makeClipUuid(layer)
+          copyClipAttributes(created, feature, names, uuidField, freshUuid)
+          newFeatures.push(created)
+          newUuids.push(freshUuid)
+          pieceCount++
+        }
+      }
+      if (deleteIds.length === 0) {
+        toast(failedCount > 0
+            ? qsTr('Clip failed — geometry error')
+            : qsTr('Nothing to clip — the CUT polygons do not touch the KEEP polygons'))
+        clipResultText = ''
+        return
+      }
+      if (!applyClipEdits(layer, newFeatures, deleteIds)) {
+        toast(qsTr('Clip failed — no changes made'))
+        clipResultText = ''
+        return
+      }
+      // Read-back verification + fids of the new pieces (for undo).
+      let addedFids = []
+      if (uuidField !== null && newUuids.length > 0) {
+        const inList = "'" + newUuids.join("','") + "'"
+        addedFids = collectFidsByExpression(layer,
+            '"' + uuidField + '" IN (' + inList + ')')
+        if (addedFids.length !== newFeatures.length)
+          toast(qsTr('Warning: %1 of %2 new pieces verified')
+                .arg(addedFids.length).arg(newFeatures.length))
+      }
+      clipUndo = uuidField === null ? null : {
+        layer: layer,
+        layerName: clipLayerLabel(),
+        deleted: undoDeleted,
+        names: names,
+        uuidField: uuidField,
+        newUuids: newUuids,
+        addedFids: addedFids
+      }
+      try {
+        layer.removeSelection()
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      let message = qsTr('Cut %1 polygon(s) → %2 piece(s)')
+          .arg(clippedCount + removedCount).arg(pieceCount)
+      if (removedCount > 0)
+        message += qsTr(' — %1 removed entirely').arg(removedCount)
+      if (untouchedCount > 0)
+        message += qsTr(' — %1 untouched').arg(untouchedCount)
+      if (failedCount > 0)
+        message += qsTr(' — %1 skipped (geometry error)').arg(failedCount)
+      clipResultText = message
+      toast(message)
+      clipStep = 3
+    } catch (error) {
+      toast(qsTr('Clip failed'))
+      clipResultText = ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Undo (one level, session-only — never persisted)
+  // ----------------------------------------------------------------
+  function undoLastClip() {
+    const undo = clipUndo
+    if (undo === null || undo === undefined)
+      return
+    try {
+      let layer = undo.layer
+      try {
+        if (layer === null || layer.name === undefined)
+          layer = layerByName(undo.layerName)
+      } catch (error) {
+        layer = layerByName(undo.layerName)
+      }
+      if (layer === null) {
+        toast(qsTr('Undo failed — layer not found'))
+        return
+      }
+      // The added pieces, looked up fresh by UUID (fids survive commits
+      // but a resync could renumber them).
+      let doomed = []
+      if (undo.newUuids.length > 0) {
+        const inList = "'" + undo.newUuids.join("','") + "'"
+        doomed = collectFidsByExpression(layer,
+            '"' + undo.uuidField + '" IN (' + inList + ')')
+        if (doomed.length === 0)
+          doomed = undo.addedFids
+      }
+      // Rebuild the deleted originals, keeping their original UUIDs —
+      // UUID is the stable identity, fids are provider-assigned anew.
+      let restored = []
+      for (const gone of undo.deleted) {
+        const geometry = GeometryUtils.createGeometryFromWkt(gone.wkt)
+        let created = FeatureUtils.createFeature(layer, geometry)
+        copyClipAttributes(created, gone.feature, undo.names, null, '')
+        restored.push(created)
+      }
+      if (!applyClipEdits(layer, restored, doomed)) {
+        toast(qsTr('Undo failed — no changes made'))
+        return
+      }
+      try {
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      toast(qsTr('Clip undone'))
+      clipUndo = null
+    } catch (error) {
+      toast(qsTr('Undo failed'))
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Clip UI: tap catcher + instruction banner + confirm dialog
+  // ----------------------------------------------------------------
+  Item {
+    id: clipCatcher
+    visible: plugin.clipStep === 1 || plugin.clipStep === 2
+    z: 1
+
+    TapHandler {
+      // Default DragThreshold gesture policy: passive grab, so pan and
+      // pinch on the canvas underneath keep working — only clean taps
+      // land here.
+      onSingleTapped: function(eventPoint, button) {
+        plugin.handleClipTap(eventPoint.position)
+      }
+    }
+  }
+
+  Rectangle {
+    id: clipBanner
+    visible: plugin.clipStep > 0
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: clipBannerColumn.height + 24
+
+    Column {
+      id: clipBannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 12
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 24
+      spacing: 8
+
+      Text {
+        width: parent.width
+        font.pixelSize: 15
+        font.bold: true
+        color: 'white'
+        text: plugin.clipStep === 1 ? qsTr('Clip — step 1 of 2')
+            : plugin.clipStep === 2 ? qsTr('Clip — step 2 of 2')
+                                    : qsTr('Clip done')
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 14
+        color: 'white'
+        text: plugin.clipStep === 1
+            ? qsTr('Tap the polygon(s) to KEEP — they stay whole')
+            : plugin.clipStep === 2
+              ? qsTr('Tap the polygon(s) to CUT — the overlap is removed')
+              : plugin.clipResultText
+      }
+
+      Text {
+        visible: plugin.clipStep === 1 || plugin.clipStep === 2
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: '#CCFFFFFF'
+        text: {
+          const count = plugin.clipStep === 1
+              ? plugin.keepFeatures.length : plugin.cutFeatures.length
+          let line = qsTr('%1 selected — tap again to unselect').arg(count)
+          if (plugin.clipLayer !== null)
+            line += ' · ' + plugin.clipLayerLabel()
+          return line
+        }
+      }
+
+      Flow {
+        width: parent.width
+        spacing: 8
+
+        Button {
+          id: clipCancelButton
+          visible: plugin.clipStep === 1 || plugin.clipStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Cancel')
+            color: 'white'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: '#AAFFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitClipMode()
+        }
+
+        Button {
+          id: clipBackButton
+          visible: plugin.clipStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('◂ Back')
+            color: 'white'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: '#AAFFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.clipStep = 1
+            plugin.updateClipSelection()
+          }
+        }
+
+        Button {
+          id: clipNextButton
+          visible: plugin.clipStep === 1
+          enabled: plugin.keepFeatures.length > 0
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Next ▸')
+            color: clipNextButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: clipNextButton.enabled ? Theme.mainColor : 'transparent'
+            border.color: clipNextButton.enabled
+                ? Theme.mainColor : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.clipStep = 2
+            plugin.updateClipSelection()
+            plugin.toast(qsTr('Tap the polygons to CUT'))
+          }
+        }
+
+        Button {
+          id: clipExecuteButton
+          visible: plugin.clipStep === 2
+          enabled: plugin.cutFeatures.length > 0
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Clip ✓')
+            color: clipExecuteButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: clipExecuteButton.enabled
+                ? Theme.mainColor : 'transparent'
+            border.color: clipExecuteButton.enabled
+                ? Theme.mainColor : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: clipConfirmDialog.open()
+        }
+
+        Button {
+          id: clipUndoButton
+          visible: plugin.clipStep === 3 ||
+                   (plugin.clipStep === 1 && plugin.clipUndo !== null)
+          enabled: plugin.clipUndo !== null
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Undo last clip')
+            color: clipUndoButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: clipUndoButton.enabled ? '#AAFFFFFF' : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.undoLastClip()
+            if (plugin.clipStep === 3)
+              plugin.exitClipMode()
+          }
+        }
+
+        Button {
+          id: clipDoneButton
+          visible: plugin.clipStep === 3
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Done')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitClipMode()
+        }
+      }
+    }
+  }
+
+  Dialog {
+    id: clipConfirmDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Clip polygons')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onOpened: {
+      try {
+        const okButton = clipConfirmDialog.standardButton(Dialog.Ok)
+        if (okButton)
+          okButton.text = qsTr('Clip now')
+      } catch (error) {}
+    }
+
+    onAccepted: plugin.executeClip()
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 8
+
+      Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        text: qsTr('KEEP: %1 polygon(s) — unchanged.').arg(
+                  plugin.keepFeatures.length) + '\n' +
+              qsTr('CUT: %1 polygon(s) — the area under the KEEP polygons is removed. Pieces that get split apart become separate polygons.').arg(
+                  plugin.cutFeatures.length) + '\n' +
+              qsTr('Layer: %1').arg(plugin.clipLayerLabel())
+      }
+    }
   }
 }

@@ -60,7 +60,7 @@ class TestWriteSidecar(unittest.TestCase):
             source = fh.read()
         self.assertEqual(_flag_values(source),
                          {'zfilter': 'true', 'scale': 'true',
-                          'opacity': 'true'})
+                          'opacity': 'true', 'clipping': 'true'})
         # Data lines ship empty in source; the exporter fills them.
         self.assertEqual(_data_values(source), {'opacitylayers': '[]'})
 
@@ -68,16 +68,20 @@ class TestWriteSidecar(unittest.TestCase):
         for zfilter in (True, False):
             for scale in (True, False):
                 for opacity in (True, False):
-                    path, text = self._write(zfilter=zfilter, scale=scale,
-                                             opacity=opacity)
-                    flags = _flag_values(text)
-                    combo = (zfilter, scale, opacity)
-                    self.assertEqual(flags['zfilter'], str(zfilter).lower(),
-                                     combo)
-                    self.assertEqual(flags['scale'], str(scale).lower(),
-                                     combo)
-                    self.assertEqual(flags['opacity'], str(opacity).lower(),
-                                     combo)
+                    for clipping in (True, False):
+                        path, text = self._write(zfilter=zfilter, scale=scale,
+                                                 opacity=opacity,
+                                                 clipping=clipping)
+                        flags = _flag_values(text)
+                        combo = (zfilter, scale, opacity, clipping)
+                        self.assertEqual(flags['zfilter'],
+                                         str(zfilter).lower(), combo)
+                        self.assertEqual(flags['scale'], str(scale).lower(),
+                                         combo)
+                        self.assertEqual(flags['opacity'],
+                                         str(opacity).lower(), combo)
+                        self.assertEqual(flags['clipping'],
+                                         str(clipping).lower(), combo)
 
     def test_output_path_uses_project_stem(self):
         path, _text = self._write()
@@ -85,13 +89,14 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_only_flag_lines_differ_from_source(self):
         # opacity_layers=None rewrites the data line to [] — identical to
-        # source — so only the three flag lines may differ.
-        _path, text = self._write(zfilter=False, scale=False, opacity=False)
+        # source — so only the four flag lines may differ.
+        _path, text = self._write(zfilter=False, scale=False, opacity=False,
+                                  clipping=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 3, diff)
+        self.assertEqual(len(diff), 4, diff)
         self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
 
     def test_opacity_layers_data_line(self):
@@ -133,7 +138,11 @@ class TestWriteSidecar(unittest.TestCase):
                        'lgs_z_adjacent', 'clauseForTargetMulti',
                        'lgs_opacity', 'opacityLayers', 'stepLevel',
                        # Per-layer opacity panel (v6):
-                       'opacityDialog', 'applyLayerOpacity'):
+                       'opacityDialog', 'applyLayerOpacity',
+                       # Clip Isolated tool (v7):
+                       'featureClipping', 'clipPill', 'executeClip',
+                       'buildCutterUnionWkt', 'splitMultiPolygonWkt',
+                       'undoLastClip', 'detectUuidField'):
             self.assertIn(needle, text, needle)
 
 

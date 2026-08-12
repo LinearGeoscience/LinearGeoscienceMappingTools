@@ -55,7 +55,8 @@ class OfflineConverter(QObject):
     def __init__(self, project: QgsProject, export_dir: Path, selected_layers: List[str],
                  convert_unsupported: bool = True, include_zfilter_plugin: bool = True,
                  include_scale_plugin: bool = True,
-                 include_opacity_plugin: bool = True):
+                 include_opacity_plugin: bool = True,
+                 include_clipping_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -70,6 +71,8 @@ class OfflineConverter(QObject):
                 feature of the companion sidecar
             include_opacity_plugin: If True, enable the imagery opacity toggle
                 feature of the companion sidecar (acts on exported rasters)
+            include_clipping_plugin: If True, enable the polygon clip tool
+                feature of the companion sidecar
         """
         super().__init__()
         self.project = project
@@ -79,6 +82,7 @@ class OfflineConverter(QObject):
         self.include_zfilter_plugin = include_zfilter_plugin
         self.include_scale_plugin = include_scale_plugin
         self.include_opacity_plugin = include_opacity_plugin
+        self.include_clipping_plugin = include_clipping_plugin
         self._raster_layer_names = []  # names the opacity toggle acts on
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
@@ -153,19 +157,22 @@ class OfflineConverter(QObject):
             # Ship the LGS companion QField plugin (<projectname>.qml) with
             # the features chosen in the export dialog.
             if (self.include_zfilter_plugin or self.include_scale_plugin
-                    or self.include_opacity_plugin):
+                    or self.include_opacity_plugin
+                    or self.include_clipping_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
                         zfilter=self.include_zfilter_plugin,
                         scale=self.include_scale_plugin,
                         opacity=self.include_opacity_plugin,
+                        clipping=self.include_clipping_plugin,
                         opacity_layers=self._raster_layer_names)
                     features = ", ".join(
                         name for name, on in
                         (("Z filter", self.include_zfilter_plugin),
                          ("scale display", self.include_scale_plugin),
-                         ("imagery opacity", self.include_opacity_plugin))
+                         ("imagery opacity", self.include_opacity_plugin),
+                         ("polygon clipping", self.include_clipping_plugin))
                         if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "
