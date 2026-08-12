@@ -24,23 +24,29 @@ _FLAG_MARKERS = {
     "scale": "LGS-EXPORT-FLAG:scale",
     "opacity": "LGS-EXPORT-FLAG:opacity",
     "clipping": "LGS-EXPORT-FLAG:clipping",
+    "spline": "LGS-EXPORT-FLAG:spline",
 }
 
 _DATA_MARKERS = {
     "opacitylayers": "LGS-EXPORT-DATA:opacitylayers",
+    "splineparams": "LGS-EXPORT-DATA:splineparams",
 }
 
 
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
-                  opacity=True, clipping=True, opacity_layers=None):
+                  opacity=True, clipping=True, spline=True,
+                  opacity_layers=None, spline_params=None):
     """Write the companion plugin next to the exported project file.
 
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
-    zfilter / scale / opacity / clipping: enable the Z filter / scale
-        display / imagery opacity / polygon clip features
+    zfilter / scale / opacity / clipping / spline: enable the Z filter /
+        scale display / imagery opacity / polygon clip / spline
+        digitizing features
     opacity_layers: names of the exported raster layers the opacity
         toggle should act on (baked into the QML as a JSON array)
+    spline_params: [tightness, tolerance, max_segments] from the desktop
+        Map Cleaning settings (empty list keeps the QML defaults)
 
     Returns the written path. Raises ValueError if a feature-flag or
     data marker is missing from the QML (guards against the markers
@@ -49,7 +55,8 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
     with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
         text = fh.read()
     for name, enabled in (("zfilter", zfilter), ("scale", scale),
-                          ("opacity", opacity), ("clipping", clipping)):
+                          ("opacity", opacity), ("clipping", clipping),
+                          ("spline", spline)):
         marker = _FLAG_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property bool \w+: )(?:true|false)( // %s)$"
@@ -60,7 +67,8 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
             raise ValueError(
                 f"sidecar flag marker '{marker}' matched {count} lines "
                 f"(expected exactly 1) in {SIDECAR_SOURCE}")
-    for name, value in (("opacitylayers", opacity_layers),):
+    for name, value in (("opacitylayers", opacity_layers),
+                        ("splineparams", spline_params)):
         marker = _DATA_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property var \w+: )\[.*\]( // %s)$"

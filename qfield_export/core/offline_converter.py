@@ -56,7 +56,8 @@ class OfflineConverter(QObject):
                  convert_unsupported: bool = True, include_zfilter_plugin: bool = True,
                  include_scale_plugin: bool = True,
                  include_opacity_plugin: bool = True,
-                 include_clipping_plugin: bool = True):
+                 include_clipping_plugin: bool = True,
+                 include_spline_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -73,6 +74,9 @@ class OfflineConverter(QObject):
                 feature of the companion sidecar (acts on exported rasters)
             include_clipping_plugin: If True, enable the polygon clip tool
                 feature of the companion sidecar
+            include_spline_plugin: If True, enable the spline draw/reshape
+                feature of the companion sidecar (desktop spline settings
+                are baked in at export)
         """
         super().__init__()
         self.project = project
@@ -83,6 +87,7 @@ class OfflineConverter(QObject):
         self.include_scale_plugin = include_scale_plugin
         self.include_opacity_plugin = include_opacity_plugin
         self.include_clipping_plugin = include_clipping_plugin
+        self.include_spline_plugin = include_spline_plugin
         self._raster_layer_names = []  # names the opacity toggle acts on
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
@@ -92,6 +97,31 @@ class OfflineConverter(QObject):
     def cancel(self):
         """Cancel the export process."""
         self._cancelled = True
+
+    def _read_spline_params(self):
+        """Desktop Map Cleaning spline settings, baked into the sidecar
+        as [tightness, tolerance, max_segments]."""
+        try:
+            from qgis.core import QgsSettings
+            try:
+                from ...map_cleaning.core.utils import (
+                    SETTINGS_NAME, DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE,
+                    DEFAULT_MAX_SEGMENTS)
+            except ImportError:  # standalone use outside the plugin package
+                from map_cleaning.core.utils import (
+                    SETTINGS_NAME, DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE,
+                    DEFAULT_MAX_SEGMENTS)
+            settings = QgsSettings()
+            return [
+                float(settings.value(SETTINGS_NAME + "/tightness",
+                                     DEFAULT_TIGHTNESS)),
+                float(settings.value(SETTINGS_NAME + "/tolerance",
+                                     DEFAULT_TOLERANCE)),
+                int(settings.value(SETTINGS_NAME + "/max_segments",
+                                   DEFAULT_MAX_SEGMENTS)),
+            ]
+        except Exception:
+            return [0.5, 0.1, 200]  # mirror map_cleaning/core/utils.py
 
     def export(self) -> bool:
         """
@@ -158,7 +188,8 @@ class OfflineConverter(QObject):
             # the features chosen in the export dialog.
             if (self.include_zfilter_plugin or self.include_scale_plugin
                     or self.include_opacity_plugin
-                    or self.include_clipping_plugin):
+                    or self.include_clipping_plugin
+                    or self.include_spline_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
@@ -166,13 +197,16 @@ class OfflineConverter(QObject):
                         scale=self.include_scale_plugin,
                         opacity=self.include_opacity_plugin,
                         clipping=self.include_clipping_plugin,
-                        opacity_layers=self._raster_layer_names)
+                        spline=self.include_spline_plugin,
+                        opacity_layers=self._raster_layer_names,
+                        spline_params=self._read_spline_params())
                     features = ", ".join(
                         name for name, on in
                         (("Z filter", self.include_zfilter_plugin),
                          ("scale display", self.include_scale_plugin),
                          ("imagery opacity", self.include_opacity_plugin),
-                         ("polygon clipping", self.include_clipping_plugin))
+                         ("polygon clipping", self.include_clipping_plugin),
+                         ("spline drawing", self.include_spline_plugin))
                         if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "

@@ -467,6 +467,20 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_clipping_check)
 
+        # Spline draw/reshape feature of the same companion plugin
+        self.include_spline_check = QCheckBox(
+            "Include spline drawing/reshaping (QField plugin)")
+        self.include_spline_check.setChecked(True)
+        self.include_spline_check.setToolTip(
+            "Adds a Spline button on the QField map: while armed, the "
+            "points you place are smoothed into a curve live — for new "
+            "features and for reshaping — using the desktop Map Cleaning "
+            "spline settings. Save with QField's normal confirm button."
+        )
+        self.include_spline_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_spline_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -848,7 +862,8 @@ class ExportDialog(QDialog):
             include_zfilter_plugin=self.include_zfilter_check.isChecked(),
             include_scale_plugin=self.include_scale_check.isChecked(),
             include_opacity_plugin=self.include_opacity_check.isChecked(),
-            include_clipping_plugin=self.include_clipping_check.isChecked()
+            include_clipping_plugin=self.include_clipping_check.isChecked(),
+            include_spline_plugin=self.include_spline_check.isChecked()
         )
 
         try:
@@ -891,6 +906,7 @@ class ExportDialog(QDialog):
         self.include_scale_check.setEnabled(enabled)
         self.include_opacity_check.setEnabled(enabled)
         self.include_clipping_check.setEnabled(enabled)
+        self.include_spline_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

@@ -1,6 +1,7 @@
-// Harness: extract the pure-JS WKT splitter functions from
-// lgs_companion.qml verbatim and exercise them against realistic
-// geom_to_wkt outputs. Run: node test_wkt_splitter.js <path-to-qml>
+// Harness: extract the pure-JS clip functions from lgs_companion.qml
+// verbatim — the WKT splitter (exercised against realistic geom_to_wkt
+// outputs) and the Smart Clip pairing logic (smartClipPairs).
+// Run: node wkt_splitter_harness.js <path-to-qml>
 'use strict'
 const fs = require('fs')
 
@@ -20,12 +21,14 @@ function extractFunction(name) {
          qml.slice(bodyStart, i + 1)
 }
 
-const code = ['wktTopLevelGroups', 'wktTopLevelMembers', 'splitMultiPolygonWkt']
+const code = ['wktTopLevelGroups', 'wktTopLevelMembers', 'splitMultiPolygonWkt',
+              'smartClipPairs']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
 (0, eval)(code)
 const splitMultiPolygonWkt = globalThis.splitMultiPolygonWkt
+const smartClipPairs = globalThis.smartClipPairs
 
 let failures = 0
 function check(label, actual, expected) {
@@ -74,5 +77,35 @@ check('polygonz passthrough',
 check('multipolygonz parts',
   splitMultiPolygonWkt('MultiPolygonZ (((0 0 5, 1 0 5, 1 1 5, 0 0 5)),((2 2 5, 3 2 5, 3 3 5, 2 2 5)))'),
   ['POLYGON ((0 0 5, 1 0 5, 1 1 5, 0 0 5))', 'POLYGON ((2 2 5, 3 2 5, 3 3 5, 2 2 5))'])
+
+// --- smartClipPairs (Smart Clip pairing order + 1% similarity skip) ---
+
+// Three distinct areas: smallest cuts both larger, middle cuts largest.
+check('smart pairs three distinct',
+  smartClipPairs([{ id: 1, area: 1 }, { id: 2, area: 10 }, { id: 3, area: 100 }]),
+  [{ smallId: 1, largeId: 2 }, { smallId: 1, largeId: 3 },
+   { smallId: 2, largeId: 3 }])
+
+// Areas within 1% of each other -> pair skipped (small > large * 0.99).
+check('smart pairs within one percent skipped',
+  smartClipPairs([{ id: 1, area: 99.5 }, { id: 2, area: 100 }]),
+  [])
+
+// Exactly at the boundary (small === large * 0.99) -> NOT skipped
+// (desktop predicate is strictly greater-than).
+check('smart pairs exact boundary kept',
+  smartClipPairs([{ id: 1, area: 99 }, { id: 2, area: 100 }]),
+  [{ smallId: 1, largeId: 2 }])
+
+// Input order must not matter — pairing follows sorted areas.
+check('smart pairs input order irrelevant',
+  smartClipPairs([{ id: 3, area: 100 }, { id: 1, area: 1 }, { id: 2, area: 10 }]),
+  [{ smallId: 1, largeId: 2 }, { smallId: 1, largeId: 3 },
+   { smallId: 2, largeId: 3 }])
+
+// Equal areas -> no pairs at all.
+check('smart pairs equal areas',
+  smartClipPairs([{ id: 1, area: 50 }, { id: 2, area: 50 }]),
+  [])
 
 process.exit(failures === 0 ? 0 : 1)

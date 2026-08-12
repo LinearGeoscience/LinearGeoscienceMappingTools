@@ -6,6 +6,7 @@ Run from the plugin root:
 """
 
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -60,43 +61,35 @@ class TestWriteSidecar(unittest.TestCase):
             source = fh.read()
         self.assertEqual(_flag_values(source),
                          {'zfilter': 'true', 'scale': 'true',
-                          'opacity': 'true', 'clipping': 'true'})
+                          'opacity': 'true', 'clipping': 'true',
+                          'spline': 'true'})
         # Data lines ship empty in source; the exporter fills them.
-        self.assertEqual(_data_values(source), {'opacitylayers': '[]'})
+        self.assertEqual(_data_values(source),
+                         {'opacitylayers': '[]', 'splineparams': '[]'})
 
     def test_all_flag_combinations(self):
-        for zfilter in (True, False):
-            for scale in (True, False):
-                for opacity in (True, False):
-                    for clipping in (True, False):
-                        path, text = self._write(zfilter=zfilter, scale=scale,
-                                                 opacity=opacity,
-                                                 clipping=clipping)
-                        flags = _flag_values(text)
-                        combo = (zfilter, scale, opacity, clipping)
-                        self.assertEqual(flags['zfilter'],
-                                         str(zfilter).lower(), combo)
-                        self.assertEqual(flags['scale'], str(scale).lower(),
-                                         combo)
-                        self.assertEqual(flags['opacity'],
-                                         str(opacity).lower(), combo)
-                        self.assertEqual(flags['clipping'],
-                                         str(clipping).lower(), combo)
+        names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline')
+        for combo in itertools.product((True, False), repeat=len(names)):
+            kwargs = dict(zip(names, combo))
+            path, text = self._write(**kwargs)
+            flags = _flag_values(text)
+            for name, enabled in kwargs.items():
+                self.assertEqual(flags[name], str(enabled).lower(), kwargs)
 
     def test_output_path_uses_project_stem(self):
         path, _text = self._write()
         self.assertEqual(os.path.basename(path), "proj.qml")
 
     def test_only_flag_lines_differ_from_source(self):
-        # opacity_layers=None rewrites the data line to [] — identical to
-        # source — so only the four flag lines may differ.
+        # opacity_layers/spline_params=None rewrite the data lines to [] —
+        # identical to source — so only the five flag lines may differ.
         _path, text = self._write(zfilter=False, scale=False, opacity=False,
-                                  clipping=False)
+                                  clipping=False, spline=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 4, diff)
+        self.assertEqual(len(diff), 5, diff)
         self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
 
     def test_opacity_layers_data_line(self):
@@ -106,6 +99,14 @@ class TestWriteSidecar(unittest.TestCase):
         self.assertEqual(data['opacitylayers'], json.dumps(names))
         # Round-trips through JSON despite the embedded quote.
         self.assertEqual(json.loads(data['opacitylayers']), names)
+
+    def test_spline_params_data_line(self):
+        _path, text = self._write(spline_params=[0.5, 0.1, 200])
+        data = _data_values(text)
+        self.assertEqual(data['splineparams'], json.dumps([0.5, 0.1, 200]))
+        # Default (None) keeps the empty source form.
+        _path, text = self._write()
+        self.assertEqual(_data_values(text)['splineparams'], '[]')
 
     def test_missing_marker_raises(self):
         broken = os.path.join(self.tmp.name, "broken.qml")
@@ -142,7 +143,23 @@ class TestWriteSidecar(unittest.TestCase):
                        # Clip Isolated tool (v7):
                        'featureClipping', 'clipPill', 'executeClip',
                        'buildCutterUnionWkt', 'splitMultiPolygonWkt',
-                       'undoLastClip', 'detectUuidField'):
+                       'undoLastClip', 'detectUuidField',
+                       # Clip All + Smart Clip (v9):
+                       'clipMode', 'chooseClipMode', 'executeClipAll',
+                       'executeClipSmart', 'smartClipPairs',
+                       'clipDifferenceWktPair', 'clipAllTargetCount',
+                       'finalizeClip',
+                       # Spline draw/reshape (v8):
+                       'featureSpline', 'splineParams', 'splinePill',
+                       'splineBuildSequence', 'splineHermiteOpen',
+                       'splineHermiteClosed', 'splineSimplify',
+                       'splineRebuildModel', 'addVertexFromPoint',
+                       'coordinateLocator', 'lgs_spline_armed',
+                       # Confirm excludes the crosshair (freeze fixup),
+                       # spline AND native drawing (always-on):
+                       'splineConfirmSequence', 'splineOnConfirmFreeze',
+                       'nativeConfirmFreeze', 'positionLocked',
+                       'averagedPosition'):
             self.assertIn(needle, text, needle)
 
 
