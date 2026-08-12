@@ -24,7 +24,7 @@ function extractFunction(name) {
 }
 
 const code = ['splinePointScalar', 'splinePointsAdd', 'splineTangent',
-  'splinePerpDist', 'splineSimplify', 'splineHermiteOpen',
+  'splinePerpDist', 'splineSimplify', 'splineDecimate', 'splineHermiteOpen',
   'splineHermiteClosed', 'splineBuildSequence', 'splineConfirmSequence',
   'splineCommonPrefixLength']
   .map(extractFunction).join('\n');
@@ -37,6 +37,7 @@ const hermiteClosed = globalThis.splineHermiteClosed
 const buildSequence = globalThis.splineBuildSequence
 const confirmSequence = globalThis.splineConfirmSequence
 const commonPrefix = globalThis.splineCommonPrefixLength
+const decimate = globalThis.splineDecimate
 
 let failures = 0
 function check(label, ok, detail) {
@@ -162,6 +163,27 @@ const dup = buildSequence(
   [pt(0, 0), pt(0, 0), pt(10, 5), pt(10, 5), pt(20, 0)], false, 0.5, 0, 8)
 check('duplicate controls produce finite xy',
   dup.every(p => isFinite(p.x) && isFinite(p.y)))
+
+// --- decimate (freehand node thinning) -------------------------------
+const dense = []
+for (let i = 0; i <= 20; i++) dense.push(pt(i, 0, i))
+check('decimate: minDist 0 is identity',
+  JSON.stringify(decimate(dense, 0)) === JSON.stringify(dense))
+const thinned = decimate(dense, 5)
+check('decimate: keeps first and last',
+  samePt(thinned[0], dense[0]) &&
+  samePt(thinned[thinned.length - 1], dense[20]))
+check('decimate: dense run collapses to every 5th point',
+  thinned.length === 5 &&
+  thinned.every((p, i) => i === thinned.length - 1 || p.x === i * 5),
+  'got ' + JSON.stringify(thinned))
+check('decimate: kept points carry their z',
+  thinned.every(p => p.z === p.x))
+const sparse = [pt(0, 0), pt(10, 0), pt(20, 0)]
+check('decimate: already-sparse input passes through',
+  JSON.stringify(decimate(sparse, 5)) === JSON.stringify(sparse))
+check('decimate: two points always survive',
+  decimate([pt(0, 0), pt(1, 0)], 100).length === 2)
 
 // --- simplify basics ------------------------------------------------
 const spike = [pt(0, 0), pt(1, 0.001), pt(2, 5), pt(3, 0.001), pt(4, 0)]

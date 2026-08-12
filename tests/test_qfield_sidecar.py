@@ -159,7 +159,10 @@ class TestWriteSidecar(unittest.TestCase):
                        # spline AND native drawing (always-on):
                        'splineConfirmSequence', 'splineOnConfirmFreeze',
                        'nativeConfirmFreeze', 'positionLocked',
-                       'averagedPosition'):
+                       'averagedPosition',
+                       # Freehand perf: node thinning + live sample cap:
+                       'splineDecimate', 'splineMinNodePx',
+                       'splineLiveMaxSegments'):
             self.assertIn(needle, text, needle)
 
 

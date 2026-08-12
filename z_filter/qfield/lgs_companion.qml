@@ -3199,6 +3199,15 @@ Item {
   readonly property int splineMaxSegments:
       splineParams.length > 2 ? Number(splineParams[2]) : 200
 
+  // Freehand digitizing commits a vertex every pointer-move event (1-2 px
+  // apart) — without thinning, every one becomes a spline control and the
+  // rebuild cost grows with stroke length. Minimum node spacing in SCREEN
+  // pixels (converted to map units per add); the live-preview sample cap
+  // trades preview smoothness for speed (confirm always uses the full
+  // splineMaxSegments, so saved geometry quality is untouched).
+  readonly property real splineMinNodePx: 8
+  readonly property int splineLiveMaxSegments: 16
+
   property bool splineArmed: false
   property var splineLocator: null    // the coordinateLocator QQuickItem
   property var splineModel: null      // locator.rubberbandModel (active one)
@@ -3279,6 +3288,25 @@ Item {
       if (keep[i])
         out.push(points[i])
     }
+    return out
+  }
+
+  // Thin a dense point run (freehand strokes): keep a point only when it
+  // is at least minDist away from the last KEPT point; the first and last
+  // points always survive. minDist <= 0 returns the input unchanged.
+  function splineDecimate(points, minDist) {
+    if (!(minDist > 0) || points.length < 3)
+      return points.slice()
+    const minDist2 = minDist * minDist
+    const out = [points[0]]
+    for (let i = 1; i < points.length - 1; i++) {
+      const kept = out[out.length - 1]
+      const dx = points[i].x - kept.x
+      const dy = points[i].y - kept.y
+      if (dx * dx + dy * dy >= minDist2)
+        out.push(points[i])
+    }
+    out.push(points[points.length - 1])
     return out
   }
 
@@ -3527,10 +3555,21 @@ Item {
     }
   }
 
+  // splineMinNodePx converted to map units at the current zoom (0 = gate
+  // off when the map settings are unavailable).
+  function splineMinNodeMapUnits() {
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        return perPoint * splineMinNodePx
+    } catch (error) {}
+    return 0
+  }
+
   // Take the model's committed vertices (all but the floating crosshair
   // vertex) as the control points — used when arming mid-digitize and as
   // the recovery path when the vertex count changes in a way we did not
-  // predict.
+  // predict. Freehand-dense runs are thinned to the minimum node spacing.
   function splineAdoptCommitted() {
     splineControls = []
     splineLastSeq = null
@@ -3539,6 +3578,7 @@ Item {
       const count = Number(splineModel.vertexCount)
       for (let i = 0; i < count - 1; i++)
         splineControls.push({ x: verts[i].x, y: verts[i].y, z: verts[i].z })
+      splineControls = splineDecimate(splineControls, splineMinNodeMapUnits())
       splineExpected = count
     } catch (error) {
       splineControls = []
@@ -3573,11 +3613,26 @@ Item {
     }
     if (splineExpected >= 0 && count === splineExpected + 1) {
       // Native add: the newly committed vertex sits before the floating one.
+      // Freehand thinning: a vertex closer than the minimum node spacing to
+      // the last control is NOT adopted — the scheduled rebuild rewrites
+      // the model from the controls, erasing the raw vertex again.
       try {
         const verts = splineModel.vertices
         const v = verts[count - 2]
-        splineControls.push({ x: v.x, y: v.y, z: v.z })
-        splineControls = splineControls.slice()
+        let keep = true
+        if (splineControls.length > 0) {
+          const minDist = splineMinNodeMapUnits()
+          if (minDist > 0) {
+            const last = splineControls[splineControls.length - 1]
+            const dx = v.x - last.x
+            const dy = v.y - last.y
+            keep = dx * dx + dy * dy >= minDist * minDist
+          }
+        }
+        if (keep) {
+          splineControls.push({ x: v.x, y: v.y, z: v.z })
+          splineControls = splineControls.slice()
+        }
       } catch (error) {
         splineAdoptCommitted()
       }
@@ -3651,9 +3706,14 @@ Item {
     } catch (error) {
       return
     }
+    // Live preview runs on a capped sample density — recomputing the whole
+    // curve at the desktop's maxSegments (default 200/segment) every 40 ms
+    // tick is what made long freehand strokes lag. Confirm rebuilds at the
+    // full density (splineConfirmSequence), so saved quality is untouched.
     const seq = splineBuildSequence(
         splineControls.concat([cross]), closed,
-        splineTightness, splineTolerance, splineMaxSegments)
+        splineTightness, splineTolerance,
+        Math.min(splineMaxSegments, splineLiveMaxSegments))
     if (seq.length < 2)
       return
 
@@ -3671,9 +3731,18 @@ Item {
     } catch (error) {
       return
     }
-    if (splineLastSeq !== null && modelCount === splineLastSeq.length) {
+    // modelCount >= lastSeq.length also admits a model GROWN by native
+    // end-appends (freehand adds land before the floating vertex) — the
+    // committed prefix model[0..lastSeq.length-2] is still our own last
+    // write. Everything past it (raw freehand commits, the add-mutated
+    // slot at lastSeq.length-1, the floating vertex) is untrusted, but the
+    // vertex at index `prefix` is always overwritten by the first re-add,
+    // so capping prefix at lastSeq.length-1 keeps the peel sound. Shrunk
+    // models (native remove) still take the full-reset path.
+    if (splineLastSeq !== null && modelCount >= splineLastSeq.length) {
       prefix = splineCommonPrefixLength(splineLastSeq, seq)
-      prefix = Math.min(prefix, modelCount - 1, seq.length - 1)
+      prefix = Math.min(prefix, splineLastSeq.length - 1,
+                        modelCount - 1, seq.length - 1)
       if (prefix < 0)
         prefix = 0
     }
@@ -3835,11 +3904,21 @@ Item {
       splineMarkerPositions = []
       return
     }
+    // Cap the dot count: replacing the marker array rebuilds the
+    // Repeater's delegates every throttled pan tick, so long strokes are
+    // index-step-sampled to <= 100 dots (last control always shown).
+    const n = splineControls.length
+    const step = n > 100 ? Math.ceil(n / 100) : 1
     const out = []
     try {
-      for (let i = 0; i < splineControls.length; i++) {
+      for (let i = 0; i < n; i += step) {
         const p = scaleSettings.coordinateToScreen(GeometryUtils.point(
             splineControls[i].x, splineControls[i].y))
+        out.push({ x: Number(p.x), y: Number(p.y) })
+      }
+      if (step > 1 && (n - 1) % step !== 0) {
+        const p = scaleSettings.coordinateToScreen(GeometryUtils.point(
+            splineControls[n - 1].x, splineControls[n - 1].y))
         out.push({ x: Number(p.x), y: Number(p.y) })
       }
     } catch (error) {
