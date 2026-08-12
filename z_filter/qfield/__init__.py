@@ -29,22 +29,26 @@ _FLAG_MARKERS = {
 
 _DATA_MARKERS = {
     "opacitylayers": "LGS-EXPORT-DATA:opacitylayers",
+    "vectoropacitylayers": "LGS-EXPORT-DATA:vectoropacitylayers",
     "splineparams": "LGS-EXPORT-DATA:splineparams",
 }
 
 
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                   opacity=True, clipping=True, spline=True,
-                  opacity_layers=None, spline_params=None):
+                  opacity_layers=None, vector_layers=None,
+                  spline_params=None):
     """Write the companion plugin next to the exported project file.
 
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
     zfilter / scale / opacity / clipping / spline: enable the Z filter /
-        scale display / imagery opacity / polygon clip / spline
+        scale display / layer opacity / polygon clip / spline
         digitizing features
     opacity_layers: names of the exported raster layers the opacity
-        toggle should act on (baked into the QML as a JSON array)
+        panel should act on (baked into the QML as a JSON array)
+    vector_layers: names of the exported spatial vector layers for the
+        opacity panel's Vectors column (same JSON-array baking)
     spline_params: [tightness, tolerance, max_segments] from the desktop
         Map Cleaning settings (empty list keeps the QML defaults)
 
@@ -68,6 +72,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                 f"sidecar flag marker '{marker}' matched {count} lines "
                 f"(expected exactly 1) in {SIDECAR_SOURCE}")
     for name, value in (("opacitylayers", opacity_layers),
+                        ("vectoropacitylayers", vector_layers),
                         ("splineparams", spline_params)):
         marker = _DATA_MARKERS[name]
         pattern = re.compile(

@@ -29,13 +29,16 @@
  *    free). Uses QgsQuickMapCanvasMap.zoomScale(center, scale) — a public
  *    slot — with a writable mapSettings.extent fallback.
  *
- * 3. IMAGERY OPACITY — "Opacity" pill opening a per-raster panel: each
- *    exported raster gets a 100/50/25/Off row (plus an "All layers" row
- *    when there are several), for drawing linework over imagery. The
- *    raster layer names are baked in at export via the
- *    LGS-EXPORT-DATA:opacitylayers line (no reliable way to enumerate
- *    rasters from QML on the device). Per-layer values persist as a JSON
- *    object in lgs_opacity; a legacy plain number applies to all layers.
+ * 3. LAYER OPACITY — "Opacity" pill opening a per-layer panel in two
+ *    grouped columns (rasters left, vectors right; stacked on narrow
+ *    screens): each layer gets a 100/50/25/Off row, plus an "All" row
+ *    per column when it has several layers. The layer names are baked
+ *    in at export via the LGS-EXPORT-DATA:opacitylayers (rasters) and
+ *    LGS-EXPORT-DATA:vectoropacitylayers (spatial vectors — lookup
+ *    tables are excluded) lines; there is no reliable way to enumerate
+ *    layers from QML on the device. Per-layer values persist as a JSON
+ *    object in lgs_opacity; a legacy plain number applies to rasters
+ *    only (it predates vector support).
  *
  * 4. CLIPPING — "✂ Clip" pill offering the three desktop Map Cleaning
  *    Toolkit clip modes on the LGS polygon layers (ports of
@@ -103,8 +106,10 @@ Item {
   readonly property bool featureOpacity: true // LGS-EXPORT-FLAG:opacity
   readonly property bool featureClipping: true // LGS-EXPORT-FLAG:clipping
   readonly property bool featureSpline: true // LGS-EXPORT-FLAG:spline
-  // Filled with the exported raster layer names by the exporter.
+  // Filled with the exported raster / spatial-vector layer names by the
+  // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
+  readonly property var vectorOpacityLayers: [] // LGS-EXPORT-DATA:vectoropacitylayers
   // [tightness, tolerance (map units), max segments] from desktop settings.
   readonly property var splineParams: [] // LGS-EXPORT-DATA:splineparams
 
@@ -1311,7 +1316,7 @@ Item {
     Rectangle {
       id: imageryPill
       visible: plugin.featureOpacity && plugin.opacitySupported &&
-               plugin.resolvedImageryCount > 0
+               plugin.resolvedImageryCount + plugin.resolvedVectorCount > 0
       anchors.verticalCenter: parent.verticalCenter
       width: imageryText.contentWidth + 24
       height: imageryText.contentHeight + 12
@@ -1509,82 +1514,63 @@ Item {
     id: opacityDialog
     parent: mainWindow.contentItem
     modal: true
-    title: qsTr('Imagery Opacity')
+    title: qsTr('Layer Opacity')
     x: (mainWindow.width - width) / 2
     y: (mainWindow.height - height) / 2
-    width: Math.min(mainWindow.width - 40, 420)
+    width: Math.min(mainWindow.width - 40,
+                    opacityDialog.twoColumns ? 720 : 420)
     standardButtons: Dialog.Close
 
-    // [{name}] — one row per resolved, supported raster. Values are read
-    // live from imageryOpacities so button highlights follow taps.
+    // Rasters left, vectors right; columns stack on narrow screens. One
+    // row per resolved, supported layer — values are read live from
+    // imageryOpacities so button highlights follow taps.
     property var rasterNames: []
+    property var vectorNames: []
+    readonly property bool twoColumns:
+        mainWindow.width >= 700 &&
+        rasterNames.length > 0 && vectorNames.length > 0
 
-    onAboutToShow: rasterNames = plugin.resolvedImageryNames()
+    onAboutToShow: {
+      rasterNames = plugin.resolvedImageryNames()
+      vectorNames = plugin.resolvedVectorNames()
+    }
 
-    ColumnLayout {
+    GridLayout {
       anchors.fill: parent
-      spacing: 8
+      columns: opacityDialog.twoColumns ? 2 : 1
+      columnSpacing: 24
+      rowSpacing: 8
 
-      // One-tap group control, shown only when there is a group.
-      RowLayout {
+      ColumnLayout {
         Layout.fillWidth: true
-        visible: opacityDialog.rasterNames.length > 1
-        spacing: 4
+        Layout.alignment: Qt.AlignTop
+        visible: opacityDialog.rasterNames.length > 0
+        spacing: 8
 
         Label {
           Layout.fillWidth: true
           elide: Text.ElideRight
-          text: qsTr('All layers')
+          text: qsTr('Rasters')
           font.bold: true
         }
 
-        Repeater {
-          model: plugin.opacitySteps
-
-          delegate: Button {
-            required property var modelData
-            flat: true
-            topPadding: 4
-            bottomPadding: 4
-            leftPadding: 10
-            rightPadding: 10
-            text: modelData === 0 ? qsTr('Off')
-                                  : Math.round(modelData * 100)
-            background: Rectangle {
-              color: 'transparent'
-              border.color: Theme.secondaryTextColor
-              border.width: 1
-              radius: 2
-            }
-            onClicked: plugin.applyAllOpacity(modelData)
-          }
-        }
-      }
-
-      Repeater {
-        model: opacityDialog.rasterNames
-
-        delegate: RowLayout {
-          id: opacityRow
-          required property var modelData
+        // One-tap group control, shown only when there is a group.
+        RowLayout {
           Layout.fillWidth: true
+          visible: opacityDialog.rasterNames.length > 1
           spacing: 4
 
           Label {
             Layout.fillWidth: true
             elide: Text.ElideRight
-            text: opacityRow.modelData
+            text: qsTr('All rasters')
           }
 
           Repeater {
             model: plugin.opacitySteps
 
             delegate: Button {
-              id: stepButton
               required property var modelData
-              readonly property bool current:
-                  Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
-                           - modelData) < 0.01
               flat: true
               topPadding: 4
               bottomPadding: 4
@@ -1592,16 +1578,156 @@ Item {
               rightPadding: 10
               text: modelData === 0 ? qsTr('Off')
                                     : Math.round(modelData * 100)
-              font.bold: current
               background: Rectangle {
                 color: 'transparent'
-                border.color: stepButton.current
-                    ? Theme.mainColor : Theme.secondaryTextColor
-                border.width: stepButton.current ? 2 : 1
+                border.color: Theme.secondaryTextColor
+                border.width: 1
                 radius: 2
               }
-              onClicked: plugin.applyLayerOpacity(
-                             opacityRow.modelData, modelData, false)
+              onClicked: plugin.applyOpacityToNames(
+                             opacityDialog.rasterNames, modelData, false)
+            }
+          }
+        }
+
+        Repeater {
+          model: opacityDialog.rasterNames
+
+          delegate: RowLayout {
+            id: opacityRow
+            required property var modelData
+            Layout.fillWidth: true
+            spacing: 4
+
+            Label {
+              Layout.fillWidth: true
+              elide: Text.ElideRight
+              text: opacityRow.modelData
+            }
+
+            Repeater {
+              model: plugin.opacitySteps
+
+              delegate: Button {
+                id: stepButton
+                required property var modelData
+                readonly property bool current:
+                    Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
+                             - modelData) < 0.01
+                flat: true
+                topPadding: 4
+                bottomPadding: 4
+                leftPadding: 10
+                rightPadding: 10
+                text: modelData === 0 ? qsTr('Off')
+                                      : Math.round(modelData * 100)
+                font.bold: current
+                background: Rectangle {
+                  color: 'transparent'
+                  border.color: stepButton.current
+                      ? Theme.mainColor : Theme.secondaryTextColor
+                  border.width: stepButton.current ? 2 : 1
+                  radius: 2
+                }
+                onClicked: plugin.applyLayerOpacity(
+                               opacityRow.modelData, modelData, false)
+              }
+            }
+          }
+        }
+      }
+
+      ColumnLayout {
+        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignTop
+        visible: opacityDialog.vectorNames.length > 0
+        spacing: 8
+
+        Label {
+          Layout.fillWidth: true
+          elide: Text.ElideRight
+          text: qsTr('Vectors')
+          font.bold: true
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+          visible: opacityDialog.vectorNames.length > 1
+          spacing: 4
+
+          Label {
+            Layout.fillWidth: true
+            elide: Text.ElideRight
+            text: qsTr('All vectors')
+          }
+
+          Repeater {
+            model: plugin.opacitySteps
+
+            delegate: Button {
+              required property var modelData
+              flat: true
+              topPadding: 4
+              bottomPadding: 4
+              leftPadding: 10
+              rightPadding: 10
+              text: modelData === 0 ? qsTr('Off')
+                                    : Math.round(modelData * 100)
+              background: Rectangle {
+                color: 'transparent'
+                border.color: Theme.secondaryTextColor
+                border.width: 1
+                radius: 2
+              }
+              onClicked: plugin.applyOpacityToNames(
+                             opacityDialog.vectorNames, modelData, false)
+            }
+          }
+        }
+
+        Repeater {
+          model: opacityDialog.vectorNames
+
+          delegate: RowLayout {
+            id: vectorOpacityRow
+            required property var modelData
+            Layout.fillWidth: true
+            spacing: 4
+
+            Label {
+              Layout.fillWidth: true
+              elide: Text.ElideRight
+              text: vectorOpacityRow.modelData
+            }
+
+            Repeater {
+              model: plugin.opacitySteps
+
+              delegate: Button {
+                id: vectorStepButton
+                required property var modelData
+                readonly property bool current:
+                    Math.abs(plugin.layerOpacityValue(
+                                 vectorOpacityRow.modelData)
+                             - modelData) < 0.01
+                flat: true
+                topPadding: 4
+                bottomPadding: 4
+                leftPadding: 10
+                rightPadding: 10
+                text: modelData === 0 ? qsTr('Off')
+                                      : Math.round(modelData * 100)
+                font.bold: current
+                background: Rectangle {
+                  color: 'transparent'
+                  border.color: vectorStepButton.current
+                      ? Theme.mainColor : Theme.secondaryTextColor
+                  border.width: vectorStepButton.current ? 2 : 1
+                  radius: 2
+                }
+                onClicked: plugin.applyLayerOpacity(
+                               vectorOpacityRow.modelData, modelData, false)
+              }
             }
           }
         }
@@ -1614,11 +1740,21 @@ Item {
   property var opacityUnsupported: ({})  // layer name -> true (row hidden)
   property bool opacitySupported: true   // false once EVERY layer refuses
   property int resolvedImageryCount: 0
+  property int resolvedVectorCount: 0
   property string opacityLabel: 'Opacity'
 
   function resolvedImageryNames() {
     let names = []
     for (const name of opacityLayers) {
+      if (layerByName(name) !== null && !opacityUnsupported[name])
+        names.push(name)
+    }
+    return names
+  }
+
+  function resolvedVectorNames() {
+    let names = []
+    for (const name of vectorOpacityLayers) {
       if (layerByName(name) !== null && !opacityUnsupported[name])
         names.push(name)
     }
@@ -1652,7 +1788,8 @@ Item {
       unsupported[name] = true
       opacityUnsupported = unsupported
       resolvedImageryCount = resolvedImageryNames().length
-      if (resolvedImageryCount === 0)
+      resolvedVectorCount = resolvedVectorNames().length
+      if (resolvedImageryCount + resolvedVectorCount === 0)
         opacitySupported = false
       if (!quiet)
         toast(qsTr('%1: opacity not supported').arg(name))
@@ -1672,21 +1809,22 @@ Item {
     return true
   }
 
-  function applyAllOpacity(value, quiet) {
+  // Group control for one dialog column (or any name list).
+  function applyOpacityToNames(names, value, quiet) {
     let applied = 0
-    for (const name of resolvedImageryNames()) {
+    for (const name of names) {
       if (applyLayerOpacity(name, value, true))
         applied++
     }
     if (!quiet && applied > 0)
-      toast(value === 0 ? qsTr('Imagery hidden')
-                        : qsTr('Imagery %1%').arg(Math.round(value * 100)))
+      toast(value === 0 ? qsTr('Layers hidden')
+                        : qsTr('Layers %1%').arg(Math.round(value * 100)))
   }
 
   function refreshOpacityLabel() {
-    // "Opacity 50" when every raster sits on one value, bare "Opacity"
-    // when they differ.
-    const names = resolvedImageryNames()
+    // "Opacity 50" when every controlled layer (raster and vector) sits
+    // on one value, bare "Opacity" when they differ.
+    const names = resolvedImageryNames().concat(resolvedVectorNames())
     let shared
     for (const name of names) {
       const value = layerOpacityValue(name)
@@ -1707,6 +1845,7 @@ Item {
 
   function restoreOpacityFromProject() {
     resolvedImageryCount = resolvedImageryNames().length
+    resolvedVectorCount = resolvedVectorNames().length
     const raw = projVar('lgs_opacity', '')
     if (raw === '') {
       refreshOpacityLabel()
@@ -1714,15 +1853,18 @@ Item {
     }
     const legacy = Number(raw)
     if (!isNaN(legacy)) {
-      // Pre-per-layer exports stored one shared number.
+      // Pre-per-layer exports stored one shared number — for rasters
+      // only (the variable predates vector support; a stale value must
+      // not suddenly dim the vector layers).
       if (legacy >= 0 && legacy < 1)
-        applyAllOpacity(legacy, true)
+        applyOpacityToNames(resolvedImageryNames(), legacy, true)
       refreshOpacityLabel()
       return
     }
     try {
       const values = JSON.parse(raw)
-      for (const name of resolvedImageryNames()) {
+      for (const name of
+           resolvedImageryNames().concat(resolvedVectorNames())) {
         const value = Number(values[name])
         if (!isNaN(value) && value >= 0 && value < 1)
           applyLayerOpacity(name, value, true)

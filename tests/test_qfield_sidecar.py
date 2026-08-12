@@ -65,7 +65,9 @@ class TestWriteSidecar(unittest.TestCase):
                           'spline': 'true'})
         # Data lines ship empty in source; the exporter fills them.
         self.assertEqual(_data_values(source),
-                         {'opacitylayers': '[]', 'splineparams': '[]'})
+                         {'opacitylayers': '[]',
+                          'vectoropacitylayers': '[]',
+                          'splineparams': '[]'})
 
     def test_all_flag_combinations(self):
         names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline')
@@ -94,11 +96,14 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_opacity_layers_data_line(self):
         names = ['Ortho 2024', 'Say "hi"']
-        _path, text = self._write(opacity_layers=names)
+        vectors = ['2 - Overlay', 'Pit "A" walls']
+        _path, text = self._write(opacity_layers=names, vector_layers=vectors)
         data = _data_values(text)
         self.assertEqual(data['opacitylayers'], json.dumps(names))
-        # Round-trips through JSON despite the embedded quote.
+        self.assertEqual(data['vectoropacitylayers'], json.dumps(vectors))
+        # Round-trips through JSON despite the embedded quotes.
         self.assertEqual(json.loads(data['opacitylayers']), names)
+        self.assertEqual(json.loads(data['vectoropacitylayers']), vectors)
 
     def test_spline_params_data_line(self):
         _path, text = self._write(spline_params=[0.5, 0.1, 200])
@@ -138,8 +143,10 @@ class TestWriteSidecar(unittest.TestCase):
                        # Adjacent-levels, opacity toggle and level stepping:
                        'lgs_z_adjacent', 'clauseForTargetMulti',
                        'lgs_opacity', 'opacityLayers', 'stepLevel',
-                       # Per-layer opacity panel (v6):
+                       # Per-layer opacity panel (v6) + vector column:
                        'opacityDialog', 'applyLayerOpacity',
+                       'vectorOpacityLayers', 'resolvedVectorNames',
+                       'applyOpacityToNames',
                        # Clip Isolated tool (v7):
                        'featureClipping', 'clipPill', 'executeClip',
                        'buildCutterUnionWkt', 'splitMultiPolygonWkt',

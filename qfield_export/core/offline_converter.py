@@ -88,7 +88,8 @@ class OfflineConverter(QObject):
         self.include_opacity_plugin = include_opacity_plugin
         self.include_clipping_plugin = include_clipping_plugin
         self.include_spline_plugin = include_spline_plugin
-        self._raster_layer_names = []  # names the opacity toggle acts on
+        self._raster_layer_names = []  # names the opacity panel acts on
+        self._vector_layer_names = []  # spatial vectors for the same panel
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
         self.converted_layers = []  # Track rasters converted from unsupported formats
@@ -199,6 +200,7 @@ class OfflineConverter(QObject):
                         clipping=self.include_clipping_plugin,
                         spline=self.include_spline_plugin,
                         opacity_layers=self._raster_layer_names,
+                        vector_layers=self._vector_layer_names,
                         spline_params=self._read_spline_params())
                     features = ", ".join(
                         name for name, on in
@@ -387,6 +389,10 @@ class OfflineConverter(QObject):
                     # provider and land here, not in the raster branch —
                     # the imagery opacity toggle must still know about them.
                     self._raster_layer_names.append(layer.name())
+                elif isinstance(layer, QgsVectorLayer) and layer.isSpatial():
+                    # WFS/ArcGIS feature services join the opacity panel's
+                    # Vectors column the same way.
+                    self._vector_layer_names.append(layer.name())
                 return True
 
             if isinstance(layer, QgsVectorLayer):
@@ -420,6 +426,10 @@ class OfflineConverter(QObject):
                             'provider': 'ogr'
                         }
                         self.log_message.emit(f"  ✓ Converted to: {new_path.name}")
+                        if layer.isSpatial():
+                            # Spatial only: LGS lookup tables (MineralCodes
+                            # etc.) have no geometry and no opacity to set.
+                            self._vector_layer_names.append(layer.name())
                         return True
                     else:
                         self.log_message.emit(f"  ✗ Conversion failed")
@@ -447,6 +457,8 @@ class OfflineConverter(QObject):
                             'provider': layer.providerType()
                         }
                         self.log_message.emit(f"  ✓ Copied to: {new_path.name}")
+                        if layer.isSpatial():
+                            self._vector_layer_names.append(layer.name())
                         return True
                     else:
                         self.log_message.emit(f"  ✗ Copy failed - file not found or inaccessible")
