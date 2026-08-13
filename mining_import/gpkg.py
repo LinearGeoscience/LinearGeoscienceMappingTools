@@ -38,9 +38,10 @@ from qgis.core import (
 )
 
 try:
-    from . import merge, schema
+    from . import merge, scan, schema
 except ImportError:  # non-package execution inside QGIS
     import merge
+    import scan
     import schema
 
 # A GeoPackage whose layers are loaded in the current project is locked by
@@ -48,7 +49,9 @@ except ImportError:  # non-package execution inside QGIS
 # writes retry rather than surfacing "database is locked" to the user.
 _RETRY_DELAYS = (0.2, 0.5, 1.0, 2.0, 3.0)
 
-BACKUP_DIRNAME = 'lgs_import_backup'
+# Defined in scan.py so discovery can skip the backup folder without
+# importing this (qgis-dependent) module.
+BACKUP_DIRNAME = scan.BACKUP_DIRNAME
 BACKUP_KEEP = 3
 # Copying a multi-gigabyte GeoPackage before every import costs more than it
 # protects; above this the backup is skipped with a warning.

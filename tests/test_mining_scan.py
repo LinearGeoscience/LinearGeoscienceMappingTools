@@ -316,5 +316,103 @@ class TestRelink(unittest.TestCase):
         self.assertEqual(scan.relink_candidates(entries, log), {})
 
 
+def write_shp(path):
+    """A minimal file that satisfies sniff_shp: the 9994 magic number."""
+    import struct
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'wb') as fh:
+        fh.write(struct.pack('>i', 9994) + b'\x00' * 96)
+    return path
+
+
+class TestBackupFolderIsNeverScanned(unittest.TestCase):
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        write(os.path.join(self.base, 'mga_floor_1164.str'))
+        write(os.path.join(self.base, scan.BACKUP_DIRNAME, 'copy_1164.str'))
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_files_under_the_backup_dir_are_skipped(self):
+        entries = scan.discover(self.base)
+        self.assertEqual([e.key for e in entries], ['mga_floor_1164.str'])
+
+    def test_skip_is_case_insensitive(self):
+        os.rename(os.path.join(self.base, scan.BACKUP_DIRNAME),
+                  os.path.join(self.base, scan.BACKUP_DIRNAME.upper()))
+        entries = scan.discover(self.base)
+        self.assertEqual([e.key for e in entries], ['mga_floor_1164.str'])
+
+
+class TestFilterExcluded(unittest.TestCase):
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+        self.path = write(os.path.join(self.base, 'mga_floor_1164.str'))
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_excluded_path_is_dropped_case_insensitively(self):
+        entries = scan.discover(self.base)
+        kept = scan.filter_excluded(entries, [self.path.upper()])
+        self.assertEqual(kept, [])
+
+    def test_other_entries_survive(self):
+        entries = scan.discover(self.base)
+        kept = scan.filter_excluded(
+            entries, [os.path.join(self.base, 'other.gpkg'), None, ''])
+        self.assertEqual(len(kept), len(entries))
+
+    def test_empty_exclusion_returns_entries_unchanged(self):
+        entries = scan.discover(self.base)
+        self.assertEqual(scan.filter_excluded(entries, []), entries)
+
+
+class TestCompanionFingerprint(unittest.TestCase):
+    """A shapefile's attributes live in its .dbf, so change detection must
+    see sidecar edits; the .dtm beside a .str must NOT be folded in, or every
+    already-logged Surpac row would flip to Changed once for nothing."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def test_shapefile_size_folds_in_its_sidecars(self):
+        shp = write_shp(os.path.join(self.base, 'strings_1164.shp'))
+        dbf = write(os.path.join(self.base, 'strings_1164.dbf'), 'x' * 40)
+        entries = scan.discover(self.base)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry.fmt_key, 'shapefile')
+        self.assertIn('.dbf', entry.companions)
+        self.assertEqual(entry.size,
+                         os.path.getsize(shp) + os.path.getsize(dbf))
+
+    def test_dbf_edit_moves_the_fingerprint(self):
+        write_shp(os.path.join(self.base, 'strings_1164.shp'))
+        dbf = write(os.path.join(self.base, 'strings_1164.dbf'), 'x' * 40)
+        before = scan.discover(self.base)[0]
+        write(dbf, 'y' * 41)
+        future = os.path.getmtime(dbf) + 10
+        os.utime(dbf, (future, future))
+        after = scan.discover(self.base)[0]
+        self.assertNotEqual(before.size, after.size)
+        self.assertGreater(after.mtime_utc, before.mtime_utc)
+
+    def test_surpac_fingerprint_ignores_its_dtm(self):
+        path = write(os.path.join(self.base, 'mga_floor_1164.str'))
+        write(os.path.join(self.base, 'mga_floor_1164.dtm'),
+              'TRISOLATION, 1,')
+        entries = scan.discover(self.base)
+        entry = entries[0]
+        self.assertIn('.dtm', entry.companions)
+        self.assertEqual(entry.size, os.path.getsize(path))
+
+
 if __name__ == '__main__':
     unittest.main()

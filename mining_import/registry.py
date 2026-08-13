@@ -35,10 +35,17 @@ from collections import namedtuple
 #                  Zero for an extension only this format uses; above zero for
 #                  generic ones — '.txt' otherwise drags every readme and set
 #                  of notes in a survey folder into the import list.
+# fingerprint_companions
+#                  True when companion files carry data the source file does
+#                  not (a shapefile's .dbf holds every attribute), so change
+#                  detection must fold them into the size/mtime fingerprint.
+#                  Off for surpac: folding the .dtm in would flip every
+#                  already-logged .str to "Changed" once for no reason.
 FormatSpec = namedtuple(
     'FormatSpec',
     'key label module extensions companion_exts reader sniffer '
-    'needs_column_map binary min_confidence')
+    'needs_column_map binary min_confidence fingerprint_companions')
+FormatSpec.__new__.__defaults__ = (False,)
 
 FORMATS = (
     FormatSpec('surpac', 'Surpac string', 'surpac',
@@ -48,6 +55,17 @@ FORMATS = (
                True, False, 0.5),
     FormatSpec('dxf', 'AutoCAD DXF', 'dxf',
                ('.dxf',), (), 'read_file', 'sniff', False, False, 0.0),
+    FormatSpec('shapefile', 'ESRI Shapefile', 'ogrvector',
+               ('.shp',), ('.dbf', '.shx', '.prj', '.cpg', '.qmd'),
+               'read_file', 'sniff_shp', False, True, 0.0,
+               fingerprint_companions=True),
+    # min_confidence 0.2, NOT 0.0, on purpose: sniff_gpkg returns 0.0 for a
+    # GeoPackage that is this importer's own output (it contains the import
+    # log table), and scan._resolve_format claims a unique-extension format
+    # with a zero floor even when its sniffer scores 0. Lowering this floor
+    # to zero would silently re-ingest our own output GeoPackages.
+    FormatSpec('geopackage', 'GeoPackage', 'ogrvector',
+               ('.gpkg',), (), 'read_file', 'sniff_gpkg', False, True, 0.2),
 )
 
 # Formats landing in later stages, listed here so the dialog can say "not yet

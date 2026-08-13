@@ -115,6 +115,36 @@ class TestRegistryLazyLoading(unittest.TestCase):
         specs = self.registry.formats_for_extension('.dxf')
         self.assertEqual([s.key for s in specs], ['dxf'])
 
+    def test_shp_is_supported(self):
+        specs = self.registry.formats_for_extension('.shp')
+        self.assertEqual([s.key for s in specs], ['shapefile'])
+        reader = self.registry.reader_for(specs[0])
+        self.assertTrue(callable(reader))
+        sniffer = self.registry.sniffer_for(specs[0])
+        self.assertEqual(sniffer.__name__, 'sniff_shp')
+
+    def test_gpkg_is_supported(self):
+        specs = self.registry.formats_for_extension('.gpkg')
+        self.assertEqual([s.key for s in specs], ['geopackage'])
+        sniffer = self.registry.sniffer_for(specs[0])
+        self.assertEqual(sniffer.__name__, 'sniff_gpkg')
+
+    def test_gpkg_keeps_its_confidence_floor(self):
+        # sniff_gpkg vetoes this importer's own output by scoring it 0.0,
+        # which only works while the floor is above zero — at 0.0 the
+        # unique-extension fallback in scan._resolve_format would claim the
+        # file anyway.
+        self.assertGreater(self.registry.spec('geopackage').min_confidence, 0)
+
+    def test_shapefile_sidecars_are_companions_not_sources(self):
+        for ext in ('.dbf', '.shx', '.prj', '.cpg'):
+            self.assertIn(ext, self.registry.companion_extensions())
+            self.assertNotIn(ext, self.registry.source_extensions())
+
+    def test_only_shapefile_fingerprints_companions(self):
+        self.assertTrue(self.registry.spec('shapefile').fingerprint_companions)
+        self.assertFalse(self.registry.spec('surpac').fingerprint_companions)
+
 
 if __name__ == '__main__':
     unittest.main()

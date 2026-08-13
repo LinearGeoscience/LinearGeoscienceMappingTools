@@ -56,6 +56,9 @@ def scan_sources(folder=None, paths=None, gpkg_path=None, deep=False,
     else:
         root = scan.normalise_root(folder)
         entries = scan.discover(root)
+    # The output GeoPackage often lives inside the scanned folder; it must
+    # never be offered back as a source of itself.
+    entries = scan.filter_excluded(entries, [gpkg_path] if gpkg_path else [])
 
     progress(45, 'Reading import history…')
     log = gpkg.read_log(gpkg_path) if gpkg_path else {}

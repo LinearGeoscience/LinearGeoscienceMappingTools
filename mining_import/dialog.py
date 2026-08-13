@@ -493,7 +493,7 @@ class MiningImportDialog(QDialog):
             options.pop('kind', None)
             options.pop('group_strings', None)
             return options
-        if entry.fmt_key == 'surpac':
+        if entry.fmt_key in ('surpac', 'shapefile', 'geopackage'):
             options['kind'] = kind
         else:
             options['group_strings'] = (kind == _KIND_STRINGS)

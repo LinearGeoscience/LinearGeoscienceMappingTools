@@ -67,8 +67,16 @@ Entry.__new__.__defaults__ = (None, STATUS_NEW, '', {})
 
 # When one export ships in several formats, this is the order we trust. The
 # .str keeps ISO timestamps and full-precision bearings that Excel strips on
-# the way to .csv, so it is the better source of the same points.
-FORMAT_PREFERENCE = ('surpac', 'delimited')
+# the way to .csv, so it is the better source of the same points. GIS-native
+# formats sit between: full geometry and attributes, but usually themselves
+# re-exports of a .str.
+FORMAT_PREFERENCE = ('surpac', 'geopackage', 'shapefile', 'delimited')
+
+# Folder the import engine writes its pre-import GeoPackage copies into
+# (gpkg.py references this constant). Defined here so discovery — which must
+# stay qgis-free — can skip it: with .gpkg an importable format, a walk that
+# descended into the backups would offer the importer its own output back.
+BACKUP_DIRNAME = 'lgs_import_backup'
 
 
 def parse_level_from_filename(filename):
@@ -168,6 +176,48 @@ def content_hash(path, size=None):
     return digest.hexdigest()
 
 
+def _fingerprint_with_companions(path, fmt_key, companions):
+    """(size, mtime_utc) for an entry, folding companions in where the
+    format asks for it.
+
+    A shapefile's attributes live entirely in its .dbf: an edit that touches
+    no geometry changes only the sidecar, and a fingerprint of the .shp alone
+    would scan it as Unchanged forever. Formats opt in via
+    FormatSpec.fingerprint_companions — folding the .dtm into every .str
+    would instead flip all previously-logged Surpac rows to Changed once,
+    for nothing.
+    """
+    size, mtime, _ = file_fingerprint(path)
+    try:
+        fmt = registry.spec(fmt_key)
+    except registry.UnknownFormat:
+        return size, mtime
+    if not fmt.fingerprint_companions:
+        return size, mtime
+    for comp_path in (companions or {}).values():
+        try:
+            stat = os.stat(comp_path)
+        except OSError:
+            continue
+        size += stat.st_size
+        comp_mtime = _iso(stat.st_mtime)
+        if comp_mtime > mtime:  # same ISO format: lexical order is time order
+            mtime = comp_mtime
+    return size, mtime
+
+
+def filter_excluded(entries, exclude_paths):
+    """Drop entries whose path is one of exclude_paths (the import target:
+    with .gpkg importable, the output GeoPackage in the scanned folder would
+    otherwise list itself as a source)."""
+    excluded = {os.path.normcase(os.path.normpath(os.path.abspath(p)))
+                for p in exclude_paths if p}
+    if not excluded:
+        return entries
+    return [e for e in entries
+            if os.path.normcase(os.path.normpath(e.path)) not in excluded]
+
+
 def hashes_comparable(a, b):
     """False when one hash is partial and the other is full over the same file."""
     if not a or not b:
@@ -221,7 +271,8 @@ def discover(folder, sniff=True):
     root = normalise_root(folder)
     entries = []
     companion_exts = registry.companion_extensions()
-    for dirpath, _dirs, files in os.walk(root):
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d.lower() != BACKUP_DIRNAME]
         by_lower = {f.lower(): f for f in files}
         for fname in files:
             ext = os.path.splitext(fname)[1].lower()
@@ -238,7 +289,8 @@ def discover(folder, sniff=True):
                 match = by_lower.get(stem.lower() + comp_ext)
                 if match:
                     companions[comp_ext] = os.path.join(dirpath, match)
-            size, mtime, _ = file_fingerprint(path)
+            size, mtime = _fingerprint_with_companions(
+                path, fmt_key, companions)
             entries.append(Entry(
                 path=path,
                 key=source_key(path, root),
@@ -278,7 +330,7 @@ def discover_paths(paths, sniff=True):
                 if os.path.isfile(cased):
                     companions[comp_ext] = cased
                     break
-        size, mtime, _ = file_fingerprint(path)
+        size, mtime = _fingerprint_with_companions(path, fmt_key, companions)
         entries.append(Entry(
             path=path,
             key=source_key(path, root),
