@@ -22,10 +22,10 @@ from qgis.core import (
 
 try:
     from . import schema
-    from .ir import polyline_length_3d, z_range
+    from .ir import polyline_length_3d, split_by_z_span, z_range
 except ImportError:  # non-package execution inside QGIS
     import schema
-    from ir import polyline_length_3d, z_range
+    from ir import polyline_length_3d, split_by_z_span, z_range
 
 
 def _column_names(layer_name):
@@ -78,7 +78,13 @@ def _z_or_zero(point):
 
 
 def build_polylines(parsed, provenance, fields):
-    """LineStringZ features, one per polyline with at least 2 points.
+    """LineStringZ features, one per Z-section of each usable polyline.
+
+    An undulating string is split into sections whose local Z span stays
+    within ir.Z_SECTION_SPAN, each written with its own Z_Min/Z_Max, so the
+    Z Filter shows only the parts of a string genuinely at the filtered
+    elevation. Levels that are inclined overlap in whole-string Z range, so
+    without the split no window can show one level without its neighbour.
 
     Returns (features, degenerate) where degenerate counts polylines that
     could not form a line. With the Surpac reader routing single points to
@@ -92,19 +98,29 @@ def build_polylines(parsed, provenance, fields):
         if len(points) < 2:
             degenerate += 1
             continue
-        zmin, zmax = z_range(points)
-        geom = QgsGeometry(QgsLineString(
-            [QgsPoint(p[0], p[1], _z_or_zero(p)) for p in points]))
-        attrs = _base_attrs(schema.STRINGS_LAYER, poly.attrs, provenance)
-        # Z_Min/Z_Max stay NULL when no point carried an elevation, so the Z
-        # Filter's range clause never matches instead of pinning the feature
-        # to sea level.
-        attrs['Z_Min'] = zmin
-        attrs['Z_Max'] = zmax
-        attrs.setdefault('PointCount', len(points))
-        attrs['Closed'] = bool(poly.closed)
-        attrs['Length3D'] = polyline_length_3d(points)
-        features.append(make_feature(fields, geom, attrs))
+        sections = split_by_z_span(points)
+        for index, section in enumerate(sections):
+            zmin, zmax = z_range(section)
+            geom = QgsGeometry(QgsLineString(
+                [QgsPoint(p[0], p[1], _z_or_zero(p)) for p in section]))
+            attrs = _base_attrs(schema.STRINGS_LAYER, poly.attrs, provenance)
+            # Z_Min/Z_Max stay NULL when no point carried an elevation, so
+            # the Z Filter's range clause never matches instead of pinning
+            # the feature to sea level.
+            attrs['Z_Min'] = zmin
+            attrs['Z_Max'] = zmax
+            attrs['SectionIndex'] = index
+            attrs['SectionCount'] = len(sections)
+            # Assignment, not setdefault: the Surpac reader samples the
+            # parent record's point count into attrs, which must not stick
+            # to every section.
+            attrs['PointCount'] = len(section)
+            # A section of a split ring is an open piece of line; plan
+            # closure only survives on an unsplit string.
+            attrs['Closed'] = bool(poly.closed) if len(sections) == 1 \
+                else False
+            attrs['Length3D'] = polyline_length_3d(section)
+            features.append(make_feature(fields, geom, attrs))
     return features, degenerate
 
 

@@ -66,14 +66,19 @@ HEADER = ('name,01-May-26,purpose,\n'
 
 
 def str_file(path, strings, station=None):
-    """Write a .str with the given strings ([(string_no, npoints)])."""
+    """Write a .str with the given strings ([(string_no, npoints)]).
+
+    Z rises only 0.1 per point so every fixture string stays within
+    ir.Z_SECTION_SPAN and imports as exactly one feature -- the sectioning
+    behaviour has its own dedicated fixtures.
+    """
     lines = [HEADER]
     for string_no, count in strings:
         for i in range(count):
             lines.append('{0}, {1:.3f}, {2:.3f}, {3:.3f}, {4}, '
                          '26.04.26 10:33:48, Darby Lindsay\n'.format(
                              string_no, 6581000.0 + i, 398000.0 + string_no,
-                             160.0 + i, 100 + i))
+                             160.0 + i * 0.1, 100 + i))
         lines.append('0, 0.000, 0.000, 0.000,\n')
     if station is not None:
         lines.append('{0}, 6581500.000, 398500.000, 170.000, {1}, '
@@ -321,6 +326,99 @@ def main():
                               'x', 'ogr')
         check(post.isValid() and post.fields().lookupField('Domain') >= 0,
               'older GeoPackage was upgraded in place, not rejected')
+
+        # -- Z sectioning --------------------------------------------------
+        section('Inclined strings split into Z sections')
+        from mining_import.ir import Z_SECTION_SPAN
+        incline_dir = os.path.join(work, 'incline')
+        os.makedirs(incline_dir)
+        incline_path = os.path.join(incline_dir, 'mga_ramp_1200.str')
+        # One string climbing 1 m per point over 13 points (12 m span) and
+        # one genuinely flat string that must not split.
+        lines = [HEADER]
+        for i in range(13):
+            lines.append('50, {0:.3f}, {1:.3f}, {2:.3f}, ,\n'.format(
+                6581000.0 + i, 398050.0, 200.0 + i))
+        lines.append('0, 0.000, 0.000, 0.000,\n')
+        for i in range(4):
+            lines.append('51, {0:.3f}, {1:.3f}, {2:.3f}, ,\n'.format(
+                6581000.0 + i, 398060.0, 250.0))
+        lines.append('0, 0.000, 0.000, 0.000,\n')
+        lines.append('0, 0.000, 0.000, 0.000, END\n')
+        with open(incline_path, 'w') as fh:
+            fh.writelines(lines)
+        incline_gpkg = os.path.join(work, 'incline.gpkg')
+        run_import(incline_gpkg, incline_dir)
+
+        inc_layer = QgsVectorLayer(
+            gpkg.layer_uri(incline_gpkg, schema.STRINGS_LAYER), 'x', 'ogr')
+        sections50 = sorted(
+            (f for f in inc_layer.getFeatures() if f['StringNo'] == 50),
+            key=lambda f: f['SectionIndex'])
+        flat51 = [f for f in inc_layer.getFeatures() if f['StringNo'] == 51]
+        check(len(sections50) > 1, 'inclined string split into sections')
+        check([f['SectionIndex'] for f in sections50] ==
+              list(range(len(sections50))),
+              'SectionIndex runs 0..N-1 along the line')
+        check(all(f['SectionCount'] == len(sections50) for f in sections50),
+              'SectionCount stamped on every section')
+        check(all(f['Z_Max'] - f['Z_Min'] <= Z_SECTION_SPAN + 1e-9
+                  for f in sections50),
+              'every section spans at most Z_SECTION_SPAN')
+        check(sum(f['PointCount'] for f in sections50) ==
+              13 + len(sections50) - 1,
+              'PointCount per section; boundary vertices shared')
+        check(abs(sum(f['Length3D'] for f in sections50) -
+                  (12 * (1 + 1) ** 0.5)) < 1e-6,
+              'section lengths sum to the parent length')
+        check(all(not f['Closed'] for f in sections50),
+              'sections of a split string are open pieces')
+        # Adjacent sections must share their boundary vertex.
+        tiled = True
+        for a, b in zip(sections50, sections50[1:]):
+            end = a.geometry().constGet().endPoint()
+            start = b.geometry().constGet().startPoint()
+            if (abs(end.x() - start.x()) > 1e-9 or
+                    abs(end.y() - start.y()) > 1e-9 or
+                    abs(end.z() - start.z()) > 1e-9):
+                tiled = False
+        check(tiled, 'sections tile with shared endpoints, no gaps')
+        check(len(flat51) == 1 and flat51[0]['SectionIndex'] == 0 and
+              flat51[0]['SectionCount'] == 1,
+              'flat string stays one feature, 0 of 1')
+
+        # A tight window at the bottom of the incline must not show the top.
+        from z_filter import expression as zexpr
+        low_clause = zexpr.z_range_clause(200.5, 1.0, show_null=False)
+        low = [f['SectionIndex'] for f in sections50]
+        shown = count(incline_gpkg, schema.STRINGS_LAYER,
+                      low_clause + ' AND "StringNo" = 50')
+        check(0 < shown < len(sections50),
+              'tight low window shows only the bottom sections '
+              '({0} of {1})'.format(shown, len(sections50)))
+
+        # -- v3 -> v4 healing ---------------------------------------------
+        section('Re-import heals a v3 whole-string import')
+        con = sqlite3.connect(incline_gpkg)
+        con.execute('UPDATE {0} SET schema_version = 3'.format(
+            schema.LOG_TABLE))
+        con.commit()
+        con.close()
+        log = gpkg.read_log(incline_gpkg)
+        healed = scan.classify(entries_for(incline_dir), log,
+                               current_version=schema.SCHEMA_VERSION)
+        check(all(r.status == scan.STATUS_CHANGED for r in healed),
+              'v3-stamped sources scan as Changed under v4')
+        before_heal = count(incline_gpkg, schema.STRINGS_LAYER)
+        run_import(incline_gpkg, incline_dir)
+        check(count(incline_gpkg, schema.STRINGS_LAYER) == before_heal,
+              'healing re-import replaces rather than duplicates')
+        con = sqlite3.connect(incline_gpkg)
+        stamped = [r[0] for r in con.execute(
+            'SELECT schema_version FROM {0}'.format(schema.LOG_TABLE))]
+        con.close()
+        check(all(v == schema.SCHEMA_VERSION for v in stamped),
+              'log rows re-stamped with the current schema version')
 
         # -- Z filter interop ---------------------------------------------
         section('Z Filter interop')

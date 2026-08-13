@@ -74,6 +74,53 @@ def z_range(points):
     return (min(zs), max(zs))
 
 
+# Maximum elevation span of one written string feature. Equal to the Z
+# Filter's FLAT_SPAN on purpose: every emitted section is "flat" to the
+# filter, so an inclined level shows only where it genuinely passes through
+# the window instead of everywhere its whole-string range touches. Mines with
+# inclined levels overlap in global Z range (Majestic's 1200 tops out above
+# where 1218 bottoms out), so whole-string ranges cannot be filtered apart.
+Z_SECTION_SPAN = 2.0
+
+
+def split_by_z_span(points, max_span=Z_SECTION_SPAN):
+    """Split a vertex run into sections whose local Z span stays <= max_span.
+
+    Adjacent sections share their boundary vertex, so the pieces reassemble
+    into the original line with no gaps and no invented vertices — a section
+    boundary is always an existing survey point, never an interpolation.
+
+    Flat strings (span <= max_span, strictly), strings with no usable Z and
+    2-point strings come back as [points] untouched. A single segment that
+    alone drops more than max_span is left intact rather than interpolated,
+    so a section can exceed the cap only when one leg does. None-Z vertices
+    never move the running range and never trigger a split.
+    """
+    lo, hi = z_range(points)
+    if lo is None or (hi - lo) <= max_span or len(points) < 3:
+        return [points]
+    sections = []
+    current = [points[0]]
+    z0 = points[0][2] if len(points[0]) > 2 else None
+    cur_lo = cur_hi = z0
+    for p in points[1:]:
+        z = p[2] if len(p) > 2 else None
+        if z is not None and cur_lo is not None:
+            if (max(cur_hi, z) - min(cur_lo, z)) > max_span \
+                    and len(current) >= 2:
+                sections.append(current)
+                boundary = current[-1]
+                current = [boundary]
+                bz = boundary[2] if len(boundary) > 2 else None
+                cur_lo = cur_hi = bz
+        current.append(p)
+        if z is not None:
+            cur_lo = z if cur_lo is None else min(cur_lo, z)
+            cur_hi = z if cur_hi is None else max(cur_hi, z)
+    sections.append(current)
+    return sections
+
+
 def merge_attrs(*dicts):
     """Shallow-merge attr dicts, later wins, skipping None values.
 

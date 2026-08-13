@@ -216,6 +216,18 @@ class TestClassify(unittest.TestCase):
         result = scan.classify([entry], log, current_version=3)
         self.assertEqual(result[0].status, scan.STATUS_UNCHANGED)
 
+    def test_v3_import_reimports_under_v4_section_split(self):
+        # v4 splits strings into Z sections; a v3 import holds whole-string
+        # ranges that can never filter inclined levels apart, so it must
+        # scan as Changed even though the source bytes are identical.
+        entry = self._entry()
+        log = {'a.str': {'file_size': entry.size,
+                         'file_mtime_utc': entry.mtime_utc,
+                         'schema_version': 3}}
+        result = scan.classify([entry], log, current_version=4)
+        self.assertEqual(result[0].status, scan.STATUS_CHANGED)
+        self.assertIn('older version', result[0].note)
+
     def test_missing_revision_in_an_old_log_counts_as_older(self):
         entry = self._entry()
         log = {'a.str': {'file_size': entry.size,

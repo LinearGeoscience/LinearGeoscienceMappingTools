@@ -33,7 +33,11 @@ LOG_TABLE = 'lgs_mining_import_log'
 #   3 — no schema change: forces one re-import of sources written before the
 #       station-routing fix (station files imported as level-spanning
 #       polylines) and the .dtm separator-index fix (inflated outlines).
-SCHEMA_VERSION = 3
+#   4 — SectionIndex/SectionCount on MineStrings: strings are split into
+#       sections of <= 2 m local Z span so inclined levels filter apart.
+#       Forces one re-import so whole-string ranges written by v3 and
+#       earlier are replaced with sections.
+SCHEMA_VERSION = 4
 
 _TEXT = QMetaType.Type.QString
 _DOUBLE = QMetaType.Type.Double
@@ -69,6 +73,11 @@ _STRING_FIELDS = _COMMON + (
     ('Closed', _BOOL),
     ('PointCount', _INT),
     ('Length3D', _DOUBLE),
+    # A parent string is (SourceKey, StringNo) split into SectionCount
+    # sections of <= ir.Z_SECTION_SPAN local Z span; SectionIndex orders
+    # them along the line. An unsplit string is 0 of 1.
+    ('SectionIndex', _INT),
+    ('SectionCount', _INT),
 )
 
 _STATION_FIELDS = _COMMON + (

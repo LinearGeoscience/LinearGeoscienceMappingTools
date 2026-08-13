@@ -97,6 +97,81 @@ class TestIsClosed(unittest.TestCase):
         self.assertFalse(ir.is_closed([(0, 0, 0), (0, 0, 0)]))
 
 
+class TestSplitByZSpan(unittest.TestCase):
+
+    def test_flat_string_unchanged(self):
+        points = [(0, 0, 100.0), (1, 0, 100.5), (2, 0, 101.0)]
+        self.assertEqual(ir.split_by_z_span(points), [points])
+
+    def test_span_exactly_at_cap_stays_whole(self):
+        # Strictly greater-than: a 2.0 span is still one flat feature.
+        points = [(0, 0, 100.0), (1, 0, 101.0), (2, 0, 102.0)]
+        self.assertEqual(ir.split_by_z_span(points), [points])
+
+    def test_all_none_z_unchanged(self):
+        points = [(0, 0, None), (1, 0, None), (2, 0, None)]
+        self.assertEqual(ir.split_by_z_span(points), [points])
+
+    def test_two_point_steep_string_unchanged(self):
+        points = [(0, 0, 100.0), (1, 0, 110.0)]
+        self.assertEqual(ir.split_by_z_span(points), [points])
+
+    def test_inclined_string_splits_with_shared_boundaries(self):
+        points = [(i, 0, 100.0 + i) for i in range(7)]  # 6 m rise
+        sections = ir.split_by_z_span(points)
+        self.assertGreater(len(sections), 1)
+        for a, b in zip(sections, sections[1:]):
+            self.assertEqual(a[-1], b[0])
+        # Reassembling (dropping each repeated boundary vertex) restores the
+        # original vertex sequence exactly -- no gaps, no invented points.
+        rebuilt = list(sections[0])
+        for sec in sections[1:]:
+            rebuilt.extend(sec[1:])
+        self.assertEqual(rebuilt, points)
+
+    def test_sections_respect_span_and_size(self):
+        points = [(i, 0, 100.0 + i * 0.7) for i in range(40)]
+        sections = ir.split_by_z_span(points)
+        for sec in sections:
+            self.assertGreaterEqual(len(sec), 2)
+            lo, hi = ir.z_range(sec)
+            self.assertLessEqual(hi - lo, ir.Z_SECTION_SPAN + 1e-9)
+
+    def test_single_steep_segment_left_intact(self):
+        # One leg drops 5 m on its own: kept as a section rather than
+        # interpolated, so its span may exceed the cap.
+        points = [(0, 0, 100.0), (1, 0, 100.5), (2, 0, 105.5),
+                  (3, 0, 106.0)]
+        sections = ir.split_by_z_span(points)
+        for sec in sections:
+            self.assertGreaterEqual(len(sec), 2)
+        rebuilt = list(sections[0])
+        for sec in sections[1:]:
+            rebuilt.extend(sec[1:])
+        self.assertEqual(rebuilt, points)
+
+    def test_none_z_vertices_never_trigger_a_split(self):
+        points = [(0, 0, 100.0), (1, 0, None), (2, 0, 101.0),
+                  (3, 0, None), (4, 0, 102.5), (5, 0, 103.5)]
+        sections = ir.split_by_z_span(points)
+        rebuilt = list(sections[0])
+        for sec in sections[1:]:
+            rebuilt.extend(sec[1:])
+        self.assertEqual(rebuilt, points)
+        for sec in sections:
+            self.assertGreaterEqual(len(sec), 2)
+
+    def test_closed_inclined_ring_reassembles(self):
+        points = [(0, 0, 100.0), (10, 0, 103.0), (10, 10, 106.0),
+                  (0, 10, 103.0), (0, 0, 100.0)]
+        sections = ir.split_by_z_span(points)
+        self.assertGreater(len(sections), 1)
+        rebuilt = list(sections[0])
+        for sec in sections[1:]:
+            rebuilt.extend(sec[1:])
+        self.assertEqual(rebuilt, points)
+
+
 class TestLength3D(unittest.TestCase):
 
     def test_simple_run(self):
