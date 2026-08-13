@@ -272,6 +272,7 @@ class LinearGeosciencePluginMain:
         self.reproject_dialog = None
         self.recode_wizard = None
         self.reconcile_dialog = None
+        self.mining_import_dialog = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -408,7 +409,8 @@ class LinearGeosciencePluginMain:
                 ('layout_panel', '_layout_panel', True),
                 ('reproject_dialog', '_reproject_dialog', False),
                 ('recode_wizard', '_recode_wizard', False),
-                ('reconcile_dialog', '_reconcile_dialog', False)):
+                ('reconcile_dialog', '_reconcile_dialog', False),
+                ('mining_import_dialog', '_mining_import_dialog', False)):
             for holder, attr in ((self, own_attr),
                                  (self.iface, iface_attr)):
                 widget = getattr(holder, attr, None)
@@ -814,6 +816,9 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Append Mapping Data", None,
                         feature_info.INFO_APPEND_DATA, self.run_appenddata)
         grp.addSeparator()
+        grp.addFeature("Import Mining Survey Data", None,
+                        feature_info.INFO_MINING_IMPORT, self.run_mining_import)
+        grp.addSeparator()
         grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
         lay.addWidget(grp)
@@ -1004,6 +1009,10 @@ class LinearGeosciencePluginMain:
             return
         from .script_adddata import run_gpkg_append_tool_dialog
         run_gpkg_append_tool_dialog(self.iface)
+
+    def run_mining_import(self):
+        from .mining_import import run
+        run(self.iface, owner=self)
 
     def run_reconcile(self):
         if not self._confirm_z_filter_off("Reconcile / Merge"):

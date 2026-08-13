@@ -322,6 +322,35 @@ INFO_APPEND_DATA = """
 <p><b>Use Cases:</b> Ideal for merging field mapping data from multiple sources, standardizing geological codes, harmonizing attribute values, and managing complex data integration workflows with different naming conventions and value systems.</p>
 """
 
+
+INFO_MINING_IMPORT = """
+<h1>Import Mining Survey Data</h1>
+<p>Imports mine survey and design data — floor strings, drive pickups, survey stations and level triangulations — and merges it all into a single GeoPackage the <b>Z Filter</b> panel can drive. Built to be re-run: as each new survey drop arrives, it imports only what actually changed.</p>
+<h2>How to Use:</h2>
+<ol>
+   <li>Click <b>'Import Mining Survey Data'</b>, then <b>'Add folder…'</b> to scan a folder of survey files (subfolders included), or <b>'Add files…'</b> to pick individual ones.</li>
+   <li>Choose the output GeoPackage. Every discovered file is compared against what that GeoPackage already holds and tagged <b>New</b>, <b>Changed</b> or <b>Unchanged</b> — only new and changed files come pre-checked, so re-importing after a survey drop is a single click.</li>
+   <li>The <b>Level</b> is read from the trailing digits of the filename (e.g. <i>mga_floor_1164.str</i> &rarr; 1164) and can be edited in the table.</li>
+   <li>Confirm the CRS of the files (survey exports do not record one) and click <b>'Import'</b>.</li>
+</ol>
+<h2>What You Get:</h2>
+<ul>
+   <li><b>MineStrings</b> — linework with true 3D geometry, tagged with Level, string number, Z range, source file, surveyor and survey date.</li>
+   <li><b>MineStations</b> — survey stations, pegs and pickups, each carrying <i>its own</i> point id, code, instrument and survey date rather than the string's.</li>
+   <li><b>MineLevelOutlines</b> — where a file has a matching triangulation (<b>.dtm</b>) alongside it, the triangles are dissolved into a footprint polygon per level, which works well as a backdrop or clip shape.</li>
+</ul>
+<h2>Re-importing and Merging:</h2>
+<p>The default policy is <b>replace each file's previous data</b>: re-importing a file removes exactly what that file contributed last time and writes it fresh, leaving every other file's data untouched. Strings that were deleted or renamed between surveys disappear correctly, and re-running an import never duplicates anything.</p>
+<p>Other policies are available for particular situations — replace a whole level (when one level is assembled from several files that are always imported together), append only, or rebuild the layer from scratch.</p>
+<h2>Good to Know:</h2>
+<ul>
+   <li><b>Z Filter ready:</b> the imported layers are picked up automatically; the <b>Level</b> field becomes the level label, while filtering uses the real elevations — so the nominal level name (e.g. 1164) need not match the actual Z values.</li>
+   <li><b>Safe to interrupt:</b> new features are written <i>before</i> anything is removed, so a failure part-way can never leave you with the old data deleted and the new data missing. A backup of the GeoPackage is taken before each run.</li>
+   <li><b>Provenance is recorded:</b> each import is logged inside the GeoPackage itself — which file, when, from where, and how many features — which is what lets the tool tell new work from work already done.</li>
+   <li><b>Currently reads</b> Surpac strings (.str) and triangulations (.dtm). Further formats (DXF, CSV/XYZ pickups, and native strings from other mine packages) plug into the same merge and change-detection machinery.</li>
+</ul>
+"""
+
 # Structural Domains Section
 INFO_CREATE_DOMAIN_LAYER = """
 <h1>Create Domain Layer</h1>

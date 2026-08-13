@@ -1,0 +1,294 @@
+"""
+Surpac string (.str) and triangulation (.dtm) reader.
+
+Surpac .str layout (verified against real survey exports):
+
+    line 1: header  "name,date,purpose,memo"
+    line 2: axis record "0, y, x, z, y, x, z"   (skipped positionally)
+    then point records:
+        string_no, Y(northing), X(easting), Z, d1, d2, ...
+    a record of "0, 0.000, 0.000, 0.000," closes the current segment;
+    "0, 0.000, 0.000, 0.000, END" ends the file.
+
+Coordinates are stored northing-first and are swapped here, so points leave
+this module as (x, y, z) = (easting, northing, elevation).
+
+The description fields trailing each point record carry, in order:
+    d1 point id, d2 datetime, d3 surveyor, d4 instrument, d5 serial,
+    d6 job code
+Sites do vary — anything past d6, or a file with fewer fields, is kept
+verbatim under a 'D<n>' key rather than dropped.
+
+Surpac .dtm layout: header lines, then an OBJECT / TRISOLATION preamble,
+then triangle records "tri_id, v1, v2, v3, n1, n2, n3" where v1..v3 are
+1-based indices into the paired .str file's point records in file order
+(real point records only — separators, axis record and header excluded).
+Those indices are converted to 0-based here so the QGIS side never has to
+know which format a surface came from.
+
+Pure python — no qgis, and the IR is reached through the dual-import idiom
+so this file can be loaded directly by path in tests.
+"""
+
+import os
+
+try:  # package context
+    from ..ir import (ParsedFile, Polyline, Station, Surface, is_closed,
+                      merge_attrs)
+except ImportError:  # loaded directly by path
+    from ir import (ParsedFile, Polyline, Station, Surface, is_closed,
+                    merge_attrs)
+
+FORMAT_KEY = 'surpac'
+
+# Description-field positions, in file order after the four coordinate fields.
+_D_FIELD_NAMES = ('PointId', 'SurveyDate', 'Surveyor', 'Instrument',
+                  'InstrSerial', 'JobCode')
+
+# Filenames matching these prefixes hold survey control rather than linework,
+# so even their multi-point segments are stations. Sites name station files
+# 'stn1244.str' / 'station_1244.str'; anything else is decided per segment.
+_STATION_STEM_PREFIXES = ('stn', 'station', 'pickup', 'peg')
+
+
+def sniff(path):
+    """Confidence 0..1 that path is a Surpac string file.
+
+    Cheap and structural: the second line must be an axis record (leading 0
+    with real coordinates) and at least one following line must parse as a
+    point record. Used only to break extension ties, so a wrong answer costs
+    a mis-routed file, not a crash.
+    """
+    try:
+        with open(path, 'r', errors='replace') as fh:
+            lines = [fh.readline() for _ in range(12)]
+    except OSError:
+        return 0.0
+    if len(lines) < 3:
+        return 0.0
+    axis = [f.strip() for f in lines[1].split(',')]
+    if len(axis) < 4:
+        return 0.0
+    try:
+        if int(float(axis[0])) != 0:
+            return 0.0
+        [float(f) for f in axis[1:4]]
+    except ValueError:
+        return 0.0
+    for line in lines[2:]:
+        fields = [f.strip() for f in line.split(',')]
+        if len(fields) < 4:
+            continue
+        try:
+            int(float(fields[0]))
+            [float(f) for f in fields[1:4]]
+            return 0.9
+        except ValueError:
+            continue
+    return 0.3
+
+
+def is_station_file(path):
+    stem = os.path.splitext(os.path.basename(path))[0].lower()
+    return stem.startswith(_STATION_STEM_PREFIXES)
+
+
+def parse_d_fields(fields):
+    """Map a point record's trailing description fields to named attrs.
+
+    Empty fields are dropped rather than stored as '', so a sparse record
+    does not overwrite a populated one when attrs are merged.
+    """
+    attrs = {}
+    for index, value in enumerate(fields):
+        value = value.strip()
+        if not value:
+            continue
+        if index < len(_D_FIELD_NAMES):
+            attrs[_D_FIELD_NAMES[index]] = value
+        else:
+            attrs['D{0}'.format(index + 1)] = value
+    return attrs
+
+
+def parse_str_lines(lines, name='', station_file=False):
+    """Parse .str lines into (polylines, stations, flat_points, warnings).
+
+    flat_points is every real point record in file order — exactly the
+    1-based vertex ordering the paired .dtm indexes into, so it must include
+    the points that became stations.
+
+    Malformed records (fewer than 4 comma fields, non-numeric coordinates)
+    are skipped and counted. A segment left open at EOF is flushed.
+    """
+    polylines = []
+    stations = []
+    flat_points = []
+    warnings = []
+    skipped_lines = 0
+
+    current = []          # [(x, y, z)]
+    current_attrs = []    # per-point attrs, parallel to current
+    current_string_no = None
+
+    def close_segment():
+        nonlocal current, current_attrs, current_string_no
+        if current:
+            _emit(current, current_attrs, current_string_no)
+        current = []
+        current_attrs = []
+        current_string_no = None
+
+    def _emit(points, attrs_list, string_no):
+        # A single-point segment cannot form a line. These are survey
+        # stations, pegs and pickups, and they carry their own metadata --
+        # emitting them as Stations is the whole reason this reader exists.
+        if station_file or len(points) < 2:
+            for point, attrs in zip(points, attrs_list):
+                stations.append(Station(
+                    point,
+                    merge_attrs({'StringNo': string_no}, attrs)))
+            return
+        # For a drawn string the per-point metadata is near-identical along
+        # the segment, so the first point's is representative. Kept as a
+        # documented sample, not a promise -- per-point detail survives on
+        # stations, where it actually varies.
+        polylines.append(Polyline(
+            points=points,
+            attrs=merge_attrs(
+                {'StringNo': string_no, 'PointCount': len(points)},
+                attrs_list[0] if attrs_list else {}),
+            closed=is_closed(points)))
+
+    for index, line in enumerate(lines):
+        # Header and axis record are skipped positionally: the axis record
+        # starts with 0 but carries real coordinates, so it must not be
+        # mistaken for a separator or for data.
+        if index < 2:
+            continue
+        fields = [f.strip() for f in line.split(',')]
+        if len(fields) < 4:
+            if line.strip():
+                skipped_lines += 1
+            continue
+        try:
+            string_no = int(float(fields[0]))
+        except ValueError:
+            skipped_lines += 1
+            continue
+        if string_no == 0:
+            if len(fields) > 4 and fields[4].upper() == 'END':
+                break
+            close_segment()
+            continue
+        try:
+            # Surpac stores northing first: swap to (x, y, z).
+            point = (float(fields[2]), float(fields[1]), float(fields[3]))
+        except ValueError:
+            skipped_lines += 1
+            continue
+        if not current:
+            current_string_no = string_no
+        current.append(point)
+        current_attrs.append(parse_d_fields(fields[4:]))
+        flat_points.append(point)
+    close_segment()
+
+    if skipped_lines:
+        warnings.append('{0}: {1} malformed record(s) skipped'.format(
+            name or 'file', skipped_lines))
+    return polylines, stations, flat_points, warnings
+
+
+def parse_dtm_lines(lines):
+    """Triangle vertex triples from .dtm lines, as ZERO-based indices.
+
+    Surpac stores them 1-based; converting here means build.py never has to
+    know the origin format. Neighbour fields are ignored. Only the first
+    TRISOLATION block is read — Surpac drive solids ship one per level file.
+    """
+    triangles = []
+    in_triangles = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_triangles:
+            if stripped.upper().startswith('TRISOLATION'):
+                in_triangles = True
+            continue
+        fields = [f.strip() for f in stripped.split(',')]
+        if len(fields) < 4:
+            break
+        try:
+            tri_id = int(float(fields[0]))
+            if tri_id == 0:
+                break
+            triangles.append((int(float(fields[1])) - 1,
+                              int(float(fields[2])) - 1,
+                              int(float(fields[3])) - 1))
+        except ValueError:
+            break
+    return triangles
+
+
+def read_file(path, companions=None, level=None, **_options):
+    """Read a .str (and its paired .dtm, if given) into one ParsedFile.
+
+    companions: {'.dtm': path} as assembled by scan.discover().
+    level: label to stamp on every feature; defaults to the caller leaving it
+    unset, in which case build.py falls back to the filename-derived level.
+    """
+    name = os.path.basename(path)
+    with open(path, 'r', errors='replace') as fh:
+        lines = fh.readlines()
+
+    header = lines[0].strip() if lines else ''
+    station_file = is_station_file(path)
+    polylines, stations, flat_points, warnings = parse_str_lines(
+        lines, name=name, station_file=station_file)
+
+    if level is not None:
+        stamp = {'Level': level}
+        polylines = [p._replace(attrs=merge_attrs(p.attrs, stamp))
+                     for p in polylines]
+        stations = [s._replace(attrs=merge_attrs(s.attrs, stamp))
+                    for s in stations]
+
+    surfaces = []
+    dtm_path = (companions or {}).get('.dtm')
+    if dtm_path:
+        with open(dtm_path, 'r', errors='replace') as fh:
+            triangles = parse_dtm_lines(fh.readlines())
+        if not triangles:
+            warnings.append('{0}: no triangles found — surface skipped'.format(
+                os.path.basename(dtm_path)))
+        elif not flat_points:
+            warnings.append('{0}: no points to triangulate — surface '
+                            'skipped'.format(os.path.basename(dtm_path)))
+        else:
+            in_range = [t for t in triangles
+                        if all(0 <= v < len(flat_points) for v in t)]
+            dropped = len(triangles) - len(in_range)
+            if dropped:
+                warnings.append(
+                    '{0}: {1} triangle(s) referenced missing points and were '
+                    'skipped'.format(os.path.basename(dtm_path), dropped))
+            if in_range:
+                attrs = {'TriangleCount': len(in_range)}
+                if level is not None:
+                    attrs['Level'] = level
+                surfaces.append(Surface(flat_points, in_range, attrs))
+
+    if not flat_points:
+        warnings.append('{0}: no points found'.format(name))
+
+    return ParsedFile(
+        path=path,
+        name=name,
+        format_key=FORMAT_KEY,
+        polylines=tuple(polylines),
+        stations=tuple(stations),
+        surfaces=tuple(surfaces),
+        annotations=(),
+        attrs={'header': header, 'station_file': station_file},
+        warnings=tuple(warnings),
+    )
