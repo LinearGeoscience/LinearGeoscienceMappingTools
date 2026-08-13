@@ -9,6 +9,7 @@ Output conventions are chosen so the Z Filter panel picks the layers up with
 zero configuration (see schema.py).
 """
 
+import json
 import os
 import uuid
 
@@ -61,17 +62,44 @@ def scan_sources(folder=None, paths=None, gpkg_path=None, deep=False,
 
     progress(70, 'Comparing against the last import…')
     classified = scan.classify(entries, log, deep=deep)
+    # Replay each source's previously-used reader options (the "Import as"
+    # override, a CSV column mapping) so a re-import needs no re-answering.
+    classified = [e._replace(options=_logged_options(log, e.key))
+                  for e in classified]
+    # Duplicate marking runs LAST, so it can see which member of a pair is
+    # already in the GeoPackage.
+    classified, duplicate_notes = scan.mark_duplicates(classified)
 
     return {
         'entries': classified,
         'root': root,
         'log': log,
         'duplicates': scan.duplicate_keys(classified),
+        'duplicate_notes': duplicate_notes,
         'missing': scan.missing_sources(classified, log),
         'relink': scan.relink_candidates(classified, log) if log else {},
         'legacy_layers': gpkg.legacy_layers_present(gpkg_path)
         if gpkg_path else [],
     }
+
+
+def _logged_options(log, key):
+    """Reader options recorded for this source by its last import."""
+    row = log.get(key)
+    if not row:
+        return {}
+    raw = row.get('options_json')
+    if not raw:
+        return {}
+    try:
+        stored = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(stored, dict):
+        return {}
+    return {k: stored[k] for k in ('kind', 'profile', 'mapping',
+                                   'group_strings', 'swap_en')
+            if k in stored and stored[k] is not None}
 
 
 def import_sources(gpkg_path, crs, transform_context, entries, root,
@@ -105,7 +133,11 @@ def import_sources(gpkg_path, crs, transform_context, entries, root,
                  'Reading {0} ({1}/{2})'.format(name, index + 1, len(entries)))
         fmt = registry.spec(entry.fmt_key)
         reader = registry.reader_for(fmt)
-        options = dict((options_by_key or {}).get(entry.key, {}))
+        # Entry options come from the last import (replayed by scan_sources);
+        # options_by_key holds anything the user just changed in the dialog,
+        # so it wins.
+        options = dict(entry.options or {})
+        options.update((options_by_key or {}).get(entry.key, {}))
         parsed = reader(entry.path, companions=entry.companions,
                         level=entry.level, **options)
         warnings.extend(parsed.warnings)

@@ -39,14 +39,26 @@ from qgis.gui import QgsProjectionSelectionWidget
 try:
     from ..lgs_tasks import run_in_task
     from .. import plugin_theme as theme
-    from . import gpkg, importer, merge, scan, schema, settings_store
+    from . import (column_map_dialog, gpkg, importer, merge, registry, scan,
+                   schema, settings_store)
+    from .formats import delimited
 except ImportError:  # direct (non-package) execution inside QGIS
     from lgs_tasks import run_in_task
     import plugin_theme as theme
-    from mining_import import (gpkg, importer, merge, scan, schema,
-                               settings_store)
+    from mining_import import (column_map_dialog, gpkg, importer, merge,
+                               registry, scan, schema, settings_store)
+    from mining_import.formats import delimited
 
-_COL_FILE, _COL_FORMAT, _COL_LEVEL, _COL_STATUS = range(4)
+_COL_FILE, _COL_FORMAT, _COL_KIND, _COL_LEVEL, _COL_STATUS = range(5)
+
+# "Import as" choices. Auto lets each reader decide; the explicit values are
+# the override for when it decides wrong. For a .str this picks strings vs
+# survey control; for a CSV it decides whether rows are joined into lines.
+_KIND_AUTO = ''
+_KIND_STRINGS = 'strings'
+_KIND_STATIONS = 'stations'
+_KIND_LABELS = ((_KIND_AUTO, 'Auto'), (_KIND_STRINGS, 'Strings'),
+                (_KIND_STATIONS, 'Stations'))
 
 
 def _dialog_style():
@@ -141,12 +153,12 @@ class MiningImportDialog(QDialog):
         # --- Discovered files ---------------------------------------------
         files_group = QGroupBox("Files to import")
         files_layout = QVBoxLayout(files_group)
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["File", "Format", "Level", "Status"])
+            ["File", "Format", "Import as", "Level", "Status"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_FILE, QHeaderView.ResizeMode.Stretch)
-        for col in (_COL_FORMAT, _COL_LEVEL, _COL_STATUS):
+        for col in (_COL_FORMAT, _COL_KIND, _COL_LEVEL, _COL_STATUS):
             header.setSectionResizeMode(
                 col, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
@@ -266,9 +278,11 @@ class MiningImportDialog(QDialog):
         self._start_scan(folder=folder)
 
     def _browse_files(self):
+        patterns = ' '.join(sorted(
+            '*' + ext for ext in registry.source_extensions()))
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Select survey files", self.folder_edit.text() or "",
-            "Survey files (*.str);;All files (*)")
+            "Survey files ({0});;All files (*)".format(patterns))
         if not paths:
             return
         self.folder_edit.setText(
@@ -344,6 +358,16 @@ class MiningImportDialog(QDialog):
                 "their folder names tell them apart.".format(
                     '\n'.join(result['duplicates'])))
 
+        if result.get('duplicate_notes'):
+            QMessageBox.information(
+                self, "Same data in two formats",
+                "These look like one export delivered twice. Only the richer "
+                "source is ticked — importing both would leave two "
+                "overlapping copies, which the merge can't tell apart "
+                "because it keys on the source file.\n\n{0}\n\nTick the other "
+                "one instead if you prefer it.".format(
+                    '\n'.join(result['duplicate_notes'])))
+
         relink = result.get('relink') or {}
         if relink:
             self._offer_relink(relink)
@@ -377,10 +401,13 @@ class MiningImportDialog(QDialog):
             file_item.setToolTip(entry.path)
             file_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable
                                | Qt.ItemFlag.ItemIsEnabled)
-            # Zero-config bias: only work that still needs doing comes checked.
+            # Zero-config bias: only work that still needs doing comes
+            # checked. A duplicate (the same export in a second format) is
+            # listed but left off, so importing a folder does not silently
+            # bring the same points in twice.
             file_item.setCheckState(
                 Qt.CheckState.Checked
-                if entry.status in (scan.STATUS_NEW, scan.STATUS_CHANGED)
+                if entry.status in scan.PENDING_STATUSES
                 else Qt.CheckState.Unchecked)
             self.table.setItem(row, _COL_FILE, file_item)
 
@@ -394,6 +421,20 @@ class MiningImportDialog(QDialog):
                     ', '.join(os.path.basename(p)
                               for p in entry.companions.values())))
             self.table.setItem(row, _COL_FORMAT, fmt_item)
+
+            kind_combo = QComboBox()
+            for value, label in _KIND_LABELS:
+                kind_combo.addItem(label, value)
+            saved = (entry.options or {}).get('kind')
+            if saved is None and (entry.options or {}).get('group_strings'):
+                saved = _KIND_STRINGS
+            kind_combo.setCurrentIndex(
+                max(kind_combo.findData(saved or _KIND_AUTO), 0))
+            kind_combo.setToolTip(
+                "Auto reads the file's own shape and name. Override it when "
+                "a file of survey control comes in as linework, or vice "
+                "versa.")
+            self.table.setCellWidget(row, _COL_KIND, kind_combo)
 
             self.table.setItem(row, _COL_LEVEL, QTableWidgetItem(entry.level))
 
@@ -433,8 +474,30 @@ class MiningImportDialog(QDialog):
             level_item = self.table.item(row, _COL_LEVEL)
             level = (level_item.text().strip() if level_item else '') \
                 or entry.level
-            checked.append(entry._replace(level=level))
+            checked.append(entry._replace(
+                level=level, options=self._row_options(row, entry)))
         return checked
+
+    def _row_options(self, row, entry):
+        """Reader options for one row: saved options plus the Import-as choice.
+
+        The same choice means different things per reader — a .str routes its
+        records to strings or stations, a CSV joins rows into lines or does
+        not — so it is translated here rather than leaking reader specifics
+        into the table.
+        """
+        options = dict(entry.options or {})
+        combo = self.table.cellWidget(row, _COL_KIND)
+        kind = combo.currentData() if combo is not None else _KIND_AUTO
+        if not kind:
+            options.pop('kind', None)
+            options.pop('group_strings', None)
+            return options
+        if entry.fmt_key == 'surpac':
+            options['kind'] = kind
+        else:
+            options['group_strings'] = (kind == _KIND_STRINGS)
+        return options
 
     def _update_ready(self, *_args):
         if self._task is not None:
@@ -486,6 +549,13 @@ class MiningImportDialog(QDialog):
             if answer != QMessageBox.StandardButton.Yes:
                 return
 
+        # Column mapping happens HERE, on the main thread, between the scan
+        # task and the import task — lgs_tasks workers may not touch widgets.
+        # Only files auto-detection could not resolve raise a dialog.
+        entries = self._resolve_mappings(entries)
+        if entries is None:
+            return  # user cancelled a mapping
+
         settings_store.put(settings_store.KEY_LAST_OUTPUT, gpkg_path)
         settings_store.put(settings_store.KEY_LAST_CRS, crs.authid())
         settings_store.put(settings_store.KEY_POLICY, policy)
@@ -506,6 +576,56 @@ class MiningImportDialog(QDialog):
             on_error=self._task_failed,
             on_cancelled=self._task_cancelled,
             owner=self, bar=self.progress_bar, label=self.status_label)
+
+    def _resolve_mappings(self, entries):
+        """Fill in column mappings for delimited files that need one.
+
+        Returns the entries with options attached, or None if the user
+        cancelled. Files whose columns auto-detect cleanly, and files matching
+        a remembered mapping, never prompt.
+        """
+        profiles = settings_store.csv_profiles()
+        resolved = []
+        for entry in entries:
+            if entry.fmt_key != 'delimited' or entry.options.get('mapping'):
+                resolved.append(entry)
+                continue
+            try:
+                info = delimited.inspect(entry.path)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Could not read file",
+                    "{0}: {1}".format(os.path.basename(entry.path), exc))
+                return None
+
+            saved = profiles.get(info['signature'])
+            if saved:
+                options = dict(entry.options)
+                options.update(saved)
+                resolved.append(entry._replace(options=options))
+                continue
+
+            if not column_map_dialog.needs_mapping(info):
+                resolved.append(entry)
+                continue
+
+            dialog = column_map_dialog.ColumnMapDialog(entry.path, info, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None
+            chosen = dialog.result_mapping()
+            options = dict(entry.options)
+            options['mapping'] = chosen['mapping']
+            options['group_strings'] = chosen['group_strings']
+            if chosen['remember']:
+                settings_store.save_csv_profile(
+                    chosen['signature'],
+                    {'mapping': chosen['mapping'],
+                     'group_strings': chosen['group_strings']})
+                profiles[chosen['signature']] = {
+                    'mapping': chosen['mapping'],
+                    'group_strings': chosen['group_strings']}
+            resolved.append(entry._replace(options=options))
+        return resolved
 
     def _cancel_task(self):
         if self._task is not None:

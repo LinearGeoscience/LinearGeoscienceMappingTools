@@ -33,22 +33,33 @@ so this file can be loaded directly by path in tests.
 import os
 
 try:  # package context
+    from .. import dfields
     from ..ir import (ParsedFile, Polyline, Station, Surface, is_closed,
                       merge_attrs)
 except ImportError:  # loaded directly by path
+    import dfields
     from ir import (ParsedFile, Polyline, Station, Surface, is_closed,
                     merge_attrs)
 
 FORMAT_KEY = 'surpac'
 
-# Description-field positions, in file order after the four coordinate fields.
-_D_FIELD_NAMES = ('PointId', 'SurveyDate', 'Surveyor', 'Instrument',
-                  'InstrSerial', 'JobCode')
+# d-field layouts live in mining_import/dfields.py: the CSV exports of this
+# same data carry literal d1..d15 headers, so both readers need them and
+# readers must not import each other.
+PROFILE_STRING = dfields.PROFILE_STRING
+PROFILE_STATION = dfields.PROFILE_STATION
 
-# Filenames matching these prefixes hold survey control rather than linework,
-# so even their multi-point segments are stations. Sites name station files
-# 'stn1244.str' / 'station_1244.str'; anything else is decided per segment.
-_STATION_STEM_PREFIXES = ('stn', 'station', 'pickup', 'peg')
+# Filename / folder tokens that mark survey control rather than linework.
+# Matched as SUBSTRINGS: real files are named 'mga_all_stations.str' and live
+# in 'StationsGDA', neither of which starts with any of these.
+_STATION_NAME_TOKENS = ('stn', 'station', 'pickup', 'peg', 'control')
+
+# Share of a file's records that must look station-shaped before the file is
+# classified as stations on content alone.
+_STATION_CONTENT_SHARE = 0.8
+
+KIND_STRINGS = 'strings'
+KIND_STATIONS = 'stations'
 
 
 def sniff(path):
@@ -88,82 +99,92 @@ def sniff(path):
     return 0.3
 
 
-def is_station_file(path):
+def name_suggests_stations(path):
+    """True when the filename or its parent folder names survey control.
+
+    Substring, not prefix: the real file is 'mga_all_stations.str' inside
+    'StationsGDA'. A prefix test missed both and sent 102 stations down the
+    linework path, where each separator-delimited group became one polyline
+    joining every station on a level.
+    """
     stem = os.path.splitext(os.path.basename(path))[0].lower()
-    return stem.startswith(_STATION_STEM_PREFIXES)
+    folder = os.path.basename(os.path.dirname(os.path.abspath(path))).lower()
+    return any(token in stem or token in folder
+               for token in _STATION_NAME_TOKENS)
 
 
-def parse_d_fields(fields):
-    """Map a point record's trailing description fields to named attrs.
+def detect_d_profile(d_field_counts):
+    return dfields.detect_profile(d_field_counts)
 
-    Empty fields are dropped rather than stored as '', so a sparse record
-    does not overwrite a populated one when attrs are merged.
+
+def classify(path, segments, d_field_counts):
+    """Decide whether a parsed .str holds linework or survey control.
+
+    Returns (kind, reason) — reason is surfaced as the dialog's tooltip so the
+    decision is inspectable rather than magic.
+
+    Content is weighed before names: a file whose records are station-shaped
+    is stations whatever it is called, which is the signal that would have
+    caught mga_all_stations.str on its own.
     """
-    attrs = {}
-    for index, value in enumerate(fields):
-        value = value.strip()
-        if not value:
-            continue
-        if index < len(_D_FIELD_NAMES):
-            attrs[_D_FIELD_NAMES[index]] = value
-        else:
-            attrs['D{0}'.format(index + 1)] = value
-    return attrs
+    profile = detect_d_profile(d_field_counts)
+    if profile == PROFILE_STATION:
+        return KIND_STATIONS, 'records carry survey-control fields'
+
+    total = sum(len(points) for points, _attrs, _no in segments)
+    if total:
+        lone = sum(len(points) for points, _attrs, _no in segments
+                   if len(points) < 2)
+        if lone >= total * _STATION_CONTENT_SHARE:
+            return KIND_STATIONS, 'file is almost entirely single points'
+
+    if name_suggests_stations(path):
+        return KIND_STATIONS, 'file or folder name says survey control'
+    return KIND_STRINGS, 'multi-point strings'
 
 
-def parse_str_lines(lines, name='', station_file=False):
-    """Parse .str lines into (polylines, stations, flat_points, warnings).
+def parse_d_fields(fields, profile=PROFILE_STRING):
+    return dfields.parse(fields, profile)
 
-    flat_points is every real point record in file order — exactly the
-    1-based vertex ordering the paired .dtm indexes into, so it must include
-    the points that became stations.
 
-    Malformed records (fewer than 4 comma fields, non-numeric coordinates)
-    are skipped and counted. A segment left open at EOF is flushed.
+def scan_str_lines(lines, name=''):
+    """First pass: raw segments, before any d-field layout is assumed.
+
+    Returns (segments, flat_points, d_field_counts, warnings) where segments
+    is [(points, raw_d_field_lists, string_no)]. Splitting this out is what
+    lets the profile and strings-vs-stations decision be made from the whole
+    file rather than guessed per record.
+
+    flat_points is every real point record in file order — exactly the 1-based
+    vertex ordering the paired .dtm indexes into, so it must include points
+    that later become stations.
+
+    Malformed records (fewer than 4 comma fields, non-numeric coordinates) are
+    skipped and counted. A segment left open at EOF is flushed.
     """
-    polylines = []
-    stations = []
+    segments = []
     flat_points = []
+    d_field_counts = []
     warnings = []
     skipped_lines = 0
 
-    current = []          # [(x, y, z)]
-    current_attrs = []    # per-point attrs, parallel to current
+    current = []
+    current_d = []
     current_string_no = None
 
     def close_segment():
-        nonlocal current, current_attrs, current_string_no
+        nonlocal current, current_d, current_string_no
         if current:
-            _emit(current, current_attrs, current_string_no)
+            segments.append((current, current_d, current_string_no))
         current = []
-        current_attrs = []
+        current_d = []
         current_string_no = None
-
-    def _emit(points, attrs_list, string_no):
-        # A single-point segment cannot form a line. These are survey
-        # stations, pegs and pickups, and they carry their own metadata --
-        # emitting them as Stations is the whole reason this reader exists.
-        if station_file or len(points) < 2:
-            for point, attrs in zip(points, attrs_list):
-                stations.append(Station(
-                    point,
-                    merge_attrs({'StringNo': string_no}, attrs)))
-            return
-        # For a drawn string the per-point metadata is near-identical along
-        # the segment, so the first point's is representative. Kept as a
-        # documented sample, not a promise -- per-point detail survives on
-        # stations, where it actually varies.
-        polylines.append(Polyline(
-            points=points,
-            attrs=merge_attrs(
-                {'StringNo': string_no, 'PointCount': len(points)},
-                attrs_list[0] if attrs_list else {}),
-            closed=is_closed(points)))
 
     for index, line in enumerate(lines):
         # Header and axis record are skipped positionally: the axis record
-        # starts with 0 but carries real coordinates, so it must not be
-        # mistaken for a separator or for data.
+        # starts with 0 but carries real coordinates (in mga_all_stations.str
+        # it is the local-grid origin transformed into MGA, not zeros), so it
+        # must not be mistaken for a separator or for data.
         if index < 2:
             continue
         fields = [f.strip() for f in line.split(',')]
@@ -187,17 +208,65 @@ def parse_str_lines(lines, name='', station_file=False):
         except ValueError:
             skipped_lines += 1
             continue
+        # A change of string number ends the current string even without a
+        # separator record. Files that rely on separators alone are
+        # unaffected (their number is constant), but a file that switches
+        # numbers mid-run would otherwise merge two strings into one.
+        if current and string_no != current_string_no:
+            close_segment()
         if not current:
             current_string_no = string_no
+        raw = fields[4:]
         current.append(point)
-        current_attrs.append(parse_d_fields(fields[4:]))
+        current_d.append(raw)
         flat_points.append(point)
+        d_field_counts.append((len(raw), raw[3] if len(raw) > 3 else None))
     close_segment()
 
     if skipped_lines:
         warnings.append('{0}: {1} malformed record(s) skipped'.format(
             name or 'file', skipped_lines))
-    return polylines, stations, flat_points, warnings
+    return segments, flat_points, d_field_counts, warnings
+
+
+def parse_str_lines(lines, name='', path=None, kind=None, profile=None):
+    """Parse .str lines into (polylines, stations, flat_points, warnings, info).
+
+    kind / profile override auto-detection (the dialog's "Import as" column).
+    info carries the decisions made, for the dialog tooltip and the import log.
+    """
+    segments, flat_points, counts, warnings = scan_str_lines(lines, name=name)
+
+    if profile is None:
+        profile = detect_d_profile(counts)
+    if kind is None:
+        kind, reason = classify(path or name, segments, counts)
+    else:
+        reason = 'set by hand'
+
+    polylines = []
+    stations = []
+    for points, raw_list, string_no in segments:
+        attrs_list = [parse_d_fields(raw, profile) for raw in raw_list]
+        if kind == KIND_STATIONS or len(points) < 2:
+            # Survey stations, pegs and pickups. Each keeps ITS OWN metadata:
+            # per-point detail genuinely varies here, unlike along a string.
+            for point, attrs in zip(points, attrs_list):
+                stations.append(Station(
+                    point, merge_attrs({'StringNo': string_no}, attrs)))
+            continue
+        # For a drawn string the per-point metadata is near-identical along
+        # the segment, so the first point's is representative. A documented
+        # sample, not a promise.
+        polylines.append(Polyline(
+            points=points,
+            attrs=merge_attrs(
+                {'StringNo': string_no, 'PointCount': len(points)},
+                attrs_list[0] if attrs_list else {}),
+            closed=is_closed(points)))
+
+    info = {'kind': kind, 'profile': profile, 'reason': reason}
+    return polylines, stations, flat_points, warnings, info
 
 
 def parse_dtm_lines(lines):
@@ -230,27 +299,32 @@ def parse_dtm_lines(lines):
     return triangles
 
 
-def read_file(path, companions=None, level=None, **_options):
+def read_file(path, companions=None, level=None, kind=None, profile=None,
+              **_options):
     """Read a .str (and its paired .dtm, if given) into one ParsedFile.
 
     companions: {'.dtm': path} as assembled by scan.discover().
-    level: label to stamp on every feature; defaults to the caller leaving it
-    unset, in which case build.py falls back to the filename-derived level.
+    level: filename-derived label, used only where the records carry none.
+    kind / profile: the dialog's "Import as" override; None means auto-detect.
     """
     name = os.path.basename(path)
     with open(path, 'r', errors='replace') as fh:
         lines = fh.readlines()
 
     header = lines[0].strip() if lines else ''
-    station_file = is_station_file(path)
-    polylines, stations, flat_points, warnings = parse_str_lines(
-        lines, name=name, station_file=station_file)
+    polylines, stations, flat_points, warnings, info = parse_str_lines(
+        lines, name=name, path=path, kind=kind, profile=profile)
 
     if level is not None:
+        # FALLBACK, not an override: a station export carries the real level
+        # per record in d3 (1182 … SURF) while the filename has none at all
+        # ('mga_all_stations' would otherwise become the level for all 102
+        # points). merge_attrs lets later dicts win, so the record's own
+        # value must come second.
         stamp = {'Level': level}
-        polylines = [p._replace(attrs=merge_attrs(p.attrs, stamp))
+        polylines = [p._replace(attrs=merge_attrs(stamp, p.attrs))
                      for p in polylines]
-        stations = [s._replace(attrs=merge_attrs(s.attrs, stamp))
+        stations = [s._replace(attrs=merge_attrs(stamp, s.attrs))
                     for s in stations]
 
     surfaces = []
@@ -289,6 +363,7 @@ def read_file(path, companions=None, level=None, **_options):
         stations=tuple(stations),
         surfaces=tuple(surfaces),
         annotations=(),
-        attrs={'header': header, 'station_file': station_file},
+        attrs={'header': header, 'kind': info['kind'],
+               'profile': info['profile'], 'reason': info['reason']},
         warnings=tuple(warnings),
     )

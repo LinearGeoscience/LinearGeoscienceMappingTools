@@ -34,13 +34,19 @@ STATUS_NEW = 'new'
 STATUS_CHANGED = 'changed'
 STATUS_UNCHANGED = 'unchanged'
 STATUS_MISSING = 'missing'
+# The same export delivered in a second format; listed but not pre-checked.
+STATUS_DUPLICATE = 'duplicate'
 
 STATUS_LABELS = {
     STATUS_NEW: 'New',
     STATUS_CHANGED: 'Changed',
     STATUS_UNCHANGED: 'Unchanged',
     STATUS_MISSING: 'Missing',
+    STATUS_DUPLICATE: 'Duplicate',
 }
+
+# Statuses the dialog pre-checks: work that still needs doing.
+PENDING_STATUSES = (STATUS_NEW, STATUS_CHANGED)
 
 # One discovered source file.
 #   path        absolute path
@@ -52,10 +58,17 @@ STATUS_LABELS = {
 #   mtime_utc   ISO8601
 #   status      one of the STATUS_* values, filled in by classify()
 #   note        why it has that status, shown as a tooltip
+#   options     per-file reader options (the "Import as" override, a CSV
+#               column mapping); replayed from the import log on re-scan
 Entry = namedtuple(
     'Entry',
-    'path key fmt_key companions level size mtime_utc status note')
-Entry.__new__.__defaults__ = (None, STATUS_NEW, '')
+    'path key fmt_key companions level size mtime_utc status note options')
+Entry.__new__.__defaults__ = (None, STATUS_NEW, '', {})
+
+# When one export ships in several formats, this is the order we trust. The
+# .str keeps ISO timestamps and full-precision bearings that Excel strips on
+# the way to .csv, so it is the better source of the same points.
+FORMAT_PREFERENCE = ('surpac', 'delimited')
 
 
 def parse_level_from_filename(filename):
@@ -163,23 +176,35 @@ def hashes_comparable(a, b):
 
 
 def _resolve_format(path, candidates, sniff=True):
-    """Pick the reader for a file. Extension first; sniff only to break ties.
+    """Pick the reader for a file, or None if nothing credibly claims it.
+
+    Extension narrows the field; the sniffer breaks ties AND vetoes. The veto
+    matters for generic extensions: '.txt' is claimed by the delimited reader,
+    so without a confidence floor every readme in a survey tree would appear
+    in the import list.
 
     A sniffer that raises is treated as "not mine" — a malformed file should
     fall through to the next candidate, not abort the whole scan.
     """
     if not candidates:
         return None
-    if len(candidates) == 1 or not sniff:
+    if not sniff:
         return candidates[0].key
-    best_key, best_score = candidates[0].key, -1.0
+    best_key, best_score = None, -1.0
     for candidate in candidates:
         try:
             score = registry.sniffer_for(candidate)(path)
         except Exception:
             continue
+        if score < candidate.min_confidence:
+            continue
         if score > best_score:
             best_key, best_score = candidate.key, score
+    if best_key is None and len(candidates) == 1 and \
+            candidates[0].min_confidence <= 0:
+        # Extension is unique to this reader and it sets no floor: trust the
+        # extension even when the sniffer could not read the file.
+        return candidates[0].key
     return best_key
 
 
@@ -278,6 +303,74 @@ def duplicate_keys(entries):
     for entry in entries:
         seen.setdefault(entry.key, []).append(entry.path)
     return sorted(k for k, paths in seen.items() if len(paths) > 1)
+
+
+def _format_rank(fmt_key):
+    try:
+        return FORMAT_PREFERENCE.index(fmt_key)
+    except ValueError:
+        return len(FORMAT_PREFERENCE)
+
+
+def duplicate_stems(entries):
+    """Groups of entries that are the same export in different formats.
+
+    Keyed on folder + stem, so `mga_all_stations.str` and
+    `mga_all_stations.csv` in one folder are recognised as one dataset
+    delivered twice. Returns {(folder, stem): [entries]} sorted so the
+    preferred source comes first — the merge engine keys on source FILE, so
+    importing both would leave two overlapping copies it cannot dedupe.
+    """
+    groups = {}
+    for entry in entries:
+        folder = os.path.dirname(entry.path).lower()
+        stem = os.path.splitext(os.path.basename(entry.path))[0].lower()
+        groups.setdefault((folder, stem), []).append(entry)
+    out = {}
+    for key, group in groups.items():
+        if len(group) < 2:
+            continue
+        if len({e.fmt_key for e in group}) < 2:
+            continue  # same reader twice is not a format duplicate
+        # A member already in the GeoPackage wins over format preference:
+        # switching source format mid-stream would orphan the data already
+        # imported under the other file's key.
+        out[key] = sorted(
+            group,
+            key=lambda e: (0 if e.status in (STATUS_UNCHANGED, STATUS_CHANGED)
+                           else 1, _format_rank(e.fmt_key)))
+    return out
+
+
+def mark_duplicates(entries):
+    """Demote the non-preferred half of each duplicate pair.
+
+    The loser keeps its row (the user may want it instead) but is marked so
+    the dialog leaves it unchecked with an explanation, rather than silently
+    importing the same 102 stations twice.
+    """
+    groups = duplicate_stems(entries)
+    if not groups:
+        return entries, []
+    demoted = {}
+    notes = []
+    for (_folder, stem), group in sorted(groups.items()):
+        keeper = group[0]
+        for loser in group[1:]:
+            demoted[loser.key] = (
+                'Same data as {0} — importing both would duplicate '
+                'it'.format(os.path.basename(keeper.path)))
+        notes.append('{0}: importing {1}, skipping {2}'.format(
+            stem, os.path.basename(keeper.path),
+            ', '.join(os.path.basename(e.path) for e in group[1:])))
+    out = []
+    for entry in entries:
+        note = demoted.get(entry.key)
+        if note is None:
+            out.append(entry)
+        else:
+            out.append(entry._replace(status=STATUS_DUPLICATE, note=note))
+    return out, notes
 
 
 def classify(entries, log_rows, deep=False):

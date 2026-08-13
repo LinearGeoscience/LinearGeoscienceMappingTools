@@ -72,8 +72,8 @@ class TestLevelParsing(unittest.TestCase):
 class TestParseStr(unittest.TestCase):
 
     def setUp(self):
-        self.polylines, self.stations, self.flat, self.warnings = \
-            parse_str_lines(STR_SAMPLE, name='sample.str')
+        (self.polylines, self.stations, self.flat, self.warnings,
+         self.info) = parse_str_lines(STR_SAMPLE, name='sample.str')
 
     def test_segments_split_on_separators(self):
         self.assertEqual(len(self.polylines), 2)
@@ -115,20 +115,22 @@ class TestParseStr(unittest.TestCase):
     def test_end_terminates_parsing(self):
         lines = list(STR_SAMPLE) + [
             '9, 6581400.000, 398700.000, 170.000, 500']
-        polylines, _stations, flat, _warnings = parse_str_lines(lines)
+        polylines, _stations, flat, _warnings, _info = parse_str_lines(
+            lines)
         self.assertEqual(len(polylines), 2)
         self.assertEqual(len(flat), 6)
 
     def test_unterminated_file_flushes_last_segment(self):
         lines = [line for line in STR_SAMPLE if 'END' not in line]
-        polylines, _stations, _flat, _warnings = parse_str_lines(lines)
+        polylines, _stations, _flat, _warnings, _info = parse_str_lines(
+            lines)
         self.assertEqual(len(polylines), 2)
 
     def test_malformed_lines_skipped_and_reported(self):
         lines = list(STR_SAMPLE)
         lines.insert(4, 'garbage line')
         lines.insert(5, '20, not_a_number, 1.0, 2.0')
-        polylines, _stations, _flat, warnings = parse_str_lines(
+        polylines, _stations, _flat, warnings, _info = parse_str_lines(
             lines, name='sample.str')
         self.assertEqual(len(polylines), 2)
         self.assertTrue(any('malformed' in w for w in warnings))
@@ -136,7 +138,8 @@ class TestParseStr(unittest.TestCase):
     def test_consecutive_separators_are_harmless(self):
         lines = list(STR_SAMPLE)
         lines.insert(5, '0, 0.000, 0.000, 0.000,')
-        polylines, _stations, _flat, _warnings = parse_str_lines(lines)
+        polylines, _stations, _flat, _warnings, _info = parse_str_lines(
+            lines)
         self.assertEqual(len(polylines), 2)
 
 
@@ -144,8 +147,8 @@ class TestStationRouting(unittest.TestCase):
     """Single-point segments used to be counted and thrown away."""
 
     def setUp(self):
-        self.polylines, self.stations, _flat, _warnings = parse_str_lines(
-            STR_SAMPLE, name='sample.str')
+        (self.polylines, self.stations, _flat, _warnings,
+         self.info) = parse_str_lines(STR_SAMPLE, name='sample.str')
 
     def test_single_point_segment_becomes_a_station(self):
         self.assertEqual(len(self.stations), 1)
@@ -169,20 +172,31 @@ class TestStationRouting(unittest.TestCase):
             self.assertGreaterEqual(len(poly.points), 2)
 
     def test_station_file_routes_every_segment_to_stations(self):
-        polylines, stations, _flat, _warnings = parse_str_lines(
-            STR_SAMPLE, name='stn1244.str', station_file=True)
+        polylines, stations, _flat, _warnings, _info = parse_str_lines(
+            STR_SAMPLE, name='stn1244.str', kind=surpac.KIND_STATIONS)
         self.assertEqual(polylines, [])
         self.assertEqual(len(stations), 6)
 
-    def test_station_file_detected_by_name(self):
-        self.assertTrue(surpac.is_station_file('stn1244.str'))
-        self.assertTrue(surpac.is_station_file(r'C:\x\STATION_1244.str'))
-        self.assertTrue(surpac.is_station_file('pickup_365.str'))
-        self.assertFalse(surpac.is_station_file('mga_floor_1164.str'))
+    def test_station_names_matched_as_substrings_not_prefixes(self):
+        # The prefix-only test that shipped first missed the real file,
+        # 'mga_all_stations.str', and sent 102 stations down the linework
+        # path as six level-spanning polylines.
+        self.assertTrue(surpac.name_suggests_stations('stn1244.str'))
+        self.assertTrue(surpac.name_suggests_stations(r'C:\x\STATION_1244.str'))
+        self.assertTrue(surpac.name_suggests_stations('pickup_365.str'))
+        self.assertTrue(
+            surpac.name_suggests_stations('mga_all_stations.str'))
+        self.assertFalse(surpac.name_suggests_stations('mga_floor_1164.str'))
+
+    def test_parent_folder_name_counts_too(self):
+        self.assertTrue(surpac.name_suggests_stations(
+            os.path.join('C:', 'survey', 'StationsGDA', 'mga_all.str')))
+        self.assertFalse(surpac.name_suggests_stations(
+            os.path.join('C:', 'survey', 'FloorStringsGDA', 'mga_all.str')))
 
     def test_per_point_metadata_preserved_across_a_station_file(self):
-        _polylines, stations, _flat, _warnings = parse_str_lines(
-            STR_SAMPLE, station_file=True)
+        _polylines, stations, _flat, _warnings, _info = parse_str_lines(
+            STR_SAMPLE, kind=surpac.KIND_STATIONS)
         surveyors = [s.attrs.get('Surveyor') for s in stations]
         self.assertIn('Ana Ruiz', surveyors)
         self.assertIn('Darby Lindsay', surveyors)
@@ -205,7 +219,18 @@ class TestDFields(unittest.TestCase):
 
     def test_empty_fields_dropped(self):
         attrs = surpac.parse_d_fields(['288', '', '  ', 'TS16'])
-        self.assertEqual(attrs, {'PointId': '288', 'Instrument': 'TS16'})
+        self.assertNotIn('SurveyDate', attrs)
+        self.assertNotIn('Surveyor', attrs)
+        self.assertEqual(attrs['PointId'], '288')
+        self.assertEqual(attrs['Instrument'], 'TS16')
+
+    def test_every_field_also_kept_positionally(self):
+        # A mis-detected profile must never lose data: D1..Dn always carry
+        # the raw export into the Attributes JSON column.
+        attrs = surpac.parse_d_fields(['288', '2026-01-18', 'Ana'])
+        self.assertEqual(attrs['D1'], '288')
+        self.assertEqual(attrs['D2'], '2026-01-18')
+        self.assertEqual(attrs['D3'], 'Ana')
 
 
 class TestParseDtm(unittest.TestCase):

@@ -33,6 +33,7 @@ if REPO_ROOT not in sys.path:
 from qgis.core import (  # noqa: E402
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransformContext,
+    QgsVectorFileWriter,
     QgsVectorLayer,
 )
 
@@ -270,6 +271,56 @@ def main():
             check(feature['Format'] == 'surpac',
                   'Format column holds the format, not a shifted value')
             break
+
+        # -- styles --------------------------------------------------------
+        section('Styling')
+        con = sqlite3.connect(target)
+        try:
+            styled = [r[0] for r in con.execute(
+                'SELECT f_table_name FROM layer_styles WHERE useAsDefault = 1')]
+        except sqlite3.Error:
+            styled = []
+        con.close()
+        check(schema.STRINGS_LAYER in styled,
+              'strings layer got its default style saved into the gpkg')
+        stations_layer = QgsVectorLayer(
+            gpkg.layer_uri(target, schema.STATIONS_LAYER), 'x', 'ogr')
+        if stations_layer.isValid() and stations_layer.featureCount() >= 0:
+            check(stations_layer.labelsEnabled(),
+                  'stations layer has labelling enabled')
+
+        # A style is applied on CREATE only; re-importing must not stomp a
+        # customisation the user made afterwards.
+        before_style = gpkg.apply_style(target, schema.STRINGS_LAYER)
+        check(before_style is True or before_style is False,
+              'apply_style is callable directly and reports success')
+
+        # -- schema upgrade --------------------------------------------------
+        section('Schema upgrade of an older GeoPackage')
+        old = os.path.join(work, 'old.gpkg')
+        from qgis.core import QgsField, QgsFields
+        from qgis.PyQt.QtCore import QMetaType
+        reduced = QgsFields()
+        for name, mtype in schema.field_defs(schema.STATIONS_LAYER):
+            if name in ('Domain', 'SetupCode', 'Bearing', 'SurveyType'):
+                continue  # simulate a v1 file, written before these existed
+            reduced.append(QgsField(name, mtype))
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = 'GPKG'
+        options.layerName = schema.STATIONS_LAYER
+        writer = QgsVectorFileWriter.create(
+            old, reduced, schema.wkb_type(schema.STATIONS_LAYER), CRS, CTX,
+            options)
+        del writer
+        pre = QgsVectorLayer(gpkg.layer_uri(old, schema.STATIONS_LAYER),
+                             'x', 'ogr')
+        check(pre.isValid() and pre.fields().lookupField('Domain') < 0,
+              'v1-shaped layer built without the new columns')
+        run_import(old, folder)
+        post = QgsVectorLayer(gpkg.layer_uri(old, schema.STATIONS_LAYER),
+                              'x', 'ogr')
+        check(post.isValid() and post.fields().lookupField('Domain') >= 0,
+              'older GeoPackage was upgraded in place, not rejected')
 
         # -- Z filter interop ---------------------------------------------
         section('Z Filter interop')

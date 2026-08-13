@@ -29,6 +29,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
+from qgis.PyQt.QtCore import QMetaType
 from qgis.core import (
     QgsFeature,
     QgsFeatureRequest,
@@ -183,6 +184,41 @@ def create_layer(gpkg_path, layer_name, crs, transform_context):
         raise RuntimeError('Could not create layer {0}: {1}'.format(
             layer_name, message))
     _create_index(gpkg_path, layer_name)
+    apply_style(gpkg_path, layer_name)
+
+
+def style_path(layer_name):
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'styles', layer_name + '.qml')
+    return path if os.path.exists(path) else None
+
+
+def apply_style(gpkg_path, layer_name):
+    """Save the shipped symbology into the GeoPackage as the layer default.
+
+    Called ONLY on layer creation. Re-applying on every append would stomp
+    whatever the user had customised, which is worse than shipping no style
+    at all.
+
+    Best-effort throughout: an import that wrote its data correctly must not
+    fail because a stylesheet did not load.
+    """
+    path = style_path(layer_name)
+    if path is None:
+        return False
+    layer = open_layer(gpkg_path, layer_name)
+    if layer is None:
+        return False
+    try:
+        _message, ok = layer.loadNamedStyle(path)
+        if not ok:
+            return False
+        # Embeds the style in the .gpkg itself, so it travels with the file
+        # (same approach as qfield_export/utils/qgis_utils.py).
+        saved, _msg = layer.saveStyleToDatabase(layer_name, '', True, '')
+        return bool(saved)
+    except Exception:
+        return False
 
 
 def _create_index(gpkg_path, layer_name):
@@ -199,6 +235,51 @@ def _create_index(gpkg_path, layer_name):
     finally:
         if con is not None:
             con.close()
+
+
+# Keyed on the QMetaType value itself rather than its name: PyQt5 exposes
+# these as int-backed sip enums whose str() is just the number, while PyQt6
+# uses real Python enums. Both are hashable, so direct lookup works on each.
+_SQLITE_TYPES = {
+    QMetaType.Type.QString: 'TEXT',
+    QMetaType.Type.Double: 'REAL',
+    QMetaType.Type.Int: 'INTEGER',
+    QMetaType.Type.Bool: 'INTEGER',
+}
+
+
+def _add_missing_columns(gpkg_path, layer_name, missing, warnings):
+    """ALTER an existing layer up to the current schema. Returns names added.
+
+    Used when a GeoPackage predates a schema version. sqlite3 rather than the
+    OGR provider because ALTER through the provider requires an edit session,
+    and this runs on the import worker thread.
+    """
+    wanted = dict(schema.field_defs(layer_name))
+    added = []
+    con = None
+    try:
+        con = sqlite3.connect(gpkg_path, timeout=15)
+        for name in missing:
+            decl = _SQLITE_TYPES.get(wanted.get(name), 'TEXT')
+            try:
+                con.execute('ALTER TABLE "{0}" ADD COLUMN "{1}" {2}'.format(
+                    layer_name, name, decl))
+                added.append(name)
+            except sqlite3.Error as exc:
+                warnings.append('Could not add column {0} to {1}: {2}'.format(
+                    name, layer_name, exc))
+        con.commit()
+    except sqlite3.Error as exc:
+        warnings.append('Could not upgrade {0}: {1}'.format(layer_name, exc))
+    finally:
+        if con is not None:
+            con.close()
+    if added:
+        warnings.append(
+            '{0}: added new column(s) {1} to match the current schema.'.format(
+                layer_name, ', '.join(added)))
+    return added
 
 
 def _delete_where(layer, expression, what):
@@ -232,11 +313,24 @@ def write_features(gpkg_path, layer_name, features, crs, transform_context,
     missing = [name for name in schema.required_fields(layer_name)
                if layer.fields().lookupField(name) < 0]
     if missing:
-        raise RuntimeError(
-            'Layer {0} in {1} is missing field(s) {2} — it was made by a '
-            'different tool or an older version. Choose a different output '
-            'GeoPackage.'.format(layer_name, os.path.basename(gpkg_path),
-                                 ', '.join(missing)))
+        # A GeoPackage written by an older schema version is upgraded in
+        # place rather than rejected — refusing it would strand every file
+        # made before the columns existed. Only ever ADDs; a layer that is
+        # genuinely someone else's data still fails below, because the add
+        # will not produce the full expected field set.
+        added = _add_missing_columns(gpkg_path, layer_name, missing, warnings)
+        if added:
+            layer = open_layer(gpkg_path, layer_name)
+        still_missing = [name for name in schema.required_fields(layer_name)
+                         if layer is None
+                         or layer.fields().lookupField(name) < 0]
+        if still_missing:
+            raise RuntimeError(
+                'Layer {0} in {1} is missing field(s) {2} and they could not '
+                'be added — it was probably made by a different tool. Choose '
+                'a different output GeoPackage.'.format(
+                    layer_name, os.path.basename(gpkg_path),
+                    ', '.join(still_missing)))
 
     provider = layer.dataProvider()
     target_fields = layer.fields()

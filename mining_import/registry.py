@@ -28,28 +28,33 @@ from collections import namedtuple
 #                  .dtm beside its .str) — never scanned as sources
 # reader           attribute name of read_file(path, **options) -> ParsedFile
 # sniffer          attribute name of sniff(path) -> float confidence 0..1
-# needs_column_map True when the reader cannot run without user-supplied
-#                  column roles, which forces the main-thread mapping step
+# needs_column_map True when the reader may need user-supplied column roles,
+#                  which can force the main-thread mapping step
 # binary           True when the file is not line-oriented text
+# min_confidence   sniffer score below which a file is NOT claimed at all.
+#                  Zero for an extension only this format uses; above zero for
+#                  generic ones — '.txt' otherwise drags every readme and set
+#                  of notes in a survey folder into the import list.
 FormatSpec = namedtuple(
     'FormatSpec',
     'key label module extensions companion_exts reader sniffer '
-    'needs_column_map binary')
+    'needs_column_map binary min_confidence')
 
 FORMATS = (
     FormatSpec('surpac', 'Surpac string', 'surpac',
-               ('.str',), ('.dtm',), 'read_file', 'sniff', False, False),
+               ('.str',), ('.dtm',), 'read_file', 'sniff', False, False, 0.0),
+    FormatSpec('delimited', 'CSV / XYZ text', 'delimited',
+               ('.csv', '.txt', '.xyz', '.pts'), (), 'read_file', 'sniff',
+               True, False, 0.5),
 )
 
 # Formats landing in later stages, listed here so the dialog can say "not yet
 # supported" rather than silently ignoring a file the user clearly wants:
 PLANNED = (
-    ('.csv', 'CSV / XYZ text'),
-    ('.txt', 'CSV / XYZ text'),
-    ('.xyz', 'CSV / XYZ text'),
     ('.dxf', 'AutoCAD DXF'),
     ('.12da', '12d Model ASCII'),
     ('.dm', 'Datamine'),
+    ('.asc', 'Datamine / grid ASCII'),
 )
 
 

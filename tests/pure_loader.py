@@ -43,7 +43,7 @@ def load(relative_path, name=None):
 
 def pure_module_paths():
     """Every module that must remain importable without QGIS."""
-    paths = ['ir.py', 'registry.py', 'scan.py', 'merge.py']
+    paths = ['ir.py', 'registry.py', 'scan.py', 'merge.py', 'dfields.py']
     formats_dir = os.path.join(PACKAGE_ROOT, 'formats')
     for fname in sorted(os.listdir(formats_dir)):
         if fname.endswith('.py') and fname != '__init__.py':

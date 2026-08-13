@@ -24,7 +24,9 @@ LOG_TABLE = 'lgs_mining_import_log'
 
 # Bumped when a field is added, so gpkg.py can ALTER an older file instead of
 # refusing to write to it.
-SCHEMA_VERSION = 1
+#   2 — survey-control columns on MineStations (Domain/SetupCode/Bearing/
+#       SurveyType), for the 15-d-field station export layout.
+SCHEMA_VERSION = 2
 
 _TEXT = QMetaType.Type.QString
 _DOUBLE = QMetaType.Type.Double
@@ -63,8 +65,8 @@ _STRING_FIELDS = _COMMON + (
 )
 
 _STATION_FIELDS = _COMMON + (
-    # TEXT, not INT: Surpac ids are numeric but DXF and CSV point names are
-    # alphanumeric ('STN_A4', 'BM12').
+    # TEXT, not INT: Surpac ids are numeric but real station names are
+    # alphanumeric ('MJ33', '1204RAW-01', 'MJ_PILLAR01', 'RAILWAY_NORT').
     ('PointId', _TEXT),
     ('Code', _TEXT),
     ('SrcLayer', _TEXT),
@@ -72,6 +74,15 @@ _STATION_FIELDS = _COMMON + (
     ('Instrument', _TEXT),
     ('InstrSerial', _TEXT),
     ('JobCode', _TEXT),
+    # Survey-control export fields (schema v2). Everything a format carries
+    # beyond these still reaches Attributes as JSON — LocalRL and ObsDate
+    # live there rather than earning a column of their own.
+    ('Domain', _TEXT),        # UG / SURF
+    ('SetupCode', _TEXT),     # instrument setup or occupation code
+    # TEXT: bearings are DDD.MMSS ('211.2907'), which is not a number —
+    # storing it as a double would imply arithmetic that is wrong.
+    ('Bearing', _TEXT),
+    ('SurveyType', _TEXT),    # OPEN TRAVERSE / Baseline / Baseline Check
 )
 
 _OUTLINE_FIELDS = _COMMON + (
