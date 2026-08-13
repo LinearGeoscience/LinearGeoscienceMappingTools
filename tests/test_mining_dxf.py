@@ -284,6 +284,28 @@ class TestBlocks(unittest.TestCase):
         c = parse(text)
         self.assertEqual(len(c.stations), 1)
 
+    def test_nested_insert_keeps_its_scale(self):
+        # An INSERT inside an expanded block carries its own 41/42/43; the
+        # clone taken during expansion must keep them or the inner geometry
+        # silently imports unscaled.
+        text = (pairs((0, 'SECTION'), (2, 'BLOCKS'),
+                      (0, 'BLOCK'), (2, 'INNER'), (10, '0.0'), (20, '0.0'))
+                + pairs((0, 'LINE'), (8, 'd'),
+                        (10, '0.0'), (20, '0.0'), (11, '10.0'), (21, '0.0'))
+                + pairs((0, 'ENDBLK'),
+                        (0, 'BLOCK'), (2, 'OUTER'), (10, '0.0'), (20, '0.0'),
+                        (0, 'INSERT'), (2, 'INNER'), (8, 'd'),
+                        (10, '0.0'), (20, '0.0'),
+                        (41, '2.0'), (42, '2.0'), (43, '2.0'),
+                        (0, 'ENDBLK'), (0, 'ENDSEC'))
+                + pairs((0, 'SECTION'), (2, 'ENTITIES'),
+                        (0, 'INSERT'), (2, 'OUTER'), (8, 'd'),
+                        (10, '0.0'), (20, '0.0'),
+                        (0, 'ENDSEC'), (0, 'EOF')))
+        c = parse(text)
+        self.assertEqual(len(c.polylines), 1)
+        self.assertAlmostEqual(c.polylines[0].points[1][0], 20.0)
+
     def test_block_entities_are_not_imported_at_the_origin(self):
         # Without the BLOCKS section being kept separate from ENTITIES, the
         # block body would be imported twice: once at 0,0 and once in place.

@@ -608,6 +608,9 @@ def _transformed(source, transform):
     clone.height = source.height
     clone.rotation = source.rotation
     clone.name = source.name
+    # A nested INSERT keeps its own scale, or block-in-block geometry
+    # (an INSERT inside an expanded block) silently loses it.
+    clone.scale = list(source.scale)
     clone.faces = list(source.faces)
     clone.points = [list(transform((p[0], p[1], p[2])))
                     for p in source.points]

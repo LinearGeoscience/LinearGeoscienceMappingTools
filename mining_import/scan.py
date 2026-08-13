@@ -373,7 +373,7 @@ def mark_duplicates(entries):
     return out, notes
 
 
-def classify(entries, log_rows, deep=False):
+def classify(entries, log_rows, deep=False, current_version=None):
     """Tag each entry New / Changed / Unchanged against the import log.
 
     log_rows: {source_key: {'file_size', 'file_mtime_utc', 'content_hash'}}
@@ -383,6 +383,13 @@ def classify(entries, log_rows, deep=False):
     agree spuriously when a file was rewritten byte-identically, in which
     case re-importing it would be a no-op anyway. deep=True additionally
     hashes to catch a same-size same-mtime rewrite, at real cost.
+
+    current_version: the importer's output revision (schema.SCHEMA_VERSION,
+    passed in because this module must stay qgis-free). A row written by an
+    older revision is CHANGED even when the file's bytes are not — the last
+    import of it produced different (possibly wrong) output, and the only way
+    a fix ever reaches existing data is the re-import this would otherwise
+    skip.
     """
     out = []
     for entry in entries:
@@ -390,6 +397,13 @@ def classify(entries, log_rows, deep=False):
         if row is None:
             out.append(entry._replace(status=STATUS_NEW,
                                       note='Not yet imported'))
+            continue
+        if current_version is not None and \
+                row.get('schema_version') != current_version:
+            out.append(entry._replace(
+                status=STATUS_CHANGED,
+                note='Imported by an older version of the importer — '
+                     're-import to bring it up to date'))
             continue
         if row.get('file_size') != entry.size:
             out.append(entry._replace(

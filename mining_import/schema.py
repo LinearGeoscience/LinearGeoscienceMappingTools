@@ -22,11 +22,18 @@ OUTLINES_LAYER = 'MineLevelOutlines'
 TEXT_LAYER = 'MineSurveyText'
 LOG_TABLE = 'lgs_mining_import_log'
 
-# Bumped when a field is added, so gpkg.py can ALTER an older file instead of
-# refusing to write to it.
+# The importer's OUTPUT revision, stamped into each import-log row. Bumped
+# when a field is added (gpkg.py ALTERs an older file up) — and also when an
+# import bug is fixed, because a source whose bytes are unchanged but whose
+# last import produced wrong output must scan as "Changed" or the fix never
+# reaches the data: the re-import that would heal it is exactly the one the
+# fingerprint check skips.
 #   2 — survey-control columns on MineStations (Domain/SetupCode/Bearing/
 #       SurveyType), for the 15-d-field station export layout.
-SCHEMA_VERSION = 2
+#   3 — no schema change: forces one re-import of sources written before the
+#       station-routing fix (station files imported as level-spanning
+#       polylines) and the .dtm separator-index fix (inflated outlines).
+SCHEMA_VERSION = 3
 
 _TEXT = QMetaType.Type.QString
 _DOUBLE = QMetaType.Type.Double

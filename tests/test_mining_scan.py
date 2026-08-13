@@ -194,6 +194,43 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(result[0].status, scan.STATUS_CHANGED)
         self.assertIn('Modified', result[0].note)
 
+    def test_older_importer_revision_forces_a_reimport(self):
+        # A file imported by buggy code has unchanged bytes but wrong output;
+        # if the fingerprint check alone decides, the re-import that would
+        # heal it is exactly the one that gets skipped. This is the real
+        # DTM_surpac.gpkg case: stations imported as polylines by old code
+        # scanned as 'unchanged' forever.
+        entry = self._entry()
+        log = {'a.str': {'file_size': entry.size,
+                         'file_mtime_utc': entry.mtime_utc,
+                         'schema_version': 2}}
+        result = scan.classify([entry], log, current_version=3)
+        self.assertEqual(result[0].status, scan.STATUS_CHANGED)
+        self.assertIn('older version', result[0].note)
+
+    def test_matching_revision_stays_unchanged(self):
+        entry = self._entry()
+        log = {'a.str': {'file_size': entry.size,
+                         'file_mtime_utc': entry.mtime_utc,
+                         'schema_version': 3}}
+        result = scan.classify([entry], log, current_version=3)
+        self.assertEqual(result[0].status, scan.STATUS_UNCHANGED)
+
+    def test_missing_revision_in_an_old_log_counts_as_older(self):
+        entry = self._entry()
+        log = {'a.str': {'file_size': entry.size,
+                         'file_mtime_utc': entry.mtime_utc}}
+        result = scan.classify([entry], log, current_version=3)
+        self.assertEqual(result[0].status, scan.STATUS_CHANGED)
+
+    def test_no_version_given_keeps_fingerprint_only_behaviour(self):
+        entry = self._entry()
+        log = {'a.str': {'file_size': entry.size,
+                         'file_mtime_utc': entry.mtime_utc,
+                         'schema_version': 1}}
+        result = scan.classify([entry], log)
+        self.assertEqual(result[0].status, scan.STATUS_UNCHANGED)
+
     def test_missing_sources_are_log_keys_with_no_file(self):
         log = {'a.str': {}, 'gone.str': {}}
         missing = scan.missing_sources([self._entry('a.str')], log)

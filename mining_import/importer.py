@@ -61,7 +61,8 @@ def scan_sources(folder=None, paths=None, gpkg_path=None, deep=False,
     log = gpkg.read_log(gpkg_path) if gpkg_path else {}
 
     progress(70, 'Comparing against the last import…')
-    classified = scan.classify(entries, log, deep=deep)
+    classified = scan.classify(entries, log, deep=deep,
+                               current_version=schema.SCHEMA_VERSION)
     # Replay each source's previously-used reader options (the "Import as"
     # override, a CSV column mapping) so a re-import needs no re-answering.
     classified = [e._replace(options=_logged_options(log, e.key))

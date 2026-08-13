@@ -513,7 +513,8 @@ class MiningImportDialog(QDialog):
             counts[entry.status] = counts.get(entry.status, 0) + 1
         parts = ['{0} {1}'.format(counts[s], scan.STATUS_LABELS[s].lower())
                  for s in (scan.STATUS_NEW, scan.STATUS_CHANGED,
-                           scan.STATUS_UNCHANGED) if counts.get(s)]
+                           scan.STATUS_UNCHANGED, scan.STATUS_DUPLICATE)
+                 if counts.get(s)]
         msg = '{0} file(s) found — {1}. {2} selected.'.format(
             len(self._entries), ', '.join(parts) or 'nothing to do',
             len(checked))
