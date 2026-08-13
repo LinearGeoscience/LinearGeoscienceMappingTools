@@ -46,15 +46,17 @@ FORMATS = (
     FormatSpec('delimited', 'CSV / XYZ text', 'delimited',
                ('.csv', '.txt', '.xyz', '.pts'), (), 'read_file', 'sniff',
                True, False, 0.5),
+    FormatSpec('dxf', 'AutoCAD DXF', 'dxf',
+               ('.dxf',), (), 'read_file', 'sniff', False, False, 0.0),
 )
 
 # Formats landing in later stages, listed here so the dialog can say "not yet
 # supported" rather than silently ignoring a file the user clearly wants:
 PLANNED = (
-    ('.dxf', 'AutoCAD DXF'),
     ('.12da', '12d Model ASCII'),
     ('.dm', 'Datamine'),
     ('.asc', 'Datamine / grid ASCII'),
+    ('.dwg', 'AutoCAD DWG (re-export as DXF)'),
 )
 
 

@@ -139,14 +139,30 @@ def build_annotations(parsed, provenance, fields):
     return features
 
 
-def build_outlines(parsed, provenance, fields, warnings):
+# Dissolving a triangulation is a GEOS union whose cost grows fast with the
+# triangle count. A drive solid is a few thousand; a mine-wide DXF export can
+# be hundreds of thousands (MAJ_V6_Task_Solids is 131,510, ClipPegs 427,318),
+# where the union would appear to hang. Above this the footprint is skipped
+# with an explanation rather than stalling the import.
+MAX_DISSOLVE_TRIANGLES = 60000
+
+
+def build_outlines(parsed, provenance, fields, warnings, max_triangles=None):
     """Dissolve each surface's triangles into one 2D (multi)polygon footprint.
 
     Z is carried by Z_Min/Z_Max rather than the geometry, matching the
     range-mode convention for polygons.
     """
+    limit = MAX_DISSOLVE_TRIANGLES if max_triangles is None else max_triangles
     features = []
     for surface in parsed.surfaces:
+        if limit and len(surface.triangles) > limit:
+            warnings.append(
+                '{0}: surface has {1} triangles, more than the {2} outlines '
+                'are built from — the strings and points were imported, but '
+                'no footprint polygon was made for it.'.format(
+                    parsed.name, len(surface.triangles), limit))
+            continue
         vertices = surface.vertices
         tri_geoms = []
         bad = 0

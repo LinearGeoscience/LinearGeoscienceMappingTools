@@ -271,29 +271,62 @@ class TestReadFile(unittest.TestCase):
         self.assertTrue(all(s.attrs['Level'] == '1164'
                             for s in parsed.stations))
 
+    # STR_SAMPLE's record order, which is the .dtm index space (1-based):
+    #   1 point   2 point   3 SEPARATOR   4 point   5 SEPARATOR
+    #   6 point   7 point   8 point       9 SEPARATOR
     def test_dtm_companion_produces_a_surface(self):
         dtm_path = os.path.join(self.dir, 'mga_floor_1164.dtm')
         with open(dtm_path, 'w') as fh:
             fh.write('header\nOBJECT, 1,\nTRISOLATION, 1,\n'
-                     '1, 1, 2, 3, 0, 0, 0,\n'
-                     '2, 4, 5, 6, 0, 0, 0,\n0, 0, 0, 0\n')
+                     '1, 1, 2, 4, 0, 0, 0,\n'
+                     '2, 6, 7, 8, 0, 0, 0,\n0, 0, 0, 0\n')
         parsed = surpac.read_file(
             self.str_path, companions={'.dtm': dtm_path}, level='1164')
         self.assertEqual(len(parsed.surfaces), 1)
         surface = parsed.surfaces[0]
-        self.assertEqual(surface.triangles, [(0, 1, 2), (3, 4, 5)])
+        # Vertices are compacted to those actually used, so indices are
+        # renumbered from the sparse index space.
         self.assertEqual(len(surface.vertices), 6)
+        self.assertEqual(surface.triangles, [(0, 1, 2), (3, 4, 5)])
         self.assertEqual(surface.attrs['TriangleCount'], 2)
+
+    def test_separators_occupy_a_slot_in_the_dtm_index_space(self):
+        # Surpac counts the '0, 0.000, 0.000, 0.000,' separator records when
+        # numbering .dtm vertices. Indexing real points only silently
+        # connects the wrong vertices -- against real data it inflated the
+        # summed triangle area 26-fold and every level outline with it.
+        _p, _s, _flat, _w, info = parse_str_lines(STR_SAMPLE)
+        index_space = info['dtm_index']
+        self.assertEqual(len(index_space), 9)
+        self.assertIsNone(index_space[2])   # separator after the first string
+        self.assertIsNone(index_space[4])   # separator after the station
+        self.assertIsNone(index_space[8])   # trailing separator
+        self.assertEqual(len([v for v in index_space if v is not None]), 6)
+        # Slot 4 (1-based) is the lone station, not the third string point.
+        self.assertAlmostEqual(index_space[3][0], 398600.200)
+
+    def test_triangles_touching_a_separator_slot_are_dropped(self):
+        dtm_path = os.path.join(self.dir, 'mga_floor_1164.dtm')
+        with open(dtm_path, 'w') as fh:
+            fh.write('header\nTRISOLATION, 1,\n'
+                     '1, 1, 2, 4, 0, 0, 0,\n'
+                     '2, 1, 2, 3, 0, 0, 0,\n'   # 3 is a separator slot
+                     '0, 0, 0, 0\n')
+        parsed = surpac.read_file(
+            self.str_path, companions={'.dtm': dtm_path})
+        self.assertEqual(len(parsed.surfaces[0].triangles), 1)
+        self.assertTrue(any('referenced missing points' in w
+                            for w in parsed.warnings))
 
     def test_out_of_range_triangles_dropped_with_a_warning(self):
         dtm_path = os.path.join(self.dir, 'mga_floor_1164.dtm')
         with open(dtm_path, 'w') as fh:
             fh.write('header\nTRISOLATION, 1,\n'
-                     '1, 1, 2, 3, 0, 0, 0,\n'
+                     '1, 1, 2, 4, 0, 0, 0,\n'
                      '2, 900, 901, 902, 0, 0, 0,\n0, 0, 0, 0\n')
         parsed = surpac.read_file(
             self.str_path, companions={'.dtm': dtm_path})
-        self.assertEqual(parsed.surfaces[0].triangles, [(0, 1, 2)])
+        self.assertEqual(len(parsed.surfaces[0].triangles), 1)
         self.assertTrue(any('referenced missing points' in w
                             for w in parsed.warnings))
 

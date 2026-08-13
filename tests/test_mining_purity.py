@@ -104,9 +104,16 @@ class TestRegistryLazyLoading(unittest.TestCase):
         self.assertNotIn('.dtm', self.registry.source_extensions())
 
     def test_planned_formats_are_named_not_silently_ignored(self):
-        self.assertEqual(self.registry.planned_label('x.dxf'), 'AutoCAD DXF')
+        self.assertEqual(self.registry.planned_label('x.12da'),
+                         '12d Model ASCII')
+        # A supported extension is not "planned".
         self.assertIsNone(self.registry.planned_label('x.str'))
+        self.assertIsNone(self.registry.planned_label('x.dxf'))
         self.assertIsNone(self.registry.planned_label('x.docx'))
+
+    def test_dxf_is_supported(self):
+        specs = self.registry.formats_for_extension('.dxf')
+        self.assertEqual([s.key for s in specs], ['dxf'])
 
 
 if __name__ == '__main__':

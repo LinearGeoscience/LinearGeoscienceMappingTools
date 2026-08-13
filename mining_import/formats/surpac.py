@@ -150,20 +150,29 @@ def parse_d_fields(fields, profile=PROFILE_STRING):
 def scan_str_lines(lines, name=''):
     """First pass: raw segments, before any d-field layout is assumed.
 
-    Returns (segments, flat_points, d_field_counts, warnings) where segments
-    is [(points, raw_d_field_lists, string_no)]. Splitting this out is what
-    lets the profile and strings-vs-stations decision be made from the whole
-    file rather than guessed per record.
+    Returns (segments, flat_points, dtm_index, d_field_counts, warnings) where
+    segments is [(points, raw_d_field_lists, string_no)]. Splitting this out
+    is what lets the profile and strings-vs-stations decision be made from the
+    whole file rather than guessed per record.
 
-    flat_points is every real point record in file order — exactly the 1-based
-    vertex ordering the paired .dtm indexes into, so it must include points
-    that later become stations.
+    flat_points is every real point record in file order.
+
+    dtm_index is the vertex space the paired .dtm's 1-based indices address,
+    which is NOT the same list: Surpac counts the `0, 0.000, 0.000, 0.000,`
+    SEPARATOR records as slots too. Those slots hold None here, and triangles
+    referencing them are dropped.
+
+    Verified against mga_mj_1238/1244: with separators counted, the summed
+    triangle area matches the same surfaces exported as DXF polyface meshes
+    exactly (2037.5 and 2353.0 m²); indexing real points only inflates them
+    26-fold because every triangle then reaches across the mesh.
 
     Malformed records (fewer than 4 comma fields, non-numeric coordinates) are
     skipped and counted. A segment left open at EOF is flushed.
     """
     segments = []
     flat_points = []
+    dtm_index = []
     d_field_counts = []
     warnings = []
     skipped_lines = 0
@@ -200,6 +209,8 @@ def scan_str_lines(lines, name=''):
         if string_no == 0:
             if len(fields) > 4 and fields[4].upper() == 'END':
                 break
+            # A separator still consumes a slot in the .dtm's index space.
+            dtm_index.append(None)
             close_segment()
             continue
         try:
@@ -220,13 +231,14 @@ def scan_str_lines(lines, name=''):
         current.append(point)
         current_d.append(raw)
         flat_points.append(point)
+        dtm_index.append(point)
         d_field_counts.append((len(raw), raw[3] if len(raw) > 3 else None))
     close_segment()
 
     if skipped_lines:
         warnings.append('{0}: {1} malformed record(s) skipped'.format(
             name or 'file', skipped_lines))
-    return segments, flat_points, d_field_counts, warnings
+    return segments, flat_points, dtm_index, d_field_counts, warnings
 
 
 def parse_str_lines(lines, name='', path=None, kind=None, profile=None):
@@ -235,7 +247,8 @@ def parse_str_lines(lines, name='', path=None, kind=None, profile=None):
     kind / profile override auto-detection (the dialog's "Import as" column).
     info carries the decisions made, for the dialog tooltip and the import log.
     """
-    segments, flat_points, counts, warnings = scan_str_lines(lines, name=name)
+    segments, flat_points, dtm_index, counts, warnings = scan_str_lines(
+        lines, name=name)
 
     if profile is None:
         profile = detect_d_profile(counts)
@@ -265,7 +278,8 @@ def parse_str_lines(lines, name='', path=None, kind=None, profile=None):
                 attrs_list[0] if attrs_list else {}),
             closed=is_closed(points)))
 
-    info = {'kind': kind, 'profile': profile, 'reason': reason}
+    info = {'kind': kind, 'profile': profile, 'reason': reason,
+            'dtm_index': dtm_index}
     return polylines, stations, flat_points, warnings, info
 
 
@@ -332,6 +346,7 @@ def read_file(path, companions=None, level=None, kind=None, profile=None,
     if dtm_path:
         with open(dtm_path, 'r', errors='replace') as fh:
             triangles = parse_dtm_lines(fh.readlines())
+        index_space = info['dtm_index']
         if not triangles:
             warnings.append('{0}: no triangles found — surface skipped'.format(
                 os.path.basename(dtm_path)))
@@ -339,18 +354,29 @@ def read_file(path, companions=None, level=None, kind=None, profile=None,
             warnings.append('{0}: no points to triangulate — surface '
                             'skipped'.format(os.path.basename(dtm_path)))
         else:
-            in_range = [t for t in triangles
-                        if all(0 <= v < len(flat_points) for v in t)]
-            dropped = len(triangles) - len(in_range)
+            # Triangles index the space that COUNTS SEPARATORS (see
+            # scan_str_lines); a triangle touching a separator slot is
+            # meaningless and is dropped rather than drawn from (0,0,0).
+            usable = [t for t in triangles
+                      if all(0 <= v < len(index_space)
+                             and index_space[v] is not None for v in t)]
+            dropped = len(triangles) - len(usable)
             if dropped:
                 warnings.append(
                     '{0}: {1} triangle(s) referenced missing points and were '
                     'skipped'.format(os.path.basename(dtm_path), dropped))
-            if in_range:
-                attrs = {'TriangleCount': len(in_range)}
+            if usable:
+                # Compact to the vertices actually used, so the surface does
+                # not carry a placeholder-riddled vertex list downstream.
+                used = sorted({v for tri in usable for v in tri})
+                remap = {old: new for new, old in enumerate(used)}
+                vertices = [index_space[v] for v in used]
+                compact = [(remap[a], remap[b], remap[c])
+                           for a, b, c in usable]
+                attrs = {'TriangleCount': len(compact)}
                 if level is not None:
                     attrs['Level'] = level
-                surfaces.append(Surface(flat_points, in_range, attrs))
+                surfaces.append(Surface(vertices, compact, attrs))
 
     if not flat_points:
         warnings.append('{0}: no points found'.format(name))
