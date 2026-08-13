@@ -1,6 +1,7 @@
 <!--
-Survey stations: small hollow dark-grey circle, labelled with the station
-name and its elevation in brackets, e.g. "MJ33 (197.5)".
+Survey stations: small hollow dark-grey triangle, labelled with the reduced
+level in the surveyors' shorthand, e.g. "STN(RL197.5m)". Labels place
+around the point so they dodge each other and the strings underneath.
 
 Monochrome to match the rest of the plugin. The white halo keeps labels
 readable where stations sit on top of floor strings.
@@ -16,7 +17,7 @@ readable where stations sit on top of floor strings.
             <Option type="QString" name="color" value="255,255,255,255"/>
             <Option type="QString" name="horizontal_anchor_point" value="1"/>
             <Option type="QString" name="joinstyle" value="bevel"/>
-            <Option type="QString" name="name" value="circle"/>
+            <Option type="QString" name="name" value="triangle"/>
             <Option type="QString" name="offset" value="0,0"/>
             <Option type="QString" name="offset_map_unit_scale" value="3x:0,0,0,0,0,0"/>
             <Option type="QString" name="offset_unit" value="MM"/>
@@ -40,7 +41,7 @@ readable where stations sit on top of floor strings.
       <text-style fontFamily="Segoe UI" fontSize="8" fontSizeUnit="Point" fontWeight="50"
                   fontItalic="0" fontUnderline="0" fontStrikeout="0" textColor="32,33,36,255"
                   textOpacity="1" allowHtml="0" multilineHeight="1" capitalization="0"
-                  fieldName="coalesce(&quot;PointId&quot;, '') || if(&quot;Elevation&quot; is null, '', ' (' || format_number(&quot;Elevation&quot;, 1) || ')')"
+                  fieldName="'STN' || if(&quot;Elevation&quot; is null, '', '(RL' || format_number(&quot;Elevation&quot;, 1) || 'm)')"
                   isExpression="1" namedStyle="Regular" blendMode="0" fontKerning="1"
                   fontLetterSpacing="0" fontWordSpacing="0" forcedBold="0" forcedItalic="0"
                   legendString="Aa" previewBkgrdColor="255,255,255,255" useSubstitutions="0">
@@ -71,7 +72,7 @@ readable where stations sit on top of floor strings.
                    formatNumbers="0" wrapChar="" autoWrapLength="0" useMaxLineLengthForAutoWrap="1"
                    multilineAlign="3" leftDirectionSymbol="&lt;" rightDirectionSymbol=">"
                    reverseDirectionSymbol="0"/>
-      <placement placement="1" placementFlags="0" dist="1.5" distUnits="MM" xOffset="0" yOffset="0"
+      <placement placement="0" placementFlags="0" dist="1.5" distUnits="MM" xOffset="0" yOffset="0"
                  offsetUnits="MM" quadOffset="4" rotationAngle="0" rotationUnit="0"
                  maxCurvedCharAngleIn="25" maxCurvedCharAngleOut="-25" priority="5"
                  overrunDistance="0" overrunDistanceUnit="MM" preserveRotation="1"
