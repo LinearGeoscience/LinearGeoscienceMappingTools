@@ -18,10 +18,17 @@
  *    edited on the device. Entries are resolved BY NAME (first match), so
  *    duplicate layer names pick the first; their original subsets persist
  *    under lgs_z_orig_x_<slug>, clear of the canonical lgs_z_orig_0..3.
- *    While active, ▼/▲ pills on the canvas step between known levels, and
- *    the "Include adjacent levels" switch widens the subset to the bench
- *    below + current + above (device-only clause shape — the desktop
- *    never parses device subsets, they're ephemeral).
+ *    While active, ▼/▲ pills on the canvas sweep the level numerically by
+ *    a step size (lgs_z_step, auto-suggested from the data, editable in
+ *    the dialog), and the "Include adjacent levels" switch widens the
+ *    subset to the bench below + current + above (device-only clause
+ *    shape — the desktop never parses device subsets, they're ephemeral).
+ *    The panel (non-modal, docked to the RIGHT edge so the map stays
+ *    interactive beside it) has a level ladder listing detected levels
+ *    highest-first with their level-name labels (desktop-detected text
+ *    field, e.g. "Level", shipped per extra layer in lgs_z_extra); a tap
+ *    filters to that level. The slice width is the user's own setting —
+ *    rung taps never change it; it auto-fills once from the first scan.
  *
  * 2. SCALE DISPLAY + LOCK — live "1:2 500" pill overlaid on the map
  *    canvas; tap it to lock the map to a fixed scale (presets or custom).
@@ -76,7 +83,11 @@
  *    the app's crosshair binding. On confirm (model freeze) the curve is
  *    rebuilt from the COMMITTED control points only — the crosshair is
  *    excluded, because QField's confirm tap jiggles the crosshair and
- *    would smear the final vertex. Spline parameters are baked at export
+ *    would smear the final vertex. The confirm rebuild happens inside
+ *    the ✓ tap, so it is kept fast: a segment cache (warmed while
+ *    drawing) makes the full-density math incremental, and an idle-time
+ *    full-density model write means ✓ usually only diffs the crosshair
+ *    tail. Spline parameters are baked at export
  *    via LGS-EXPORT-DATA:splineparams (tolerance is in map units — LGS
  *    projects are projected mine grids, same assumption as desktop).
  *
@@ -120,14 +131,25 @@ Item {
   readonly property string elevationField: 'Elevation'
   readonly property var tolPresets: [1, 2.5, 5, 10]
   // mirror of z_filter/expression.py::FLAT_SPAN — range features flatter
-  // than this vote in the scan, wider spans (ramps) abstain
+  // than this vote their midpoint in the scan
   readonly property real flatSpan: 2.0
+  // mirror of z_filter/levels.py::LEVEL_SPAN_CAP / LABEL_SLACK — wider
+  // spans are declines and abstain; a level name's RL may sit just
+  // outside its own string envelope
+  readonly property real levelSpanCap: 20.0
+  readonly property real labelSlack: 2.0
 
   property var userLevels: []        // persisted (lgs_z_levels) — typed only
   property var suggestions: []       // cluster objects from the last scan
   property var scanInfo: ({})        // {min, max, withElev, blank}
   property real autoTol: 0
+  property real stepSize: 5.0        // ▼/▲ sweep increment (lgs_z_step)
+  property var transientLevel: undefined  // swept level — never persisted
   property bool scanned: false
+  // Ladder populated from the desktop-baked lgs_z_suggest payload (the
+  // device-side scan cannot always see the data).
+  property bool suggestionsFromDesktop: false
+  property string scanIssue: ''      // per-layer device scan failures
   property bool filterActive: false
 
   // ----------------------------------------------------------------
@@ -230,10 +252,51 @@ Item {
   // ----------------------------------------------------------------
   readonly property real gapFloor: 2.0
   readonly property real gapFactor: 0.5
+  // relative — gaps within this of a threshold count as equal (merge),
+  // so float noise never decides a split
+  readonly property real gapEps: 1e-6
   readonly property real minTol: 1.0
   readonly property real tolMargin: 0.5
   readonly property real maxTol: 15.0
   readonly property int maxSuggestions: 12
+  readonly property real defaultStep: 5.0
+  readonly property real stepFloor: 0.5
+  readonly property real labelEps: 1e-9
+
+  // mirror of z_filter/levels.py::label_elevation — the RL inside a level
+  // name, and only when the name holds exactly one number ('13/42' is a
+  // name, not an RL)
+  function labelElevation(text) {
+    if (text === undefined || text === null)
+      return undefined
+    const matches = String(text).match(/-?\d+(?:\.\d+)?/g)
+    if (matches === null || matches.length !== 1)
+      return undefined
+    const value = Number(matches[0])
+    return isNaN(value) ? undefined : value
+  }
+
+  // mirror of z_filter/levels.py::range_vote — the one elevation a feature
+  // votes for, or undefined when it abstains
+  function rangeVote(zMin, zMax, label) {
+    let lo = Number(zMin)
+    let hi = Number(zMax)
+    if (isNaN(lo) || isNaN(hi))
+      return undefined
+    if (lo > hi) {
+      const swap = lo
+      lo = hi
+      hi = swap
+    }
+    if (hi - lo <= flatSpan)
+      return (lo + hi) / 2
+    const rl = labelElevation(label)
+    if (rl !== undefined && lo - labelSlack <= rl && rl <= hi + labelSlack)
+      return rl
+    if (hi - lo <= levelSpanCap)
+      return (lo + hi) / 2
+    return undefined
+  }
 
   function medianOf(values) {
     if (values.length === 0)
@@ -287,9 +350,6 @@ Item {
   function summarizeCluster(pairs) {
     const lo = pairs[0][0]
     const hi = pairs[pairs.length - 1][0]
-    const span = hi - lo
-    if (span / 2 + tolMargin > maxTol)
-      return binContinuous(pairs)
     let total = 0, weighted = 0
     let modeValue = pairs[0][0], modeCount = pairs[0][1]
     for (const pair of pairs) {
@@ -302,7 +362,13 @@ Item {
     }
     const level = (modeCount * 2 >= total)
         ? modeValue : Math.round(weighted / total * 10) / 10
-    const tol = Math.min(maxTol, Math.max(minTol, span / 2 + tolMargin))
+    // The tolerance must reach the far edge of the cluster from the level
+    // (which may sit off-centre, e.g. a modal value at one end); clusters
+    // too wide for that are treated as continuous data instead.
+    const needed = Math.max(level - lo, hi - level)
+    if (needed + tolMargin > maxTol)
+      return binContinuous(pairs)
+    const tol = Math.max(minTol, needed + tolMargin)
     return [{ level: level, count: total, lo: lo, hi: hi, suggested_tol: tol }]
   }
 
@@ -321,13 +387,27 @@ Item {
     let gaps = []
     for (let i = 1; i < pairs.length; i++)
       gaps.push(pairs[i][0] - pairs[i - 1][0])
+
+    // Discrete fast path: few distinct values, all separated by more than
+    // minTol — each distinct value IS a level (typed/snapped RLs), so a
+    // minTol window on each is both selective (never reaches a neighbour)
+    // and covering (lo == hi == level).
+    if (pairs.length <= maxSuggestions && (
+        gaps.length === 0
+        || Math.min.apply(null, gaps) > minTol * (1 + gapEps))) {
+      return pairs.map(function (pair) {
+        return { level: pair[0], count: pair[1], lo: pair[0], hi: pair[0],
+                 suggested_tol: minTol }
+      })
+    }
+
     const threshold = gaps.length
         ? Math.max(gapFloor, gapFactor * medianOf(gaps)) : gapFloor
 
     let clusters = []
     let current = [pairs[0]]
     for (let i = 1; i < pairs.length; i++) {
-      if (pairs[i][0] - pairs[i - 1][0] > threshold) {
+      if (pairs[i][0] - pairs[i - 1][0] > threshold * (1 + gapEps)) {
         clusters.push(current)
         current = []
       }
@@ -340,16 +420,22 @@ Item {
       result = result.concat(summarizeCluster(cluster))
     result.sort(function (a, b) { return a.level - b.level })
 
-    // Neighbour clamp: windows must never overlap.
+    // A window may extend at most to the midpoint between adjacent cluster
+    // edges, but is never clamped below what covers its own lo..hi: a window
+    // that cuts out its own members leaves them unreachable from any chip,
+    // which is worse than a little overlap toward a neighbour.
     for (let i = 0; i < result.length; i++) {
-      let halfGaps = []
+      const needed = Math.max(result[i].level - result[i].lo,
+                              result[i].hi - result[i].level)
+      let allowed = [result[i].suggested_tol]
       if (i > 0)
-        halfGaps.push((result[i].level - result[i - 1].level) / 2)
+        allowed.push(result[i].level
+                     - (result[i - 1].hi + result[i].lo) / 2)
       if (i < result.length - 1)
-        halfGaps.push((result[i + 1].level - result[i].level) / 2)
-      if (halfGaps.length)
-        result[i].suggested_tol = Math.max(
-            minTol, Math.min(result[i].suggested_tol, Math.min.apply(null, halfGaps)))
+        allowed.push((result[i].hi + result[i + 1].lo) / 2
+                     - result[i].level)
+      result[i].suggested_tol = Math.max(
+          minTol, needed, Math.min.apply(null, allowed))
     }
     return result
   }
@@ -367,6 +453,124 @@ Item {
       return (b.count - a.count) || (a.level - b.level)
     }).slice(0, n)
     return ranked.sort(function (a, b) { return a.level - b.level })
+  }
+
+  // mirror of z_filter/levels.py::_nice_step_nearest
+  function niceStepNearest(raw) {
+    if (raw <= 0)
+      return 1
+    let magnitude = 1
+    while (magnitude * 10 <= raw)
+      magnitude *= 10
+    while (magnitude > raw)
+      magnitude /= 10
+    let best = magnitude
+    const factors = [1, 2, 5, 10]
+    for (const factor of factors) {
+      const candidate = magnitude * factor
+      if (Math.abs(candidate - raw) < Math.abs(best - raw))
+        best = candidate
+    }
+    return best
+  }
+
+  // mirror of z_filter/levels.py::suggest_step
+  function suggestStep(clusters) {
+    const levels = clusters.map(function (c) { return c.level })
+        .sort(function (a, b) { return a - b })
+    if (levels.length < 2)
+      return defaultStep
+    let gaps = []
+    for (let i = 1; i < levels.length; i++)
+      gaps.push(levels[i] - levels[i - 1])
+    return Math.max(stepFloor, niceStepNearest(medianOf(gaps)))
+  }
+
+  // mirror of z_filter/levels.py::attach_labels — decorate suggestions
+  // with the modal level-name text; 'label' stays undefined when none.
+  function attachLabels(suggestions, valueLabels) {
+    for (const s of suggestions) {
+      let tally = {}
+      for (const key in valueLabels) {
+        const value = Number(key)
+        if (isNaN(value) || value < s.lo - labelEps ||
+            value > s.hi + labelEps)
+          continue
+        for (const label in valueLabels[key]) {
+          const text = String(label).trim()
+          if (text === '')
+            continue
+          tally[text] = (tally[text] || 0) + valueLabels[key][label]
+        }
+      }
+      let best
+      for (const label in tally) {
+        if (best === undefined || tally[label] > tally[best] ||
+            (tally[label] === tally[best] && label < best))
+          best = label
+      }
+      if (best !== undefined)
+        s.label = best
+    }
+    return suggestions
+  }
+
+  // mirror of z_filter/expression.py::parse_suggestions — parse the
+  // desktop-baked lgs_z_suggest payload; null when unusable. Keep this a
+  // plain self-contained function: the node parity harness extracts it
+  // verbatim (no plugin properties, no braces inside string literals).
+  function parseBakedSuggestions(text) {
+    let data
+    try {
+      data = JSON.parse(text)
+    } catch (error) {
+      return null
+    }
+    if (data === null || typeof data !== 'object' || data.v !== 1)
+      return null
+    if (!Array.isArray(data.levels))
+      return null
+    const fnum = function (v) {
+      if (v === undefined || v === null)
+        return NaN
+      if (typeof v === 'string' && v.trim() === '')
+        return NaN
+      return Number(v)
+    }
+    let suggestions = []
+    for (const raw of data.levels) {
+      if (raw === null || typeof raw !== 'object')
+        continue
+      const level = fnum(raw.level)
+      const count = fnum(raw.count)
+      const lo = fnum(raw.lo)
+      const hi = fnum(raw.hi)
+      const tol = fnum(raw.tol)
+      if (isNaN(level) || isNaN(count) || isNaN(lo) || isNaN(hi) ||
+          isNaN(tol))
+        continue
+      let entry = { level: level, count: Math.trunc(count), lo: lo,
+                    hi: hi, suggested_tol: tol }
+      if (raw.label)
+        entry.label = String(raw.label)
+      suggestions.push(entry)
+    }
+    if (suggestions.length === 0)
+      return null
+    const optional = function (v) {
+      const n = fnum(v)
+      return isNaN(n) ? undefined : n
+    }
+    const counter = function (v) {
+      const n = fnum(v)
+      return isNaN(n) ? 0 : Math.trunc(n)
+    }
+    return {
+      suggestions: suggestions,
+      info: { min: optional(data.min), max: optional(data.max),
+              withElev: counter(data.withElev), blank: counter(data.blank),
+              spanning: counter(data.spanning) }
+    }
   }
 
   // ----------------------------------------------------------------
@@ -431,6 +635,10 @@ Item {
       } else {
         t.field = e.field
       }
+      // Level-name text field, detected + persisted by the desktop panel
+      // (QML cannot enumerate a layer's fields itself).
+      if (e.label_field)
+        t.labelField = e.label_field
       targets.push(t)
     }
     return targets
@@ -448,6 +656,13 @@ Item {
     return Object.keys(seen).map(Number).sort(function (a, b) { return a - b })
   }
 
+  // Ladder rows: capped suggestions, HIGHEST level first (mining
+  // convention — matches the desktop ladder widget).
+  function ladderModel(clusters) {
+    return topSuggestions(clusters || suggestions, maxSuggestions)
+        .sort(function (a, b) { return b.level - a.level })
+  }
+
   function rebuildLevelModel(current) {
     const levels = mergedLevels()
     levelCombo.model = levels.map(fmt)
@@ -455,8 +670,11 @@ Item {
       const index = levels.indexOf(Number(current))
       if (index !== -1)
         levelCombo.currentIndex = index
-      else
-        levelCombo.editText = fmt(current)
+      // ALWAYS write editText (after currentIndex — assigning the index
+      // rewrites it): once the user has typed in the editable combo,
+      // editText stops tracking currentIndex, and currentLevel() reads
+      // editText — without this, stepping appears dead after any typing.
+      levelCombo.editText = fmt(current)
     }
   }
 
@@ -494,28 +712,37 @@ Item {
     return value
   }
 
+  // Numeric sweep: move the level down/up by stepSize (desktop parity —
+  // dockwidget._step_level). Applying also turns the filter ON when off.
   function stepLevel(direction) {
-    const levels = mergedLevels()
-    if (levels.length === 0)
-      return
     const level = currentLevel()
     let target
     if (level === undefined) {
-      target = direction > 0 ? levels[0] : levels[levels.length - 1]
-    } else {
-      let candidates = levels.filter(function (v) {
-        return direction > 0 ? v > level : v < level
-      })
-      if (candidates.length === 0) {
-        // Overlay pill taps must never feel dead at the list ends.
-        toast(direction > 0 ? qsTr('No higher level') : qsTr('No lower level'))
+      // Enter the data from the end the user is heading away from:
+      // ▼ starts the sweep at the top, ▲ at the bottom.
+      if (suggestions.length === 0) {
+        toast(qsTr('Scan data or type a level first'))
         return
       }
-      target = direction > 0 ? candidates[0] : candidates[candidates.length - 1]
+      const values = suggestions.map(function (c) { return c.level })
+      target = direction < 0 ? Math.max.apply(null, values)
+                             : Math.min.apply(null, values)
+    } else {
+      target = level + direction * stepSize
+      if (scanInfo.min !== undefined) {
+        const lo = scanInfo.min - stepSize
+        const hi = scanInfo.max + stepSize
+        const clamped = Math.min(Math.max(target, lo), hi)
+        if (clamped !== target) {
+          // Pill/button taps must never feel dead at the data's ends.
+          toast(direction > 0 ? qsTr('Top of data') : qsTr('Bottom of data'))
+        }
+        target = clamped
+      }
     }
     rebuildLevelModel(target)
-    if (filterActive)
-      applyFilter()
+    transientLevel = target
+    applyFilter()
   }
 
   // Nearest known level strictly below / above, for the adjacent-levels
@@ -539,13 +766,17 @@ Item {
 
   // Tolerance for a neighbour window: the cluster-fitted value when the
   // scan knows this level, else the user's tolerance — then clamped to
-  // half the gap to the nearest other known level (same rule as
-  // clusterLevels) so adjacent windows never overlap.
+  // half the gap to the nearest other known level so adjacent windows
+  // rarely overlap, but (as in clusterLevels) never below what covers the
+  // matched cluster's own lo..hi: coverage wins over non-overlap.
   function tolForLevel(level, fallbackTol) {
     let tol = Number(fallbackTol)
+    let needed = 0
     for (const cluster of suggestions) {
       if (cluster.level === level) {
         tol = cluster.suggested_tol
+        needed = Math.max(cluster.level - cluster.lo,
+                          cluster.hi - cluster.level)
         break
       }
     }
@@ -556,17 +787,49 @@ Item {
     }
     if (halfGaps.length)
       tol = Math.min(tol, Math.min.apply(null, halfGaps))
-    return Math.max(minTol, tol)
+    return Math.max(minTol, needed, tol)
   }
 
   // ----------------------------------------------------------------
   // Data scan
   // ----------------------------------------------------------------
+  // Shared tail of the device-scan and desktop-baked adoption paths.
+  function adoptSuggestions(sugs, info, fromDesktop) {
+    suggestions = sugs
+    autoTol = suggestions.length ? suggestTolerance(suggestions) : 0
+    // Auto-set the sweep step from the data, once — a step the user (or
+    // the desktop panel) already chose is never clobbered.
+    if (projVar('lgs_z_step', '') === '' && suggestions.length) {
+      stepSize = suggestStep(suggestions)
+      saveVar('lgs_z_step', fmt(stepSize))
+    }
+    // Same once-only rule for the slice width: a sensible default from
+    // the data, then it's the user's until they change it themselves.
+    if (projVar('lgs_z_tolerance', '') === '' && autoTol > 0) {
+      toleranceField.text = fmt(autoTol)
+      saveVar('lgs_z_tolerance', fmt(autoTol))
+    }
+    scanInfo = info
+    scanned = true
+    suggestionsFromDesktop = fromDesktop
+    rebuildLevelModel(currentLevel())
+  }
+
+  function loadBakedSuggestions() {
+    const baked = parseBakedSuggestions(projVar('lgs_z_suggest', ''))
+    if (baked === null)
+      return false
+    adoptSuggestions(baked.suggestions, baked.info, true)
+    return true
+  }
+
   function scanData() {
     let counts = {}
+    let labels = {}
     let withElev = 0
     let blank = 0
     let spanning = 0
+    let failed = []
     for (const t of allTargets()) {
       const layer = layerByName(t.name)
       if (layer === null)
@@ -574,40 +837,73 @@ Item {
       const fields = t.mode === 'range'
           ? [t.fieldMin, t.fieldMax] : [t.field || elevationField]
       let previous
+      let rowsSeen = 0
       try {
         previous = layer.subsetString
         layer.subsetString = ''      // scan ALL rows, not the filtered view
-        let iterator = LayerUtils.createFeatureIterator(layer)
-        while (iterator.hasNext()) {
-          const feature = iterator.next()
-          let values = []
-          for (const field of fields) {
-            const raw = feature.attribute(field)
-            const number = Number(raw)
-            if (raw === undefined || raw === null || String(raw) === '' ||
-                isNaN(number)) {
-              values = null
-              break
+        const consume = function (iterator) {
+          try {
+            while (iterator.hasNext()) {
+              rowsSeen++
+              const feature = iterator.next()
+              let values = []
+              for (const field of fields) {
+                const raw = feature.attribute(field)
+                const number = Number(raw)
+                if (raw === undefined || raw === null ||
+                    String(raw) === '' || isNaN(number)) {
+                  values = null
+                  break
+                }
+                values.push(number)
+              }
+              if (values === null) {
+                blank++
+                continue
+              }
+              // The level name is read before the vote: it is an input to
+              // it, not just decoration (mirror of scan_elevations).
+              let text = ''
+              if (t.labelField) {
+                const rawLabel = feature.attribute(t.labelField)
+                text = (rawLabel === undefined || rawLabel === null)
+                    ? '' : String(rawLabel).trim()
+                if (text.toUpperCase() === 'NULL')
+                  text = ''
+                text = text.slice(0, 40)
+              }
+              const value = rangeVote(values[0], values[values.length - 1],
+                                      text === '' ? undefined : text)
+              if (value === undefined) {
+                spanning++   // decline — abstains
+                continue
+              }
+              counts[value] = (counts[value] || 0) + 1
+              withElev++
+              if (text !== '') {
+                if (!(value in labels))
+                  labels[value] = {}
+                labels[value][text] = (labels[value][text] || 0) + 1
+              }
             }
-            values.push(number)
+          } finally {
+            try { iterator.close() } catch (closeError) {}
           }
-          if (values === null) {
-            blank++
-            continue
-          }
-          // Range features vote their midpoint only when flat; spanning
-          // ramps abstain (mirror of controller.scan_elevations).
-          if (values.length === 2 &&
-              Math.abs(values[1] - values[0]) > flatSpan) {
-            spanning++
-            continue
-          }
-          const value = values.length === 2
-              ? (values[0] + values[1]) / 2 : values[0]
-          counts[value] = (counts[value] || 0) + 1
-          withElev++
+        }
+        try {
+          consume(LayerUtils.createFeatureIterator(layer))
+        } catch (error) {
+          // Some QField builds may lack/deny the plain iterator — retry
+          // via the expression variant. Only when nothing was tallied,
+          // so a mid-iteration failure can never double count.
+          if (rowsSeen === 0)
+            consume(LayerUtils.createFeatureIteratorFromExpression(
+                layer, 'TRUE'))
+          else
+            throw error
         }
       } catch (error) {
+        failed.push(t.name + ': ' + error)
       } finally {
         try {
           if (previous !== undefined)
@@ -615,26 +911,46 @@ Item {
         } catch (error) {}
       }
     }
-    suggestions = clusterLevels(counts)
-    autoTol = suggestions.length ? suggestTolerance(suggestions) : 0
+    // Surface failures instead of swallowing them — this text is the
+    // on-device diagnosis for scan problems.
+    scanIssue = failed.length
+        ? qsTr('Z scan failed on: %1').arg(failed.join('; ')) : ''
+    for (const f of failed)
+      console.log('LGS z scan: ' + f)
+    if (failed.length)
+      toast(qsTr('Z scan: %1 layer(s) failed').arg(failed.length))
+    // A device scan that saw nothing must never wipe a desktop-baked
+    // ladder — that is the exact failure this bake defends against.
+    if (Object.keys(counts).length === 0) {
+      const baked = parseBakedSuggestions(projVar('lgs_z_suggest', ''))
+      if (baked !== null) {
+        adoptSuggestions(baked.suggestions, baked.info, true)
+        toast(qsTr('Device scan found nothing — showing desktop scan'))
+        return
+      }
+    }
     let info = { withElev: withElev, blank: blank, spanning: spanning }
     const values = Object.keys(counts).map(Number)
     if (values.length) {
       info.min = Math.min.apply(null, values)
       info.max = Math.max.apply(null, values)
     }
-    scanInfo = info
-    scanned = true
-    rebuildLevelModel(currentLevel())
+    adoptSuggestions(attachLabels(clusterLevels(counts), labels), info,
+                     false)
   }
 
   function summaryText() {
     if (!scanned)
       return qsTr('Not scanned yet.')
     if (scanInfo.min === undefined) {
-      return scanInfo.blank
+      // Say why nothing clustered — "no data" and "every feature abstained"
+      // look identical otherwise.
+      let empty = scanInfo.blank
           ? qsTr('No elevation values yet (%1 blank features)').arg(scanInfo.blank)
           : qsTr('No features found')
+      if (scanInfo.spanning)
+        empty += '  ·  ' + qsTr('%1 spanning levels').arg(scanInfo.spanning)
+      return empty
     }
     let text = (scanInfo.min === scanInfo.max
         ? fmt(scanInfo.min) : fmt(scanInfo.min) + '–' + fmt(scanInfo.max)) + ' m'
@@ -643,6 +959,8 @@ Item {
       text += '  ·  ' + qsTr('%1 blank').arg(scanInfo.blank)
     if (scanInfo.spanning)
       text += '  ·  ' + qsTr('%1 spanning levels').arg(scanInfo.spanning)
+    if (suggestionsFromDesktop)
+      text += '  ·  ' + qsTr('desktop scan')
     return text
   }
 
@@ -705,12 +1023,18 @@ Item {
     }
 
     filterActive = true
-    addLevel(level)
+    // Swept levels are transient — persisting every ▼/▲ increment would
+    // fill lgs_z_levels with noise (desktop parity: dockwidget._apply).
+    if (transientLevel !== undefined && level === transientLevel)
+      transientLevel = undefined
+    else
+      addLevel(level)
     saveVar('lgs_z_enabled', '1')
     saveVar('lgs_z_level', fmt(level))
     saveVar('lgs_z_tolerance', fmt(tolerance))
     saveVar('lgs_z_shownull', showNullSwitch.checked ? '1' : '0')
     saveVar('lgs_z_adjacent', adjacentSwitch.checked ? '1' : '0')
+    applyRasterZ(levels, tols)
     try {
       iface.mapCanvas().refresh()
     } catch (error) {}
@@ -749,6 +1073,7 @@ Item {
     }
     filterActive = false
     saveVar('lgs_z_enabled', '0')
+    restoreRasterZ()
     try {
       iface.mapCanvas().refresh()
     } catch (error) {}
@@ -758,7 +1083,13 @@ Item {
 
   function restoreFromProject() {
     loadLevels()
+    // Desktop-baked levels first: the ladder must render even when the
+    // device-side scan cannot see the data.
+    loadBakedSuggestions()
     toleranceField.text = projVar('lgs_z_tolerance', '5')
+    const step = Number(projVar('lgs_z_step', ''))
+    if (projVar('lgs_z_step', '') !== '' && !isNaN(step) && step > 0)
+      stepSize = step
     showNullSwitch.checked = projVar('lgs_z_shownull', '1') === '1'
     adjacentSwitch.checked = projVar('lgs_z_adjacent', '0') === '1'
     const level = Number(projVar('lgs_z_level', ''))
@@ -819,7 +1150,11 @@ Item {
     }
 
     onClicked: {
-      zDialog.open()
+      // Toggle: the non-modal panel has no scrim to tap-dismiss.
+      if (zDialog.visible)
+        zDialog.close()
+      else
+        zDialog.open()
     }
   }
 
@@ -829,246 +1164,367 @@ Item {
   Dialog {
     id: zDialog
     parent: mainWindow.contentItem
-    modal: true
+    // Non-modal right-side panel: no overlay grab and no dim, so the map
+    // keeps panning/zooming beside it; the Z button and the header ✕
+    // both close.
+    modal: false
+    dim: false
+    closePolicy: Popup.CloseOnEscape
     title: qsTr('Z Filter — Level Mapping')
-    x: (mainWindow.width - width) / 2
-    y: (mainWindow.height - height) / 2
-    width: Math.min(mainWindow.width - 40, 420)
-    standardButtons: Dialog.Close
+    x: mainWindow.width - width
+    y: 0
+    width: Math.min(340, mainWindow.width - 60)
+    height: mainWindow.height
+
+    // Close lives top-right: the panel is full height, so a standard
+    // footer button would sit at the very bottom of the screen.
+    header: RowLayout {
+      spacing: 0
+
+      Label {
+        text: zDialog.title
+        font.bold: true
+        elide: Text.ElideRight
+        leftPadding: 16
+        topPadding: 12
+        bottomPadding: 12
+        Layout.fillWidth: true
+      }
+
+      ToolButton {
+        text: '✕'
+        font.pointSize: 14
+        Layout.rightMargin: 4
+        onClicked: zDialog.close()
+      }
+    }
 
     onOpened: {
       if (!plugin.scanned)
         plugin.scanData()
     }
 
-    ColumnLayout {
+    ScrollView {
+      id: zScroll
       anchors.fill: parent
-      spacing: 12
+      clip: true
+      contentWidth: availableWidth   // vertical scroll only
 
-      Label {
-        Layout.fillWidth: true
-        text: plugin.summaryText()
-        wrapMode: Text.WordWrap
-        font.pointSize: 10
-        opacity: 0.7
-      }
+      ColumnLayout {
+        id: zDialogColumn
+        width: zScroll.availableWidth
+        spacing: 10
 
-      // Suggested levels — tap to set level + fitted tolerance and filter.
-      Flow {
-        Layout.fillWidth: true
-        spacing: 4
-        visible: plugin.suggestions.length > 0
-
-        Repeater {
-          model: plugin.topSuggestions(plugin.suggestions, plugin.maxSuggestions)
-
-          delegate: Button {
-            required property var modelData
-            flat: true
-            topPadding: 4
-            bottomPadding: 4
-            leftPadding: 10
-            rightPadding: 10
-            text: plugin.fmt(modelData.level) + ' (' + modelData.count + ')'
-            background: Rectangle {
-              color: 'transparent'
-              border.color: Theme.secondaryTextColor
-              border.width: 1
-              radius: 2
-            }
-            onClicked: {
-              plugin.rebuildLevelModel(modelData.level)
-              toleranceField.text = plugin.fmt(modelData.suggested_tol)
-              if (plugin.filterActive)
-                plugin.applyFilter()
-            }
-          }
-        }
-      }
-
-      Label {
-        text: qsTr('Level (elevation)')
-        font.bold: true
-      }
-
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: 6
-
-        ComboBox {
-          id: levelCombo
-          Layout.fillWidth: true
-          editable: true
-          validator: DoubleValidator {}
-          onAccepted: {
-            const value = Number(editText)
-            if (!isNaN(value) && String(editText).trim() !== '') {
-              plugin.addLevel(value)
-              if (plugin.filterActive)
-                plugin.applyFilter()
-            }
-          }
-        }
-
-        RoundButton {
-          text: '▼'
-          onClicked: plugin.stepLevel(-1)
-        }
-
-        RoundButton {
-          text: '▲'
-          onClicked: plugin.stepLevel(+1)
-        }
-      }
-
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: 6
-
-        Label {
-          text: qsTr('Tolerance ±')
-        }
-
-        TextField {
-          id: toleranceField
-          Layout.preferredWidth: 80
-          text: '5'
-          validator: DoubleValidator { bottom: 0 }
-          inputMethodHints: Qt.ImhFormattedNumbersOnly
-        }
-
-        Label {
-          text: qsTr('m')
-        }
-
-        Item {
-          Layout.fillWidth: true
-        }
-      }
-
-      // Quick-set ± presets + the data-derived Auto suggestion.
-      Flow {
-        Layout.fillWidth: true
-        spacing: 4
-
-        Repeater {
-          model: plugin.tolPresets
-
-          delegate: Button {
-            required property var modelData
-            flat: true
-            topPadding: 4
-            bottomPadding: 4
-            leftPadding: 10
-            rightPadding: 10
-            text: '±' + plugin.fmt(modelData)
-            background: Rectangle {
-              color: 'transparent'
-              border.color: Theme.secondaryTextColor
-              border.width: 1
-              radius: 2
-            }
-            onClicked: {
-              toleranceField.text = plugin.fmt(modelData)
-              if (plugin.filterActive)
-                plugin.applyFilter()
-            }
-          }
-        }
-
+        // The primary control leads (desktop parity): tap toggles the
+        // filter on/off — every other control below applies live.
         Button {
-          flat: true
-          topPadding: 4
-          bottomPadding: 4
-          leftPadding: 10
-          rightPadding: 10
-          enabled: plugin.autoTol > 0
-          text: plugin.autoTol > 0
-              ? qsTr('Auto (±%1)').arg(plugin.fmt(plugin.autoTol)) : qsTr('Auto')
+          id: zToggle
+          Layout.fillWidth: true
+          topPadding: 10
+          bottomPadding: 10
+          text: plugin.filterActive
+              ? qsTr('Filter: ON  (%1 ± %2 m)')
+                    .arg(levelCombo.editText).arg(toleranceField.text)
+              : qsTr('Filter: OFF')
+          onClicked: plugin.filterActive
+              ? plugin.clearFilter() : plugin.applyFilter()
           background: Rectangle {
-            color: 'transparent'
-            border.color: Theme.secondaryTextColor
+            color: plugin.filterActive ? '#2196F3' : 'transparent'
+            border.color: plugin.filterActive
+                ? '#2196F3' : Theme.secondaryTextColor
             border.width: 1
-            radius: 2
+            radius: 4
           }
-          onClicked: {
-            toleranceField.text = plugin.fmt(plugin.autoTol)
-            if (plugin.filterActive)
-              plugin.applyFilter()
-          }
-        }
-      }
-
-      RowLayout {
-        Layout.fillWidth: true
-
-        Switch {
-          id: showNullSwitch
-          checked: true
-        }
-
-        Label {
-          text: qsTr('Show features with no elevation')
-          wrapMode: Text.WordWrap
-          Layout.fillWidth: true
-        }
-      }
-
-      RowLayout {
-        Layout.fillWidth: true
-
-        Switch {
-          id: adjacentSwitch
-          checked: false
-          onToggled: {
-            plugin.saveVar('lgs_z_adjacent', checked ? '1' : '0')
-            if (plugin.filterActive)
-              plugin.applyFilter()
+          contentItem: Text {
+            text: zToggle.text
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            color: plugin.filterActive ? 'white' : Theme.mainTextColor
           }
         }
 
         Label {
-          text: qsTr('Include adjacent levels')
+          Layout.fillWidth: true
+          text: plugin.summaryText()
           wrapMode: Text.WordWrap
-          Layout.fillWidth: true
+          font.pointSize: 10
+          opacity: 0.7
         }
-      }
 
-      Button {
-        Layout.fillWidth: true
-        text: qsTr('Rescan data')
-        onClicked: plugin.scanData()
-      }
+        // On-device diagnosis for scan problems (hidden when clean).
+        Label {
+          Layout.fillWidth: true
+          text: plugin.scanIssue
+          visible: plugin.scanIssue !== ''
+          wrapMode: Text.WordWrap
+          font.pointSize: 9
+          color: '#F44336'
+        }
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: 6
+        // Level ladder — detected levels, highest first; tap a rung to
+        // filter to it with its fitted width.
+        ColumnLayout {
+          Layout.fillWidth: true
+          spacing: 2
+          visible: plugin.suggestions.length > 0
+
+          Repeater {
+            model: plugin.ladderModel(plugin.suggestions)
+
+            delegate: Rectangle {
+              required property var modelData
+              readonly property bool isActive:
+                  Number(levelCombo.editText) === modelData.level
+              readonly property bool inWindow:
+                  plugin.filterActive && !isActive &&
+                  Math.abs(modelData.level - Number(levelCombo.editText))
+                      <= Number(toleranceField.text)
+              Layout.fillWidth: true
+              height: 40
+              radius: 4
+              color: isActive ? '#332196F3'
+                              : (inWindow ? '#1A2196F3' : 'transparent')
+              border.color: isActive ? '#2196F3' : Theme.secondaryTextColor
+              border.width: isActive ? 2 : 1
+
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+
+                Label {
+                  text: plugin.fmt(modelData.level)
+                  font.bold: isActive
+                }
+
+                Label {
+                  text: modelData.label || ''
+                  color: Theme.secondaryTextColor
+                  elide: Text.ElideRight
+                  Layout.fillWidth: true
+                }
+
+                Label {
+                  text: '(' + modelData.count + ')'
+                  color: Theme.secondaryTextColor
+                }
+              }
+
+              TapHandler {
+                // The width is the user's choice — a rung tap only moves
+                // the level.
+                onTapped: {
+                  plugin.rebuildLevelModel(modelData.level)
+                  plugin.applyFilter()
+                }
+              }
+            }
+          }
+        }
+
+        Label {
+          text: qsTr('Level (elevation)')
+          font.bold: true
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: 6
+
+          RoundButton {
+            text: '▼'
+            onClicked: plugin.stepLevel(-1)
+          }
+
+          ComboBox {
+            id: levelCombo
+            Layout.fillWidth: true
+            editable: true
+            validator: DoubleValidator {}
+            onAccepted: {
+              const value = Number(editText)
+              if (!isNaN(value) && String(editText).trim() !== '') {
+                plugin.addLevel(value)
+                if (plugin.filterActive)
+                  plugin.applyFilter()
+              }
+            }
+          }
+
+          RoundButton {
+            text: '▲'
+            onClicked: plugin.stepLevel(+1)
+          }
+
+          Label {
+            text: qsTr('Step')
+            leftPadding: 4
+          }
+
+          TextField {
+            id: stepField
+            Layout.preferredWidth: 64
+            text: plugin.fmt(plugin.stepSize)
+            validator: DoubleValidator { bottom: 0.01 }
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+            onEditingFinished: {
+              const value = Number(text)
+              if (!isNaN(value) && value > 0) {
+                plugin.stepSize = value
+                plugin.saveVar('lgs_z_step', plugin.fmt(value))
+              }
+              text = plugin.fmt(plugin.stepSize)
+            }
+          }
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: 6
+
+          Label {
+            text: qsTr('Width ±')
+          }
+
+          TextField {
+            id: toleranceField
+            Layout.preferredWidth: 80
+            text: '5'
+            validator: DoubleValidator { bottom: 0 }
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+            onEditingFinished: {
+              // Persist immediately: the width is the user's choice and
+              // must survive rung taps and project reloads.
+              const value = Number(text)
+              if (!isNaN(value) && String(text).trim() !== '')
+                plugin.saveVar('lgs_z_tolerance', plugin.fmt(value))
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+
+          Label {
+            text: qsTr('m')
+          }
+
+          Item {
+            Layout.fillWidth: true
+          }
+        }
+
+        // Quick-set ± presets + the data-derived Auto suggestion.
+        Flow {
+          Layout.fillWidth: true
+          spacing: 4
+
+          Repeater {
+            model: plugin.tolPresets
+
+            delegate: Button {
+              required property var modelData
+              flat: true
+              topPadding: 4
+              bottomPadding: 4
+              leftPadding: 10
+              rightPadding: 10
+              text: '±' + plugin.fmt(modelData)
+              background: Rectangle {
+                color: 'transparent'
+                border.color: Theme.secondaryTextColor
+                border.width: 1
+                radius: 2
+              }
+              onClicked: {
+                toleranceField.text = plugin.fmt(modelData)
+                plugin.saveVar('lgs_z_tolerance', plugin.fmt(modelData))
+                if (plugin.filterActive)
+                  plugin.applyFilter()
+              }
+            }
+          }
+
+          Button {
+            flat: true
+            topPadding: 4
+            bottomPadding: 4
+            leftPadding: 10
+            rightPadding: 10
+            enabled: plugin.autoTol > 0
+            text: plugin.autoTol > 0
+                ? qsTr('Auto (±%1)').arg(plugin.fmt(plugin.autoTol)) : qsTr('Auto')
+            background: Rectangle {
+              color: 'transparent'
+              border.color: Theme.secondaryTextColor
+              border.width: 1
+              radius: 2
+            }
+            onClicked: {
+              toleranceField.text = plugin.fmt(plugin.autoTol)
+              plugin.saveVar('lgs_z_tolerance', plugin.fmt(plugin.autoTol))
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+
+          Switch {
+            id: showNullSwitch
+            checked: true
+            onToggled: {
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+
+          Label {
+            text: qsTr('Show features with no elevation')
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+          }
+        }
+
+        RowLayout {
+          Layout.fillWidth: true
+
+          Switch {
+            id: adjacentSwitch
+            checked: false
+            onToggled: {
+              plugin.saveVar('lgs_z_adjacent', checked ? '1' : '0')
+              if (plugin.filterActive)
+                plugin.applyFilter()
+            }
+          }
+
+          Label {
+            text: qsTr('Include adjacent levels')
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+          }
+        }
 
         Button {
           Layout.fillWidth: true
-          text: qsTr('Apply filter')
-          highlighted: true
-          onClicked: plugin.applyFilter()
+          text: qsTr('Rescan data')
+          onClicked: plugin.scanData()
         }
 
-        Button {
+        Label {
           Layout.fillWidth: true
-          text: qsTr('Filter off')
-          enabled: plugin.filterActive
-          onClicked: plugin.clearFilter()
+          text: plugin.filterActive
+              ? (adjacentSwitch.checked
+                 ? qsTr('Filter is ON — selected level and adjacent levels are shown.')
+                 : qsTr('Filter is ON — only the selected level is shown.'))
+              : qsTr('Filter is off — all data is shown.')
+          wrapMode: Text.WordWrap
+          font.pointSize: 10
+          opacity: 0.7
         }
-      }
-
-      Label {
-        Layout.fillWidth: true
-        text: plugin.filterActive
-            ? (adjacentSwitch.checked
-               ? qsTr('Filter is ON — selected level and adjacent levels are shown.')
-               : qsTr('Filter is ON — only the selected level is shown.'))
-            : qsTr('Filter is off — all data is shown.')
-        wrapMode: Text.WordWrap
-        font.pointSize: 10
-        opacity: 0.7
       }
     }
   }
@@ -1800,6 +2256,11 @@ Item {
     imageryOpacities = values
     saveVar('lgs_opacity', JSON.stringify(values))
     refreshOpacityLabel()
+    // A tap on an elevation-tied raster records the user's intent above,
+    // but an out-of-window raster must stay Z-hidden (also re-asserts
+    // after the startup opacity restore, which runs after the Z restore).
+    if (filterActive)
+      reassertRasterZFor(name)
     try {
       iface.mapCanvas().refresh()
     } catch (error) {}
@@ -1871,6 +2332,91 @@ Item {
       }
     } catch (error) {}
     refreshOpacityLabel()
+  }
+
+  // ----------------------------------------------------------------
+  // Elevation-tied rasters — authored by the desktop panel into the
+  // lgs_z_rasters project variable. QML has no layer-tree access, so
+  // "hidden" is opacity 0; the user's chosen opacity (imageryOpacities /
+  // lgs_opacity) is what an in-window raster comes back to.
+  // ----------------------------------------------------------------
+  function rasterZTargets() {
+    let targets = []
+    try {
+      const data = JSON.parse(projVar('lgs_z_rasters', ''))
+      for (const e of (data && data.rasters) || []) {
+        if (!e || !e.name || e.checked === false)
+          continue
+        const elevation = Number(e.elevation)
+        if (!isFinite(elevation))
+          continue
+        targets.push({name: String(e.name), elevation: elevation})
+      }
+    } catch (error) {}
+    return targets
+  }
+
+  // Opacity write WITHOUT persistence: never touches imageryOpacities /
+  // lgs_opacity (the user's choice) and never marks opacityUnsupported —
+  // Z-driven hides are transient, not user intent.
+  function setLayerOpacityRaw(name, value) {
+    const layer = layerByName(name)
+    if (layer === null)
+      return
+    try {
+      layer.opacity = value
+      layer.triggerRepaint()
+    } catch (error) {}
+  }
+
+  // Mirror of z_filter/expression.py raster_in_windows — keep in sync.
+  function rasterInWindows(elevation, levels, tols) {
+    for (let i = 0; i < levels.length; i++) {
+      if (elevation >= levels[i] - tols[i] && elevation <= levels[i] + tols[i])
+        return true
+    }
+    return false
+  }
+
+  function applyRasterZ(levels, tols) {
+    for (const t of rasterZTargets()) {
+      setLayerOpacityRaw(t.name,
+                         rasterInWindows(t.elevation, levels, tols)
+                             ? layerOpacityValue(t.name) : 0)
+    }
+  }
+
+  // Filter cleared: every tied raster back to the user's opacity.
+  function restoreRasterZ() {
+    for (const t of rasterZTargets())
+      setLayerOpacityRaw(t.name, layerOpacityValue(t.name))
+  }
+
+  // Re-assert the Z state for one layer after an opacity-panel change (or
+  // the startup opacity restore) touched it: the tap is recorded as the
+  // user's intent, but an out-of-window raster must stay hidden.
+  function reassertRasterZFor(name) {
+    const targets = rasterZTargets()
+    let entry = null
+    for (const t of targets) {
+      if (t.name === name) {
+        entry = t
+        break
+      }
+    }
+    if (entry === null)
+      return
+    const level = currentLevel()
+    if (level === undefined)
+      return
+    const tol = Number(toleranceField.text)
+    const tolerance = isNaN(tol) ? 5 : tol
+    const levels = adjacentSwitch.checked ? neighbourLevels(level) : [level]
+    const tols = levels.map(function (value) {
+      return value === level ? tolerance : tolForLevel(value, tolerance)
+    })
+    if (!rasterInWindows(entry.elevation, levels, tols))
+      setLayerOpacityRaw(name, 0)
   }
 
   // ================================================================
@@ -2043,6 +2589,17 @@ Item {
       if (o.x >= 0 && o.y >= 0 &&
           o.x <= overlayBar.width && o.y <= overlayBar.height)
         return true
+    } catch (error) {}
+    try {
+      // The Z panel is a non-modal side popup over the canvas edge.
+      if (zDialog.visible) {
+        const d = mainWindow.contentItem.mapFromItem(
+            clipCatcher, pos.x, pos.y)
+        if (d.x >= zDialog.x && d.y >= zDialog.y &&
+            d.x <= zDialog.x + zDialog.width &&
+            d.y <= zDialog.y + zDialog.height)
+          return true
+      }
     } catch (error) {}
     return false
   }
@@ -3359,6 +3916,8 @@ Item {
   property bool splineMutating: false // re-entrancy guard around rebuilds
   property var splineLastCross: null  // crosshair coords used in last rebuild
   property var splineLastSeq: null    // sequence last written to the model
+  property bool splineLastSeqFull: false // splineLastSeq is at full density
+  property var splineFullCache: ({})  // full-density segment cache
   property var splineMarkerPositions: []
 
   // ----------------------------------------------------------------
@@ -3452,15 +4011,68 @@ Item {
     return out
   }
 
+  // Exact point equality for cache keys: NaN/undefined z equals
+  // NaN/undefined z (same rules as splineCommonPrefixLength), and the
+  // open-end boundary marker null only equals null.
+  function splineSamePoint(a, b) {
+    if (a === null || b === null)
+      return a === b
+    if (a.x !== b.x || a.y !== b.y)
+      return false
+    const az = a.z
+    const bz = b.z
+    return az === bz ||
+        ((az === undefined || Number.isNaN(az)) &&
+         (bz === undefined || Number.isNaN(bz)))
+  }
+
+  // Segment cache for the full-density curves. A segment's pruned sample
+  // block is fully determined by four controls (tangent neighbours +
+  // endpoints; null marks an open-curve end, where the tangent formula
+  // changes) and the parameters, so entries are validated purely by
+  // comparing those recorded deps — a stale entry fails the comparison
+  // and recomputes, no separate invalidation exists. Hits replay the
+  // exact block a previous call computed, so cached output stays
+  // bit-identical to the uncached path.
+  // Returns the entry array for the requested curve kind ('o' open /
+  // 'c' closed), resetting the whole cache when the params changed.
+  function splineCacheEntries(cache, kind, tightness, tolerance, maxSegments) {
+    if (!cache)
+      return null
+    if (!cache.p || cache.p[0] !== tightness || cache.p[1] !== tolerance ||
+        cache.p[2] !== maxSegments) {
+      cache.p = [tightness, tolerance, maxSegments]
+      cache.o = []
+      cache.c = []
+    }
+    return cache[kind]
+  }
+
+  function splineCacheLookup(entries, i, deps) {
+    const entry = entries[i]
+    if (!entry)
+      return null
+    for (let k = 0; k < deps.length; k++) {
+      if (!splineSamePoint(entry.deps[k], deps[k]))
+        return null
+    }
+    return entry.block
+  }
+
   // mirror of spline_interp.hermite (open polyline). Control points are
   // interpolated exactly and survive simplification verbatim; the sample
   // blocks between them are pruned per segment, same as the desktop
   // cleanup loop. Operation order matches the Python exactly so the
-  // parity fixtures agree to float precision.
-  function splineHermiteOpen(points, tightness, tolerance, maxSegments) {
+  // parity fixtures agree to float precision. The optional cache (see
+  // splineCacheEntries) skips recomputing segments whose deps are
+  // unchanged since a previous call — output is bit-identical.
+  function splineHermiteOpen(points, tightness, tolerance, maxSegments, cache) {
     const n = points.length
     if (n < 3)
       return points.slice()
+
+    const entries = splineCacheEntries(cache, 'o', tightness, tolerance,
+                                       maxSegments)
 
     const tangents = [splineTangent(points[0], points[1], tightness)]
     for (let i = 1; i < n - 1; i++)
@@ -3473,25 +4085,33 @@ Item {
       const p1 = points[i + 1]
       result.push(p0)
 
-      const t = 1.0 / maxSegments
-      let s = t
-      const samples = []
-      while (s < 1) {
-        const h1p1 = splinePointScalar(p0, (2 * (s ** 3)) - (3 * (s ** 2)) + 1)
-        const h2p2 = splinePointScalar(p1, 3 * (s ** 2) - 2 * (s ** 3))
-        const h3t1 = splinePointScalar(tangents[i], (s ** 3) - (2 * (s ** 2)) + s)
-        const h4t2 = splinePointScalar(tangents[i + 1], (s ** 3) - (s ** 2))
-        const tmp = splinePointsAdd(splinePointsAdd(h1p1, h2p2),
-                                    splinePointsAdd(h3t1, h4t2))
-        tmp.z = p0.z + (p1.z - p0.z) * s   // NaN propagates for 2D input
-        samples.push(tmp)
-        s = s + t
-      }
+      const deps = [i > 0 ? points[i - 1] : null, p0, p1,
+                    i + 1 < n - 1 ? points[i + 2] : null]
+      let interior = entries ? splineCacheLookup(entries, i, deps) : null
+      if (interior === null) {
+        const t = 1.0 / maxSegments
+        let s = t
+        const samples = []
+        while (s < 1) {
+          const h1p1 = splinePointScalar(p0, (2 * (s ** 3)) - (3 * (s ** 2)) + 1)
+          const h2p2 = splinePointScalar(p1, 3 * (s ** 2) - 2 * (s ** 3))
+          const h3t1 = splinePointScalar(tangents[i], (s ** 3) - (2 * (s ** 2)) + s)
+          const h4t2 = splinePointScalar(tangents[i + 1], (s ** 3) - (s ** 2))
+          const tmp = splinePointsAdd(splinePointsAdd(h1p1, h2p2),
+                                      splinePointsAdd(h3t1, h4t2))
+          tmp.z = p0.z + (p1.z - p0.z) * s   // NaN propagates for 2D input
+          samples.push(tmp)
+          s = s + t
+        }
 
-      const block = [p0].concat(samples).concat([p1])
-      const pruned = splineSimplify(block, tolerance)
-      for (let j = 1; j < pruned.length - 1; j++)
-        result.push(pruned[j])
+        const block = [p0].concat(samples).concat([p1])
+        const pruned = splineSimplify(block, tolerance)
+        interior = pruned.slice(1, pruned.length - 1)
+        if (entries)
+          entries[i] = { deps: deps, block: interior }
+      }
+      for (let j = 0; j < interior.length; j++)
+        result.push(interior[j])
     }
     result.push(points[n - 1])
     return result
@@ -3501,10 +4121,13 @@ Item {
   // is the UNCLOSED unique ring (the rubberband carries no closing
   // duplicate) and the output stays unclosed too. Returns
   // {points, lastControlIndex} so the caller can rotate the ring.
-  function splineHermiteClosed(points, tightness, tolerance, maxSegments) {
+  function splineHermiteClosed(points, tightness, tolerance, maxSegments, cache) {
     const n = points.length
     if (n < 3)
       return { points: points.slice(), lastControlIndex: points.length - 1 }
+
+    const entries = splineCacheEntries(cache, 'c', tightness, tolerance,
+                                      maxSegments)
 
     const tangents = []
     for (let i = 0; i < n; i++) {
@@ -3521,25 +4144,32 @@ Item {
       lastControlIndex = result.length
       result.push(p0)
 
-      const t = 1.0 / maxSegments
-      let s = t
-      const samples = []
-      while (s < 1) {
-        const h1p1 = splinePointScalar(p0, (2 * (s ** 3)) - (3 * (s ** 2)) + 1)
-        const h2p2 = splinePointScalar(p1, 3 * (s ** 2) - 2 * (s ** 3))
-        const h3t1 = splinePointScalar(tangents[i], (s ** 3) - (2 * (s ** 2)) + s)
-        const h4t2 = splinePointScalar(tangents[(i + 1) % n], (s ** 3) - (s ** 2))
-        const tmp = splinePointsAdd(splinePointsAdd(h1p1, h2p2),
-                                    splinePointsAdd(h3t1, h4t2))
-        tmp.z = p0.z + (p1.z - p0.z) * s
-        samples.push(tmp)
-        s = s + t
-      }
+      const deps = [points[(i - 1 + n) % n], p0, p1, points[(i + 2) % n]]
+      let interior = entries ? splineCacheLookup(entries, i, deps) : null
+      if (interior === null) {
+        const t = 1.0 / maxSegments
+        let s = t
+        const samples = []
+        while (s < 1) {
+          const h1p1 = splinePointScalar(p0, (2 * (s ** 3)) - (3 * (s ** 2)) + 1)
+          const h2p2 = splinePointScalar(p1, 3 * (s ** 2) - 2 * (s ** 3))
+          const h3t1 = splinePointScalar(tangents[i], (s ** 3) - (2 * (s ** 2)) + s)
+          const h4t2 = splinePointScalar(tangents[(i + 1) % n], (s ** 3) - (s ** 2))
+          const tmp = splinePointsAdd(splinePointsAdd(h1p1, h2p2),
+                                      splinePointsAdd(h3t1, h4t2))
+          tmp.z = p0.z + (p1.z - p0.z) * s
+          samples.push(tmp)
+          s = s + t
+        }
 
-      const block = [p0].concat(samples).concat([p1])
-      const pruned = splineSimplify(block, tolerance)
-      for (let j = 1; j < pruned.length - 1; j++)
-        result.push(pruned[j])
+        const block = [p0].concat(samples).concat([p1])
+        const pruned = splineSimplify(block, tolerance)
+        interior = pruned.slice(1, pruned.length - 1)
+        if (entries)
+          entries[i] = { deps: deps, block: interior }
+      }
+      for (let j = 0; j < interior.length; j++)
+        result.push(interior[j])
     }
     // lastControlIndex still points at points[n-1] — the wrap segment's
     // samples sit after it, closing the ring back to points[0] implicitly.
@@ -3577,7 +4207,7 @@ Item {
   //    seam curved.
   // Fewer than 3 distinct points pass through unchanged (native straight
   // rubberband behaviour).
-  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments) {
+  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments, cache) {
     const pts = []
     for (let i = 0; i < points.length; i++) {
       const p = points[i]
@@ -3588,8 +4218,9 @@ Item {
     if (pts.length < 3)
       return pts
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments)
-    const ring = splineHermiteClosed(pts, tightness, tolerance, maxSegments)
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+    const ring = splineHermiteClosed(pts, tightness, tolerance, maxSegments,
+                                     cache)
     const k = ring.lastControlIndex
     return ring.points.slice(k + 1).concat(ring.points.slice(0, k + 1))
   }
@@ -3601,7 +4232,7 @@ Item {
   // when there are too few distinct controls to form the geometry
   // without the crosshair (< 2 for lines, < 3 for rings) — native
   // behaviour (crosshair as final vertex) is the right fallback there.
-  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments) {
+  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments, cache) {
     const pts = []
     for (let i = 0; i < controls.length; i++) {
       const p = controls[i]
@@ -3612,8 +4243,9 @@ Item {
     if (pts.length < (closed ? 3 : 2))
       return null
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments)
-    return splineHermiteClosed(pts, tightness, tolerance, maxSegments).points
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+    return splineHermiteClosed(pts, tightness, tolerance, maxSegments,
+                               cache).points
   }
 
   // ----------------------------------------------------------------
@@ -3664,7 +4296,20 @@ Item {
     splineExpected = -1
     splineLastCross = null
     splineLastSeq = null
+    splineLastSeqFull = false
+    splineFullCache = ({})
     updateSplineMarkers()
+  }
+
+  // Whether the active model digitizes a closed ring. The open/closed
+  // choice keys off vectorLayer, never geometryType alone — the reshape
+  // editor types its open cut line as Polygon. Callers wrap in try/catch
+  // (splineModel property reads can throw on a dead model).
+  function splineIsClosed() {
+    return splineModel.vectorLayer !== null &&
+           splineModel.vectorLayer !== undefined &&
+           Number(splineModel.geometryType) ===
+               Number(Qgis.GeometryType.Polygon)
   }
 
   function updateSplinePill() {
@@ -3715,6 +4360,7 @@ Item {
   function splineAdoptCommitted() {
     splineControls = []
     splineLastSeq = null
+    splineLastSeqFull = false
     try {
       const verts = splineModel.vertices
       const count = Number(splineModel.vertexCount)
@@ -3792,6 +4438,9 @@ Item {
     splineExpected = count
     updateSplineMarkers()
     splineScheduleRebuild()
+    // Keep the full-density cache warm for the new control set (deferred
+    // so the vertex tap itself is never extended by the segment math).
+    splineWarmTimer.restart()
   }
 
   // Throttle, NOT debounce: restart() on every crosshair move would push
@@ -3803,6 +4452,10 @@ Item {
   function splineScheduleRebuild() {
     if (!splineRebuildTimer.running)
       splineRebuildTimer.start()
+    // Any change invalidates a full-density model write and re-arms the
+    // idle upgrade (debounce — it should fire only after a quiet moment).
+    splineLastSeqFull = false
+    splineIdleTimer.restart()
   }
 
   function splineOnCrosshairMoved() {
@@ -3825,53 +4478,26 @@ Item {
     splineScheduleRebuild()
   }
 
-  // Rebuild the model to hold the smoothed curve ending on the crosshair.
-  // Mutations go through the invokables only (never assign
-  // currentCoordinate — that would break the app's crosshair binding):
-  // reset(true) -> addVertexFromPoint for every curve point ->
-  // removeVertex() drops the trailing floating duplicate, leaving the
-  // last curve point (the crosshair) as the floating vertex.
-  function splineRebuildModel() {
-    if (!splineArmed || splineModel === null)
-      return
-    let cross = null
-    let closed = false
-    try {
-      if (splineModel.frozen === true)
-        return
-      const cc = splineModel.currentCoordinate
-      cross = { x: cc.x, y: cc.y, z: cc.z }
-      closed = splineModel.vectorLayer !== null &&
-               splineModel.vectorLayer !== undefined &&
-               Number(splineModel.geometryType) ===
-                   Number(Qgis.GeometryType.Polygon)
-    } catch (error) {
-      return
-    }
-    // Live preview runs on a capped sample density — recomputing the whole
-    // curve at the desktop's maxSegments (default 200/segment) every 40 ms
-    // tick is what made long freehand strokes lag. Confirm rebuilds at the
-    // full density (splineConfirmSequence), so saved quality is untouched.
-    const seq = splineBuildSequence(
-        splineControls.concat([cross]), closed,
-        splineTightness, splineTolerance,
-        Math.min(splineMaxSegments, splineLiveMaxSegments))
-    if (seq.length < 2)
-      return
-
-    // Incremental suffix update: between crosshair-move rebuilds only the
-    // last couple of segments change (the crosshair position and the
-    // tangent at the last control), so peel and re-add just the changed
-    // tail instead of resetting the whole model — far fewer invokable
-    // calls, each of which fires QField-side signal handlers. The model
-    // currently holds [splineLastSeq[0..n-2] committed, floating = live
-    // crosshair] — the floating vertex is never trusted for the diff.
+  // Write seq into the model through the invokables only (never assign
+  // currentCoordinate — that would break the app's crosshair binding),
+  // with the cheapest available operation. Caller owns splineMutating
+  // (and frozen state); returns true when the write landed.
+  //
+  // Incremental suffix update: between rebuilds only the last couple of
+  // segments usually change (the crosshair position and the tangent at
+  // the last control), so peel and re-add just the changed tail instead
+  // of resetting the whole model — far fewer invokable calls, each of
+  // which fires QField-side signal handlers. The model currently holds
+  // [splineLastSeq[0..n-2] committed, floating = live crosshair] — the
+  // floating vertex is never trusted for the diff.
+  function splineWriteSequence(seq) {
     let prefix = 0
     let modelCount = 0
     try {
       modelCount = Number(splineModel.vertexCount)
     } catch (error) {
-      return
+      splineLastSeq = null
+      return false
     }
     // modelCount >= lastSeq.length also admits a model GROWN by native
     // end-appends (freehand adds land before the floating vertex) — the
@@ -3895,7 +4521,6 @@ Item {
     const pops = modelCount - (prefix + 1)
     const incrementalCost = pops + (seq.length - prefix) + 1
     const fullCost = seq.length + 2
-    splineMutating = true
     try {
       if (prefix > 0 && incrementalCost < fullCost && pops >= 0) {
         for (let i = 0; i < pops; i++)
@@ -3913,12 +4538,113 @@ Item {
       }
       splineExpected = Number(splineModel.vertexCount)
       splineLastSeq = seq
-      splineLastCross = cross
+      return true
     } catch (error) {
       splineLastSeq = null
+      return false
+    }
+  }
+
+  // Rebuild the model to hold the smoothed curve ending on the crosshair:
+  // reset/peel -> addVertexFromPoint for every curve point ->
+  // removeVertex() drops the trailing floating duplicate, leaving the
+  // last curve point (the crosshair) as the floating vertex.
+  function splineRebuildModel() {
+    if (!splineArmed || splineModel === null)
+      return
+    let cross = null
+    let closed = false
+    try {
+      if (splineModel.frozen === true)
+        return
+      const cc = splineModel.currentCoordinate
+      cross = { x: cc.x, y: cc.y, z: cc.z }
+      closed = splineIsClosed()
+    } catch (error) {
+      return
+    }
+    // Live preview runs on a capped sample density — recomputing the whole
+    // curve at the desktop's maxSegments (default 200/segment) every 40 ms
+    // tick is what made long freehand strokes lag. Confirm rebuilds at the
+    // full density (splineConfirmSequence), so saved quality is untouched.
+    const seq = splineBuildSequence(
+        splineControls.concat([cross]), closed,
+        splineTightness, splineTolerance,
+        Math.min(splineMaxSegments, splineLiveMaxSegments))
+    if (seq.length < 2)
+      return
+    splineMutating = true
+    try {
+      if (splineWriteSequence(seq))
+        splineLastCross = cross
+      splineLastSeqFull = false
     } finally {
       splineMutating = false
     }
+  }
+
+  // After a quiet moment (no crosshair moves or vertex changes for
+  // splineIdleTimer.interval), rewrite the model at the full confirm
+  // density: the expensive many-vertex write happens while the user is
+  // reaching for ✓, and the confirm rewrite then only has to diff the
+  // crosshair tail — for open lines that is a handful of invokable
+  // calls instead of the whole curve. (Closed rings gain nothing from
+  // the diff — their sequence is rotated to end on the crosshair, so
+  // the confirm ring never shares a prefix — but the shared segment
+  // cache still spares them the full-density math.)
+  function splineIdleUpgrade() {
+    if (splineMutating || !splineArmed || splineModel === null)
+      return
+    if (splineLastSeqFull || splineRebuildTimer.running)
+      return
+    if (splineControls.length < 2)
+      return
+    let cross = null
+    let closed = false
+    try {
+      if (splineModel.frozen === true)
+        return
+      const cc = splineModel.currentCoordinate
+      cross = { x: cc.x, y: cc.y, z: cc.z }
+      closed = splineIsClosed()
+    } catch (error) {
+      return
+    }
+    const seq = splineBuildSequence(
+        splineControls.concat([cross]), closed,
+        splineTightness, splineTolerance, splineMaxSegments,
+        splineFullCache)
+    if (seq.length < 2)
+      return
+    splineMutating = true
+    try {
+      if (splineWriteSequence(seq)) {
+        splineLastCross = cross
+        splineLastSeqFull = true
+      }
+    } finally {
+      splineMutating = false
+    }
+  }
+
+  // Pre-compute the full-density segment blocks for the committed
+  // controls while the user is still drawing, so the confirm-time curve
+  // assembly finds (almost) every segment already cached. The result is
+  // discarded — the side effect on splineFullCache is the point.
+  function splineWarmCache() {
+    if (splineMutating || !splineArmed || splineModel === null ||
+        splineControls.length < 3)
+      return
+    let closed = false
+    try {
+      if (splineModel.frozen === true)
+        return
+      closed = splineIsClosed()
+    } catch (error) {
+      return
+    }
+    splineConfirmSequence(splineControls, closed, splineTightness,
+        splineTolerance, splineMaxSegments, splineFullCache)
   }
 
   // Confirm fixup. QField's DigitizingToolbar.confirm() freezes the
@@ -3942,27 +4668,26 @@ Item {
       return
     let closed = false
     try {
-      closed = splineModel.vectorLayer !== null &&
-               splineModel.vectorLayer !== undefined &&
-               Number(splineModel.geometryType) ===
-                   Number(Qgis.GeometryType.Polygon)
+      closed = splineIsClosed()
     } catch (error) {
       return
     }
+    // This runs synchronously inside the ✓ tap — it must be FAST or the
+    // button feels dead. The segment cache (warmed while drawing) makes
+    // the full-density math ~free, and splineWriteSequence prefix-diffs
+    // against the idle upgrade's full-density write so an open line only
+    // rewrites the crosshair tail.
+    const started = Date.now()
     const seq = splineConfirmSequence(splineControls, closed,
-        splineTightness, splineTolerance, splineMaxSegments)
+        splineTightness, splineTolerance, splineMaxSegments,
+        splineFullCache)
     if (seq === null || seq.length < 2)
       return
     splineMutating = true
     try {
       splineModel.frozen = false
       try {
-        splineModel.reset(true)
-        for (let i = 0; i < seq.length; i++)
-          splineModel.addVertexFromPoint(
-              GeometryUtils.point(seq[i].x, seq[i].y, seq[i].z))
-        splineModel.removeVertex()
-        splineExpected = Number(splineModel.vertexCount)
+        splineWriteSequence(seq)
         splineLastSeq = null
       } finally {
         splineModel.frozen = true  // relock before confirm() resumes
@@ -3971,6 +4696,9 @@ Item {
     } finally {
       splineMutating = false
     }
+    // On-device diagnosis line — confirms should be a few ms once warm.
+    console.log('LGS spline confirm: ' + (Date.now() - started) + ' ms, ' +
+                seq.length + ' pts')
   }
 
   // Same confirm fixup for NATIVE (spline-off) line/polygon digitizing —
@@ -4089,6 +4817,24 @@ Item {
     interval: 40
     repeat: false
     onTriggered: plugin.updateSplineMarkers()
+  }
+
+  Timer {
+    // Debounced (restarted by every live change, fires only after a
+    // quiet moment) full-density model upgrade — see splineIdleUpgrade().
+    id: splineIdleTimer
+    interval: 350
+    repeat: false
+    onTriggered: plugin.splineIdleUpgrade()
+  }
+
+  Timer {
+    // Deferred segment-cache warming after a committed-control change —
+    // see splineWarmCache().
+    id: splineWarmTimer
+    interval: 80
+    repeat: false
+    onTriggered: plugin.splineWarmCache()
   }
 
   Timer {

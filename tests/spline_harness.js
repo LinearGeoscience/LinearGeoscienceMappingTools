@@ -24,7 +24,8 @@ function extractFunction(name) {
 }
 
 const code = ['splinePointScalar', 'splinePointsAdd', 'splineTangent',
-  'splinePerpDist', 'splineSimplify', 'splineDecimate', 'splineHermiteOpen',
+  'splinePerpDist', 'splineSimplify', 'splineDecimate', 'splineSamePoint',
+  'splineCacheEntries', 'splineCacheLookup', 'splineHermiteOpen',
   'splineHermiteClosed', 'splineBuildSequence', 'splineConfirmSequence',
   'splineCommonPrefixLength']
   .map(extractFunction).join('\n');
@@ -222,6 +223,72 @@ const cross2 = hermiteOpen(wiggle.slice(0, 3).concat([pt(33, -2, 130)]), 0.5, 0,
 check('prefix: crosshair move keeps stable prefix on open curve',
   commonPrefix(cross1, cross2) >= 1 + 7 + 1,  // first segment + controls
   'got ' + commonPrefix(cross1, cross2))
+
+// --- segment cache: cached output is bit-identical -------------------
+// The confirm-path cache must never change the produced curve — only
+// skip recomputing segments whose dependencies are unchanged.
+function sameJson(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+const cacheO = {}
+const grow = [pt(0, 0, 100), pt(10, 5, 110), pt(20, -5, 120)]
+let growOk = true
+for (const next of [pt(30, 0, 130), pt(40, 8, 140), pt(45, 20, 150)]) {
+  grow.push(next)
+  if (!sameJson(hermiteOpen(grow, 0.5, 0.1, 200, cacheO),
+                hermiteOpen(grow, 0.5, 0.1, 200)))
+    growOk = false
+}
+check('cache open: incremental appends stay bit-identical', growOk)
+grow.pop()
+check('cache open: pop stays bit-identical',
+  sameJson(hermiteOpen(grow, 0.5, 0.1, 200, cacheO),
+           hermiteOpen(grow, 0.5, 0.1, 200)))
+const cacheC = {}
+const ringGrow = [pt(0, 0), pt(10, 0), pt(10, 10)]
+let ringOk = true
+for (const next of [pt(5, 15), pt(0, 10)]) {
+  ringGrow.push(next)
+  const cached = hermiteClosed(ringGrow, 0.5, 0.1, 200, cacheC)
+  const plain = hermiteClosed(ringGrow, 0.5, 0.1, 200)
+  if (!sameJson(cached.points, plain.points) ||
+      cached.lastControlIndex !== plain.lastControlIndex)
+    ringOk = false
+}
+check('cache closed: incremental appends stay bit-identical', ringOk)
+check('cache: buildSequence with cache matches without (closed rotation)',
+  sameJson(buildSequence(ringGrow, true, 0.5, 0.1, 200, cacheC),
+           buildSequence(ringGrow, true, 0.5, 0.1, 200)))
+check('cache: confirmSequence with cache matches without',
+  sameJson(confirmSequence(wiggle, false, 0.5, 0, 8, {}),
+           confirmSequence(wiggle, false, 0.5, 0, 8)))
+// The property the cache exists for: a repeated call replays the exact
+// stored blocks (object identity, not just equal values)...
+const cacheHit = {}
+const hit1 = hermiteOpen(wiggle, 0.5, 0, 8, cacheHit)
+const hit2 = hermiteOpen(wiggle, 0.5, 0, 8, cacheHit)
+check('cache: repeated call reuses stored blocks (object identity)',
+  hit2.length === hit1.length && hit2[1] === hit1[1])
+// ...and a moved last point (the crosshair) leaves the early segments'
+// blocks untouched while the tail recomputes.
+const cacheTail = {}
+const tail1 = hermiteOpen(wiggle.concat([pt(40, 0, 140)]), 0.5, 0, 8, cacheTail)
+const tail2 = hermiteOpen(wiggle.concat([pt(41, 3, 140)]), 0.5, 0, 8, cacheTail)
+check('cache: crosshair move keeps early blocks (identity), tail differs',
+  tail2[1] === tail1[1] &&
+  !samePt(tail2[tail2.length - 2], tail1[tail1.length - 2]))
+// Open and closed entries never cross-contaminate, even for the same
+// control points.
+const cacheKind = {}
+hermiteClosed(square, 0.5, 0, 8, cacheKind)
+check('cache: open/closed kinds are separate',
+  sameJson(hermiteOpen(square, 0.5, 0, 8, cacheKind),
+           hermiteOpen(square, 0.5, 0, 8)))
+// A parameter change invalidates everything.
+const cacheParams = {}
+hermiteOpen(wiggle, 0.5, 0, 8, cacheParams)
+check('cache: params change invalidates and stays correct',
+  sameJson(hermiteOpen(wiggle, 0.8, 0, 8, cacheParams),
+           hermiteOpen(wiggle, 0.8, 0, 8)) &&
+  cacheParams.p[0] === 0.8)
 
 // --- numeric parity fixtures (generated from the desktop algorithm) --
 if (fixturePath) {

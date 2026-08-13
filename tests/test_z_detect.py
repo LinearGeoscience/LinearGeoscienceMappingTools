@@ -17,10 +17,12 @@ z_detect = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(z_detect)
 
 match_elevation_field = z_detect.match_elevation_field
+match_label_field = z_detect.match_label_field
 match_range_pair = z_detect.match_range_pair
 name_hint = z_detect.name_hint
 candidate_specs = z_detect.candidate_specs
 detect_spec = z_detect.detect_spec
+apply_label_choice = z_detect.apply_label_choice
 READ_ONLY_REASON = z_detect.READ_ONLY_REASON
 
 
@@ -54,6 +56,39 @@ class TestFieldMatching(unittest.TestCase):
         self.assertEqual(
             match_range_pair(['RL_Min', 'RL_Max', 'Z_Min', 'Z_Max']),
             ('Z_Min', 'Z_Max'))
+
+    def test_label_field_original_casing(self):
+        self.assertEqual(match_label_field(['Colour', 'Level']), 'Level')
+        self.assertEqual(match_label_field(['LEVEL_NAME']), 'LEVEL_NAME')
+
+    def test_label_field_priority(self):
+        self.assertEqual(match_label_field(['Bench', 'Level']), 'Level')
+
+    def test_label_field_no_match(self):
+        self.assertIsNone(match_label_field(['Comment', 'Author']))
+        self.assertIsNone(match_label_field([]))
+        self.assertIsNone(match_label_field(None))
+
+
+class TestLabelFieldStamping(unittest.TestCase):
+
+    def test_stamped_on_every_spec(self):
+        specs = candidate_specs('RB UG strings', ['RL'], True, 'line', True,
+                                text_field_names=['COLOUR', 'Level'])
+        self.assertGreaterEqual(len(specs), 2)  # attr + geom
+        for spec in specs:
+            self.assertEqual(spec['label_field'], 'Level')
+
+    def test_absent_without_text_match(self):
+        specs = candidate_specs('RB UG strings', ['RL'], True, 'line', True,
+                                text_field_names=['Comment'])
+        for spec in specs:
+            self.assertNotIn('label_field', spec)
+
+    def test_absent_when_param_omitted(self):
+        specs = candidate_specs('RB UG strings', ['RL'], True, 'line', True)
+        for spec in specs:
+            self.assertNotIn('label_field', spec)
 
 
 class TestNameHint(unittest.TestCase):
@@ -133,6 +168,39 @@ class TestDetectSpec(unittest.TestCase):
         self.assertEqual([s['source'] for s in specs], ['attr', 'geom'])
         self.assertEqual(specs[0]['field'], 'RL')
         self.assertEqual(specs[1]['field'], 'Elevation')
+
+
+class TestApplyLabelChoice(unittest.TestCase):
+    """User override of the auto-detected level-name field."""
+
+    def _specs(self):
+        # Two candidates, auto-detected label 'Level' stamped on both.
+        return candidate_specs('UG Survey', ['RL'], True, 'point', True,
+                               text_field_names=['Level', 'Zone'])
+
+    def test_choice_stamped_on_every_candidate(self):
+        specs = self._specs()
+        apply_label_choice(specs, 'Zone')
+        for spec in specs:
+            self.assertEqual(spec['label_field'], 'Zone')
+
+    def test_explicit_none_keeps_key_empty(self):
+        # '' must stay present so the scan skips fallback re-detection.
+        specs = self._specs()
+        apply_label_choice(specs, '')
+        for spec in specs:
+            self.assertIn('label_field', spec)
+            self.assertEqual(spec['label_field'], '')
+
+    def test_none_leaves_auto_detection_alone(self):
+        specs = self._specs()
+        apply_label_choice(specs, None)
+        for spec in specs:
+            self.assertEqual(spec['label_field'], 'Level')
+
+    def test_returns_specs(self):
+        specs = self._specs()
+        self.assertIs(apply_label_choice(specs, 'Zone'), specs)
 
 
 if __name__ == '__main__':

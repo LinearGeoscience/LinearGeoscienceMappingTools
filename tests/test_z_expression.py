@@ -28,6 +28,11 @@ format_levels = z_expression.format_levels
 format_number = z_expression.format_number
 parse_extra_layers = z_expression.parse_extra_layers
 format_extra_layers = z_expression.format_extra_layers
+parse_rasters = z_expression.parse_rasters
+format_rasters = z_expression.format_rasters
+raster_in_windows = z_expression.raster_in_windows
+format_suggestions = z_expression.format_suggestions
+parse_suggestions = z_expression.parse_suggestions
 
 
 class TestFormatNumber(unittest.TestCase):
@@ -292,6 +297,190 @@ class TestExtraLayerPersistence(unittest.TestCase):
             '{"layers":[{"name":"X","mode":"single","field":"RL"}]}')
         self.assertEqual(len(parsed), 1)
         self.assertTrue(parsed[0]['checked'])
+
+    def test_label_field_roundtrip(self):
+        entry = {'id': 'lyr3', 'name': 'RB UG strings', 'mode': 'single',
+                 'field': 'RL', 'source': 'attr', 'checked': True,
+                 'label_field': 'Level'}
+        self.assertEqual(parse_extra_layers(format_extra_layers([entry])),
+                         [entry])
+
+    def test_label_field_absent_stays_absent(self):
+        parsed = parse_extra_layers(format_extra_layers(self.ENTRIES))
+        for entry in parsed:
+            self.assertNotIn('label_field', entry)
+
+    def test_label_user_with_field_roundtrip(self):
+        entry = {'id': 'lyr3', 'name': 'RB UG strings', 'mode': 'single',
+                 'field': 'RL', 'source': 'attr', 'checked': True,
+                 'label_field': 'Zone', 'label_user': True}
+        self.assertEqual(parse_extra_layers(format_extra_layers([entry])),
+                         [entry])
+
+    def test_label_user_explicit_none_roundtrip(self):
+        # "(none)" persists as label_user without a label_field.
+        entry = {'id': 'lyr3', 'name': 'RB UG strings', 'mode': 'single',
+                 'field': 'RL', 'source': 'attr', 'checked': True,
+                 'label_user': True}
+        parsed = parse_extra_layers(format_extra_layers([entry]))
+        self.assertEqual(parsed, [entry])
+        self.assertNotIn('label_field', parsed[0])
+
+    def test_label_user_absent_stays_absent(self):
+        parsed = parse_extra_layers(format_extra_layers(self.ENTRIES))
+        for entry in parsed:
+            self.assertNotIn('label_user', entry)
+
+
+class TestRasterPersistence(unittest.TestCase):
+    """lgs_z_rasters: elevation-tied per-level basemap rasters."""
+
+    ENTRIES = [
+        {'id': 'ras1', 'name': 'Level plan 1420', 'elevation': 1420.0,
+         'checked': True},
+        {'id': 'ras2', 'name': 'Face scan 1395', 'elevation': 1395.5,
+         'checked': False},
+    ]
+
+    def test_roundtrip(self):
+        self.assertEqual(parse_rasters(format_rasters(self.ENTRIES)),
+                         self.ENTRIES)
+
+    def test_roundtrip_is_byte_stable(self):
+        payload = format_rasters(self.ENTRIES)
+        self.assertEqual(format_rasters(parse_rasters(payload)), payload)
+
+    def test_malformed_json(self):
+        self.assertEqual(parse_rasters(''), [])
+        self.assertEqual(parse_rasters(None), [])
+        self.assertEqual(parse_rasters('not json'), [])
+        self.assertEqual(parse_rasters('[1,2]'), [])
+        self.assertEqual(parse_rasters('{"rasters": "nope"}'), [])
+
+    def test_invalid_entries_dropped(self):
+        payload = format_rasters([
+            self.ENTRIES[0],
+            {'name': 'NoElevation'},
+            {'name': 'BadElevation', 'elevation': 'high'},
+            {'elevation': 1200},  # no name
+        ])
+        self.assertEqual(parse_rasters(payload), [self.ENTRIES[0]])
+
+    def test_non_finite_elevations_dropped(self):
+        parsed = parse_rasters(
+            '{"rasters":[{"name":"A","elevation":"NaN"},'
+            '{"name":"B","elevation":"Infinity"}]}')
+        self.assertEqual(parsed, [])
+
+    def test_checked_defaults_true(self):
+        parsed = parse_rasters(
+            '{"rasters":[{"name":"X","elevation":1200}]}')
+        self.assertEqual(len(parsed), 1)
+        self.assertTrue(parsed[0]['checked'])
+
+    def test_id_defaults_empty(self):
+        parsed = parse_rasters(
+            '{"rasters":[{"name":"X","elevation":1200}]}')
+        self.assertEqual(parsed[0]['id'], '')
+
+
+class TestRasterInWindows(unittest.TestCase):
+    """Mirrored in JS (lgs_companion.qml rasterInWindows) — keep in sync."""
+
+    def test_inside_window(self):
+        self.assertTrue(raster_in_windows(1420, [(1420, 5)]))
+
+    def test_inclusive_edges(self):
+        self.assertTrue(raster_in_windows(1415, [(1420, 5)]))
+        self.assertTrue(raster_in_windows(1425, [(1420, 5)]))
+
+    def test_outside_window(self):
+        self.assertFalse(raster_in_windows(1414.9, [(1420, 5)]))
+        self.assertFalse(raster_in_windows(1425.1, [(1420, 5)]))
+
+    def test_multiple_windows_any_match(self):
+        windows = [(1400, 5), (1420, 5)]
+        self.assertTrue(raster_in_windows(1402, windows))
+        self.assertTrue(raster_in_windows(1418, windows))
+        self.assertFalse(raster_in_windows(1410, windows))
+
+    def test_negative_underground_levels(self):
+        self.assertTrue(raster_in_windows(-105, [(-100, 10)]))
+        self.assertFalse(raster_in_windows(-111, [(-100, 10)]))
+
+    def test_empty_windows(self):
+        self.assertFalse(raster_in_windows(1420, []))
+        self.assertFalse(raster_in_windows(1420, None))
+
+
+class TestSuggestionPersistence(unittest.TestCase):
+    """lgs_z_suggest: the desktop scan baked for the QField ladder."""
+
+    SUGGESTIONS = [
+        {'level': 1450.0, 'count': 5, 'lo': 1450.0, 'hi': 1450.0,
+         'suggested_tol': 1.0, 'label': '000 Level'},
+        {'level': 1448.9914748780934, 'count': 1, 'lo': 1448.9914748780934,
+         'hi': 1448.9914748780934, 'suggested_tol': 1.0},
+    ]
+    SUMMARY = {'min': 1419.52, 'max': 1452.0, 'with_elev': 35,
+               'blank': 276, 'spanning': 0}
+
+    def test_roundtrip(self):
+        parsed = parse_suggestions(
+            format_suggestions(self.SUGGESTIONS, self.SUMMARY))
+        self.assertEqual(parsed['with_elev'], 35)
+        self.assertEqual(parsed['blank'], 276)
+        self.assertEqual(parsed['spanning'], 0)
+        self.assertEqual(parsed['min'], 1419.52)
+        self.assertEqual(parsed['max'], 1452.0)
+        self.assertEqual(len(parsed['suggestions']), 2)
+        first, second = parsed['suggestions']
+        self.assertEqual(first['label'], '000 Level')
+        self.assertEqual(first['suggested_tol'], 1.0)
+        self.assertNotIn('label', second)
+        # Levels quantized to %g 6 sig figs, like every persisted level.
+        self.assertEqual(second['level'], 1448.99)
+
+    def test_empty_suggestions(self):
+        self.assertEqual(format_suggestions([], self.SUMMARY), '')
+
+    def test_deterministic_and_compact(self):
+        a = format_suggestions(self.SUGGESTIONS, self.SUMMARY)
+        b = format_suggestions(self.SUGGESTIONS, self.SUMMARY)
+        self.assertEqual(a, b)
+        # Compact separators (spaces may still appear inside label text).
+        self.assertNotIn(': ', a)
+        self.assertNotIn(', ', a)
+
+    def test_format_idempotent_after_parse(self):
+        # The persist-only-on-change compare relies on this.
+        parsed = parse_suggestions(
+            format_suggestions(self.SUGGESTIONS, self.SUMMARY))
+        summary = {'min': parsed['min'], 'max': parsed['max'],
+                   'with_elev': parsed['with_elev'],
+                   'blank': parsed['blank'],
+                   'spanning': parsed['spanning']}
+        self.assertEqual(
+            format_suggestions(parsed['suggestions'], summary),
+            format_suggestions(self.SUGGESTIONS, self.SUMMARY))
+
+    def test_defensive_parse(self):
+        for bad in ('', None, 'not json', '[1,2]', '{"v":2,"levels":[]}',
+                    '{"v":1}', '{"v":1,"levels":"nope"}',
+                    '{"v":1,"levels":[]}',
+                    '{"v":1,"levels":[{"level":"abc","count":1,'
+                    '"lo":1,"hi":1,"tol":1}]}',
+                    '{"v":1,"levels":[{"count":1,"lo":1,"hi":1,"tol":1}]}'):
+            self.assertIsNone(parse_suggestions(bad), bad)
+
+    def test_bad_entries_dropped_good_kept(self):
+        payload = ('{"v":1,"min":1,"max":2,"withElev":3,"blank":0,'
+                   '"spanning":0,"levels":[{"level":1450,"count":5,'
+                   '"lo":1450,"hi":1450,"tol":1},'
+                   '{"level":"junk","count":1,"lo":1,"hi":1,"tol":1}]}')
+        parsed = parse_suggestions(payload)
+        self.assertEqual(len(parsed['suggestions']), 1)
+        self.assertEqual(parsed['suggestions'][0]['level'], 1450.0)
 
 
 class TestLevelListPersistence(unittest.TestCase):

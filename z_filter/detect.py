@@ -28,6 +28,12 @@ RANGE_FIELD_PAIRS = [
     ('z_min', 'z_max'), ('zmin', 'zmax'), ('elev_min', 'elev_max'),
     ('rl_min', 'rl_max'), ('min_z', 'max_z')]
 
+# TEXT fields that name the level ("000 Level", "13/42", "CaveTun 00"),
+# in match priority order (compared case-insensitively against string
+# fields only). Display-only decoration — never enters the filter clause.
+LABEL_FIELD_CANDIDATES = [
+    'level', 'level_name', 'levelname', 'bench', 'bench_name', 'level_id']
+
 # Substrings that mark a layer as survey-ish, promoting geometry-Z layers
 # to auto-checked.
 NAME_HINTS = ['survey', 'string', 'floor', 'pickup', 'level', 'bench',
@@ -43,6 +49,18 @@ def match_elevation_field(numeric_field_names):
     """
     by_lower = _first_by_lower(numeric_field_names)
     for candidate in ELEVATION_FIELD_CANDIDATES:
+        if candidate in by_lower:
+            return by_lower[candidate]
+    return None
+
+
+def match_label_field(text_field_names):
+    """First level-name candidate present among the layer's TEXT fields.
+
+    Returns the field's ORIGINAL casing, or None.
+    """
+    by_lower = _first_by_lower(text_field_names)
+    for candidate in LABEL_FIELD_CANDIDATES:
         if candidate in by_lower:
             return by_lower[candidate]
     return None
@@ -64,11 +82,12 @@ def name_hint(layer_name):
 
 
 def candidate_specs(layer_name, numeric_field_names, has_z_geometry,
-                    geometry_class, writable):
+                    geometry_class, writable, text_field_names=None):
     """Every usable Z source for a non-canonical layer, best first.
 
     geometry_class: 'point' | 'line' | 'polygon'.
     writable: provider can add fields + change attribute values.
+    text_field_names: the layer's string fields (level-name detection).
 
     Each spec:
         mode:            'single' | 'range'
@@ -77,12 +96,16 @@ def candidate_specs(layer_name, numeric_field_names, has_z_geometry,
         auto_check:      start checked in the panel
         needs_fields:    fields must be added+populated from geometry Z
         disabled_reason: str | None (listed but not usable)
+        label_field:     level-name text field (key PRESENT only when one
+                         matched — it decorates suggestions, independent of
+                         which Z source is chosen)
 
     Priority: existing range pair > existing single field > geometry Z —
     existing data always wins over writing anything new. Later entries feed
     the panel's manual source override.
     """
     specs = []
+    label_field = match_label_field(text_field_names)
     pair = match_range_pair(numeric_field_names)
     if pair:
         specs.append({'mode': 'range', 'field_min': pair[0],
@@ -111,14 +134,34 @@ def candidate_specs(layer_name, numeric_field_names, has_z_geometry,
             spec['auto_check'] = name_hint(layer_name)
             spec['disabled_reason'] = None
         specs.append(spec)
+    if label_field:
+        for spec in specs:
+            spec['label_field'] = label_field
+    return specs
+
+
+def apply_label_choice(specs, label_field):
+    """Overlay a user's level-name choice onto every candidate spec.
+
+    label_field: None leaves auto detection alone; '' is an explicit
+    "no level names" (key kept, empty — the scan must not fall back to
+    re-detection); a non-empty name is stamped on every spec. Stamping
+    all candidates mirrors candidate_specs, so switching the Z-source
+    combo keeps the choice.
+    """
+    if label_field is None:
+        return specs
+    for spec in specs:
+        spec['label_field'] = label_field
     return specs
 
 
 def detect_spec(layer_name, numeric_field_names, has_z_geometry,
-                geometry_class, writable):
+                geometry_class, writable, text_field_names=None):
     """Best spec for a layer, or None when nothing is elevation-like."""
     specs = candidate_specs(layer_name, numeric_field_names, has_z_geometry,
-                            geometry_class, writable)
+                            geometry_class, writable,
+                            text_field_names=text_field_names)
     return specs[0] if specs else None
 
 

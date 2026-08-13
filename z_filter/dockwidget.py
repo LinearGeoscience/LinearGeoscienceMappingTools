@@ -7,6 +7,7 @@ delegated to ZFilterController; this file is UI, state restore and prompts.
 """
 
 from qgis.core import Qgis, QgsProject
+from qgis.gui import QgsCollapsibleGroupBox
 from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QDoubleValidator
 from qgis.PyQt.QtWidgets import (
@@ -14,12 +15,13 @@ from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDockWidget,
     QDoubleSpinBox,
-    QGridLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -33,15 +35,18 @@ except ImportError:
         layer_candidates, populate_layer_combo, combo_current_layer)
 
 from .controller import ZFilterController, suspended_filters
-from .expression import ELEVATION_FIELD, format_number
+from .expression import DEFAULT_TOLERANCE, ELEVATION_FIELD, format_number
+from .ladder import LevelLadder
 from .levels import (
+    DEFAULT_STEP,
     TOL_PRESETS,
+    attach_labels,
     cluster_levels,
+    suggest_step,
     suggest_tolerance,
-    top_suggestions,
     value_range,
 )
-from . import auto_layers, field_setup
+from . import auto_layers, detect, field_setup
 
 # Auto-scans (panel open, layer change) skip layers bigger than this;
 # the manual "Rescan data" button scans everything.
@@ -76,12 +81,23 @@ class ZFilterDockWidget(QDockWidget):
         self._restoring = False    # suppress auto-apply during state restore
         self._extra_rows = []      # auto-detected survey/string layer rows
         self._persisted_extra = []  # extra-layer entries from the project
+        self._raster_rows = []     # elevation-tied raster rows
+        self._persisted_rasters = []  # raster entries from the project
+        self._step_persisted = False  # z_filter/step exists in the project
+        self._tol_persisted = False   # z_filter/tolerance exists (sticky)
+        self._transient_level = None  # swept level — never persisted
 
         # Debounce automatic rescans when layer selections change.
         self._rescan_timer = QTimer(self)
         self._rescan_timer.setSingleShot(True)
         self._rescan_timer.setInterval(400)
         self._rescan_timer.timeout.connect(lambda: self._on_rescan(manual=False))
+
+        # Coalesce ladder drag sweeps so subsets aren't rewritten per pixel.
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(150)
+        self._live_timer.timeout.connect(self._apply_or_enable)
 
         self.setup_ui()
         self._connect_project_signals()
@@ -108,18 +124,143 @@ class ZFilterDockWidget(QDockWidget):
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(8, 8, 8, 8)
 
-        title_label = QLabel("<b>Z Filter — Level Mapping</b>")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-size: 11pt; padding: 4px; color: #2196F3;")
-        main_layout.addWidget(title_label)
+        # --- Filter toggle (the panel's primary control, so it leads) ---
+        self.toggle_btn = QPushButton("Filter: OFF")
+        self.toggle_btn.setCheckable(True)
+        self.toggle_btn.setToolTip("Apply / remove the elevation filter")
+        self.toggle_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; padding: 6px; }"
+            "QPushButton:checked { background-color: #2196F3; color: white; }")
+        self.toggle_btn.toggled.connect(self._on_toggled)
+        main_layout.addWidget(self.toggle_btn)
 
-        # --- Layers ---
-        layer_group = QGroupBox("Layers to Filter")
-        layer_group.setStyleSheet(
-            "QGroupBox { font-weight: bold; padding-top: 8px; margin-top: 6px; }")
-        layer_layout = QVBoxLayout()
-        layer_layout.setSpacing(4)
-        layer_layout.setContentsMargins(6, 6, 6, 6)
+        # What the data holds: "320–410 m · 1240 with elevation · 56 blank"
+        self.summary_label = QLabel("Not scanned yet.")
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet("color: palette(mid); font-size: 8pt;")
+        main_layout.addWidget(self.summary_label)
+
+        # --- Level ladder (detected levels, highest at top) ---
+        self.ladder = LevelLadder()
+        self.ladder.setToolTip(
+            "Detected levels — click a rung to filter to it, click or drag "
+            "elsewhere to sweep, scroll to step")
+        self.ladder.rungClicked.connect(self._on_rung_clicked)
+        self.ladder.elevationPicked.connect(self._on_ladder_picked)
+        self.ladder.stepRequested.connect(self._step_level)
+        self.ladder.setVisible(False)
+        main_layout.addWidget(self.ladder)
+
+        self.ladder_placeholder = QLabel(
+            "Scan the data to see the level ladder.")
+        self.ladder_placeholder.setStyleSheet(
+            "color: palette(mid); font-size: 8pt;")
+        main_layout.addWidget(self.ladder_placeholder)
+
+        # --- Stepper: ▼ [level] ▲ + step size ---
+        level_row = QHBoxLayout()
+        level_row.setSpacing(4)
+        self.down_btn = QToolButton()
+        self.down_btn.setText("▼")
+        self.down_btn.setToolTip("Move the level down by the step size")
+        self.down_btn.clicked.connect(lambda: self._step_level(-1))
+        level_row.addWidget(self.down_btn)
+
+        self.level_combo = QComboBox()
+        self.level_combo.setEditable(True)
+        validator = QDoubleValidator()
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.level_combo.lineEdit().setValidator(validator)
+        self.level_combo.setToolTip(
+            "Pick a level, or type a new one (e.g. a fresh bench RL) and "
+            "press Enter to add it")
+        self.level_combo.lineEdit().returnPressed.connect(self._on_level_entered)
+        self.level_combo.activated.connect(self._on_level_activated)
+        level_row.addWidget(self.level_combo, 1)
+
+        self.up_btn = QToolButton()
+        self.up_btn.setText("▲")
+        self.up_btn.setToolTip("Move the level up by the step size")
+        self.up_btn.clicked.connect(lambda: self._step_level(+1))
+        level_row.addWidget(self.up_btn)
+
+        level_row.addSpacing(6)
+        level_row.addWidget(QLabel("Step"))
+        self.step_spin = QDoubleSpinBox()
+        self.step_spin.setRange(0.01, 1000.0)
+        self.step_spin.setDecimals(2)
+        self.step_spin.setSingleStep(0.5)
+        self.step_spin.setValue(DEFAULT_STEP)
+        self.step_spin.setSuffix(" m")
+        self.step_spin.setToolTip("How far ▼/▲ move the level each press "
+                                  "(auto-set from the data on first scan)")
+        self.step_spin.valueChanged.connect(self._on_step_changed)
+        level_row.addWidget(self.step_spin)
+        main_layout.addLayout(level_row)
+
+        # --- Slice width + presets ---
+        tol_row = QHBoxLayout()
+        tol_row.setSpacing(4)
+        tol_row.addWidget(QLabel("Width ±"))
+        self.tolerance_spin = QDoubleSpinBox()
+        self.tolerance_spin.setRange(0.0, 10000.0)
+        self.tolerance_spin.setDecimals(1)
+        self.tolerance_spin.setSingleStep(1.0)
+        self.tolerance_spin.setValue(5.0)
+        self.tolerance_spin.setSuffix(" m")
+        self.tolerance_spin.setToolTip(
+            "Half-height of the visible slice around the level. Yours once "
+            "set — rung clicks never change it (auto-set once from the "
+            "first scan)")
+        self.tolerance_spin.valueChanged.connect(self._on_tolerance_changed)
+        tol_row.addWidget(self.tolerance_spin)
+
+        # Quick-set ± presets + the data-derived "Auto" suggestion.
+        for preset in TOL_PRESETS:
+            btn = QToolButton()
+            btn.setText(f"±{format_number(preset)}")
+            btn.setStyleSheet(_CHIP_STYLE)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(
+                lambda _checked, v=preset: self._set_tolerance(v))
+            tol_row.addWidget(btn)
+        self.auto_tol_btn = QToolButton()
+        self.auto_tol_btn.setText("Auto")
+        self.auto_tol_btn.setStyleSheet(_CHIP_STYLE)
+        self.auto_tol_btn.setEnabled(False)
+        self.auto_tol_btn.setToolTip("Suggested width from the data "
+                                     "(scan first)")
+        self.auto_tol_btn.clicked.connect(self._on_auto_tolerance)
+        tol_row.addWidget(self.auto_tol_btn)
+        tol_row.addStretch()
+        main_layout.addLayout(tol_row)
+
+        self.show_null_check = QCheckBox("Always show features with no Elevation")
+        self.show_null_check.setChecked(True)
+        self.show_null_check.setToolTip(
+            "Keep features whose Elevation is empty visible at every level "
+            "(values are entered manually, so blanks are common)")
+        self.show_null_check.toggled.connect(self._on_settings_changed)
+        main_layout.addWidget(self.show_null_check)
+
+        self.rescan_btn = QPushButton("Rescan data")
+        self.rescan_btn.setToolTip(
+            "Scan the selected layers for elevation values and refresh the "
+            "suggested levels (large layers are always included on a manual "
+            "rescan)")
+        self.rescan_btn.clicked.connect(lambda: self._on_rescan(manual=True))
+        main_layout.addWidget(self.rescan_btn)
+
+        # --- Layers (set-and-forget, so collapsed by default) ---
+        self.layers_box = QgsCollapsibleGroupBox("Layers")
+        self.layers_box.setObjectName("LGSZFilterLayersBox")
+        self.layers_box.setSaveCollapsedState(True)
+        self.layers_box.setStyleSheet(
+            "QgsCollapsibleGroupBox { font-weight: bold;"
+            " padding-top: 8px; margin-top: 6px; }")
+        layers_layout = QVBoxLayout()
+        layers_layout.setSpacing(4)
+        layers_layout.setContentsMargins(6, 6, 6, 6)
 
         self.layer_checks = []
         self.layer_combos = []
@@ -137,19 +278,16 @@ class ZFilterDockWidget(QDockWidget):
             combo.currentIndexChanged.connect(self._on_selection_changed)
             row.addWidget(check)
             row.addWidget(combo, 1)
-            layer_layout.addLayout(row)
+            layers_layout.addLayout(row)
             self.layer_checks.append(check)
             self.layer_combos.append(combo)
-
-        layer_group.setLayout(layer_layout)
-        main_layout.addWidget(layer_group)
 
         # A plain combo does not auto-track the project, so refresh when
         # layers are added/removed (clipper pattern).
         # (connections made in _connect_project_signals)
 
-        # --- Additional layers (auto-detected survey points / strings) ---
-        # Hidden entirely when the project has none, so open-pit projects
+        # Additional layers (auto-detected survey points / strings) —
+        # hidden entirely when the project has none, so open-pit projects
         # never see it. Rows are rebuilt by _refresh_extra_layers().
         self.extra_group = QGroupBox("Additional Layers")
         self.extra_group.setStyleSheet(
@@ -159,133 +297,27 @@ class ZFilterDockWidget(QDockWidget):
         self.extra_layout.setContentsMargins(6, 6, 6, 6)
         self.extra_group.setLayout(self.extra_layout)
         self.extra_group.setVisible(False)
-        main_layout.addWidget(self.extra_group)
+        layers_layout.addWidget(self.extra_group)
 
-        # --- Level ---
-        level_group = QGroupBox("Current Level (elevation)")
-        level_group.setStyleSheet(
+        # Rasters (per-level basemaps) — tie a raster to one elevation so
+        # it only shows while the filter window covers it. Hidden when the
+        # project has no local rasters. Rows rebuilt by
+        # _refresh_raster_rows().
+        self.raster_group = QGroupBox("Rasters")
+        self.raster_group.setStyleSheet(
             "QGroupBox { font-weight: bold; padding-top: 8px; margin-top: 6px; }")
-        level_layout = QVBoxLayout()
-        level_layout.setSpacing(4)
-        level_layout.setContentsMargins(6, 6, 6, 6)
+        self.raster_layout = QVBoxLayout()
+        self.raster_layout.setSpacing(4)
+        self.raster_layout.setContentsMargins(6, 6, 6, 6)
+        self.raster_group.setLayout(self.raster_layout)
+        self.raster_group.setVisible(False)
+        layers_layout.addWidget(self.raster_group)
 
-        # What the data holds: "320–410 m · 1240 with elevation · 56 blank"
-        self.summary_label = QLabel("Not scanned yet.")
-        self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("color: palette(mid); font-size: 8pt;")
-        level_layout.addWidget(self.summary_label)
-
-        # Suggested-level chips (filled by _rebuild_chips after a scan).
-        self.chips_widget = QWidget()
-        self.chips_grid = QGridLayout(self.chips_widget)
-        self.chips_grid.setContentsMargins(0, 2, 0, 2)
-        self.chips_grid.setSpacing(4)
-        self.chips_widget.setVisible(False)
-        level_layout.addWidget(self.chips_widget)
-
-        level_row = QHBoxLayout()
-        level_row.setSpacing(4)
-        self.level_combo = QComboBox()
-        self.level_combo.setEditable(True)
-        validator = QDoubleValidator()
-        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
-        self.level_combo.lineEdit().setValidator(validator)
-        self.level_combo.setToolTip(
-            "Pick a level, or type a new one (e.g. a fresh bench RL) and "
-            "press Enter to add it")
-        self.level_combo.lineEdit().returnPressed.connect(self._on_level_entered)
-        self.level_combo.activated.connect(self._on_level_activated)
-        level_row.addWidget(self.level_combo, 1)
-
-        self.down_btn = QToolButton()
-        self.down_btn.setText("▼")
-        self.down_btn.setToolTip("Step down to the next level below")
-        self.down_btn.clicked.connect(lambda: self._step_level(-1))
-        self.up_btn = QToolButton()
-        self.up_btn.setText("▲")
-        self.up_btn.setToolTip("Step up to the next level above")
-        self.up_btn.clicked.connect(lambda: self._step_level(+1))
-        level_row.addWidget(self.down_btn)
-        level_row.addWidget(self.up_btn)
-        level_layout.addLayout(level_row)
-
-        self.rescan_btn = QPushButton("Rescan data")
-        self.rescan_btn.setToolTip(
-            "Scan the selected layers for elevation values and refresh the "
-            "suggested levels (large layers are always included on a manual "
-            "rescan)")
-        self.rescan_btn.clicked.connect(lambda: self._on_rescan(manual=True))
-        level_layout.addWidget(self.rescan_btn)
-
-        level_group.setLayout(level_layout)
-        main_layout.addWidget(level_group)
-
-        # --- Options ---
-        options_group = QGroupBox("Options")
-        options_group.setStyleSheet(
-            "QGroupBox { font-weight: bold; padding-top: 8px; margin-top: 6px; }")
-        options_layout = QVBoxLayout()
-        options_layout.setSpacing(4)
-        options_layout.setContentsMargins(6, 6, 6, 6)
-
-        tol_row = QHBoxLayout()
-        tol_row.addWidget(QLabel("Tolerance ±"))
-        self.tolerance_spin = QDoubleSpinBox()
-        self.tolerance_spin.setRange(0.0, 10000.0)
-        self.tolerance_spin.setDecimals(1)
-        self.tolerance_spin.setSingleStep(1.0)
-        self.tolerance_spin.setValue(5.0)
-        self.tolerance_spin.setSuffix(" m")
-        self.tolerance_spin.setToolTip(
-            "Half-height of the visible elevation window around the level")
-        self.tolerance_spin.valueChanged.connect(self._on_settings_changed)
-        tol_row.addWidget(self.tolerance_spin)
-        tol_row.addStretch()
-        options_layout.addLayout(tol_row)
-
-        # Quick-set ± presets + the data-derived "Auto" suggestion.
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(4)
-        for preset in TOL_PRESETS:
-            btn = QToolButton()
-            btn.setText(f"±{format_number(preset)}")
-            btn.setStyleSheet(_CHIP_STYLE)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(
-                lambda _checked, v=preset: self._set_tolerance(v))
-            preset_row.addWidget(btn)
-        self.auto_tol_btn = QToolButton()
-        self.auto_tol_btn.setText("Auto")
-        self.auto_tol_btn.setStyleSheet(_CHIP_STYLE)
-        self.auto_tol_btn.setEnabled(False)
-        self.auto_tol_btn.setToolTip("Suggested tolerance from the data "
-                                     "(scan first)")
-        self.auto_tol_btn.clicked.connect(self._on_auto_tolerance)
-        preset_row.addWidget(self.auto_tol_btn)
-        preset_row.addStretch()
-        options_layout.addLayout(preset_row)
-
-        self.show_null_check = QCheckBox("Always show features with no Elevation")
-        self.show_null_check.setChecked(True)
-        self.show_null_check.setToolTip(
-            "Keep features whose Elevation is empty visible at every level "
-            "(values are entered manually, so blanks are common)")
-        self.show_null_check.toggled.connect(self._on_settings_changed)
-        options_layout.addWidget(self.show_null_check)
-
-        options_group.setLayout(options_layout)
-        main_layout.addWidget(options_group)
+        self.layers_box.setLayout(layers_layout)
+        self.layers_box.setCollapsed(True)
+        main_layout.addWidget(self.layers_box)
 
         # --- Actions ---
-        self.toggle_btn = QPushButton("Filter: OFF")
-        self.toggle_btn.setCheckable(True)
-        self.toggle_btn.setToolTip("Apply / remove the elevation filter")
-        self.toggle_btn.setStyleSheet(
-            "QPushButton { font-weight: bold; padding: 6px; }"
-            "QPushButton:checked { background-color: #2196F3; color: white; }")
-        self.toggle_btn.toggled.connect(self._on_toggled)
-        main_layout.addWidget(self.toggle_btn)
-
         self.clear_btn = QPushButton("Clear all filters")
         self.clear_btn.setToolTip(
             "Restore every layer to its pre-filter state")
@@ -299,7 +331,12 @@ class ZFilterDockWidget(QDockWidget):
 
         main_layout.addStretch()
         main_widget.setLayout(main_layout)
-        self.setWidget(main_widget)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(main_widget)
+        self.setWidget(scroll)
 
     def _connect_project_signals(self):
         project = QgsProject.instance()
@@ -340,9 +377,14 @@ class ZFilterDockWidget(QDockWidget):
             populate_layer_combo(
                 combo,
                 layer_candidates(geometry=geometry),
+                # Without a placeholder an unmatched slot silently keeps the
+                # first candidate, so a project with no Basemap would filter
+                # (and scan) some other polygon layer twice.
+                placeholder="— none —",
                 target_name=target_name,
                 select_layer_id=keep_id)
         self._refresh_extra_layers()
+        self._refresh_raster_rows()
 
     def _refresh_extra_layers(self):
         """Rebuild the auto-detected extra-layer rows (survey/strings)."""
@@ -408,8 +450,121 @@ class ZFilterDockWidget(QDockWidget):
             detail.setToolTip(
                 "Where this layer's level elevation comes from")
             box.addWidget(detail)
+        if not spec['disabled_reason']:
+            text_fields = auto_layers.string_field_names(row['layer'])
+            if text_fields:
+                label_combo = QComboBox()
+                label_combo.setSizeAdjustPolicy(
+                    QComboBox.SizeAdjustPolicy.AdjustToContents)
+                label_combo.setToolTip(
+                    "Text field naming the level (labels the ladder rungs)")
+                label_combo.addItem("(none)", '')
+                for name in text_fields:
+                    label_combo.addItem(name, name)
+                current = spec.get('label_field') or ''
+                index = label_combo.findData(current)
+                label_combo.setCurrentIndex(index if index >= 0 else 0)
+                label_combo.currentIndexChanged.connect(
+                    lambda _i, r=row, c=label_combo:
+                        self._on_extra_label_changed(r, c))
+                box.addWidget(label_combo)
         box.addStretch()
         return widget
+
+    def _refresh_raster_rows(self):
+        """Rebuild the elevation-tied raster rows."""
+        rows = auto_layers.detect_raster_layers()
+        by_id = {e['id']: e for e in self._persisted_rasters if e.get('id')}
+        for row in rows:
+            entry = by_id.get(row['layer'].id())
+            row['checked'] = bool(entry and entry['checked'])
+            row['elevation'] = entry['elevation'] if entry else None
+
+        while self.raster_layout.count():
+            item = self.raster_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._raster_rows = rows
+
+        for row in rows:
+            self.raster_layout.addWidget(self._build_raster_row(row))
+        self.raster_group.setVisible(bool(rows))
+        # Same no-persist rule as _refresh_extra_layers: this runs on
+        # project-load and layer signals; persistence happens on explicit
+        # user actions only (_on_raster_changed).
+
+    def _build_raster_row(self, row):
+        widget = QWidget()
+        box = QHBoxLayout(widget)
+        box.setSpacing(4)
+        box.setContentsMargins(0, 0, 0, 0)
+
+        check = QCheckBox()
+        check.setChecked(row['checked'])
+        check.setToolTip(
+            f"Show '{row['layer'].name()}' only when the filter window "
+            "covers its elevation")
+        box.addWidget(check)
+
+        name_label = QLabel(row['layer'].name())
+        box.addWidget(name_label)
+        box.addStretch()
+
+        spin = QDoubleSpinBox()
+        spin.setRange(-10000.0, 10000.0)
+        spin.setDecimals(1)
+        spin.setSuffix(" m")
+        spin.setValue(row['elevation'] if row['elevation'] is not None
+                      else 0.0)
+        spin.setEnabled(row['checked'])
+        spin.setToolTip("This raster's level elevation")
+        box.addWidget(spin)
+
+        check.toggled.connect(
+            lambda on, r=row, s=spin: self._on_raster_toggled(r, s, on))
+        spin.valueChanged.connect(
+            lambda value, r=row: self._on_raster_value_changed(r, value))
+        return widget
+
+    def _on_raster_toggled(self, row, spin, checked):
+        row['checked'] = checked
+        spin.setEnabled(checked)
+        if checked and row['elevation'] is None:
+            # First tie: start from the currently selected level — usually
+            # the level the user is looking at when they reach for this.
+            level = self.current_level()
+            if level is not None:
+                blocked = spin.blockSignals(True)
+                spin.setValue(level)
+                spin.blockSignals(blocked)
+            row['elevation'] = spin.value()
+        self._on_raster_changed()
+
+    def _on_raster_value_changed(self, row, value):
+        row['elevation'] = value
+        self._on_raster_changed()
+
+    def _on_raster_changed(self):
+        if self._restoring:
+            return
+        self._persist_rasters()
+        self.controller.sync_rasters_now()
+
+    def _persist_rasters(self):
+        entries = [{
+            'id': row['layer'].id(),
+            'name': row['layer'].name(),
+            'elevation': row['elevation'],
+            'checked': bool(row['checked']),
+        } for row in self._raster_rows if row['elevation'] is not None]
+        current_ids = {e['id'] for e in entries}
+        # Keep ties for rasters not currently in the project (temporarily
+        # removed) so assignments survive a round trip out of the list.
+        entries += [e for e in self._persisted_rasters
+                    if e.get('id') and e['id'] not in current_ids]
+        self._persisted_rasters = entries
+        self.controller.persist_rasters(entries)
 
     @staticmethod
     def _spec_text(spec):
@@ -427,6 +582,13 @@ class ZFilterDockWidget(QDockWidget):
         spec = combo.currentData()
         if spec is not None:
             row['spec'] = spec
+        self._on_extra_changed()
+
+    def _on_extra_label_changed(self, row, combo):
+        # Stamp every candidate so switching the Z source keeps the choice;
+        # mark it user-made so rescans stop re-detecting over it.
+        row['label_user'] = True
+        detect.apply_label_choice(row['specs'], combo.currentData())
         self._on_extra_changed()
 
     def _on_extra_changed(self):
@@ -453,6 +615,7 @@ class ZFilterDockWidget(QDockWidget):
         try:
             state = self.controller.persisted_state()
             self._persisted_extra = state['extra_layers']
+            self._persisted_rasters = state['rasters']
             self.refresh_layer_combos(select_ids=state['layer_ids'] or None)
             for i, check in enumerate(self.layer_checks):
                 flags = state['layer_checked']
@@ -462,17 +625,30 @@ class ZFilterDockWidget(QDockWidget):
             self._scan = None
             self._auto_tol = None
             self._repopulate_level_combo(current=state['level'])
-            self.tolerance_spin.setValue(state['tolerance'])
+            self.tolerance_spin.setValue(
+                state['tolerance'] if state['tolerance'] is not None
+                else DEFAULT_TOLERANCE)
+            # Pre-width project: first scan suggests one (mirror of step).
+            self._tol_persisted = state['tolerance'] is not None
+            if state['step'] is not None:
+                self.step_spin.setValue(state['step'])
+                self._step_persisted = True
+            else:
+                # Pre-step project: leave the default and let the first
+                # scan suggest one (never write DEFAULT_STEP blindly, or
+                # the auto-init would be frozen forever).
+                self._step_persisted = False
             self.show_null_check.setChecked(state['show_null'])
             self.toggle_btn.setChecked(state['enabled'])
             self._update_toggle_text()
+            self._sync_ladder()
             if state['enabled']:
                 self._set_status("Filter restored from project.")
             else:
                 self._set_status("")
         finally:
             self._restoring = False
-        # Repopulate the summary + suggestion chips for the loaded project.
+        # Repopulate the summary + level ladder for the loaded project.
         if self.isVisible():
             QTimer.singleShot(0, lambda: self._on_rescan(manual=False))
         else:
@@ -531,31 +707,43 @@ class ZFilterDockWidget(QDockWidget):
         if value is None:
             return
         self._add_level(value)
+        self._update_toggle_text()
         self._maybe_apply()
+        self._sync_ladder()
 
     def _on_level_activated(self, _index):
+        self._update_toggle_text()
         self._maybe_apply()
+        self._sync_ladder()
 
     def _step_level(self, direction):
-        levels = self._merged_levels()
-        if not levels:
-            return
+        """Move the level down/up by the step size (numeric sweep)."""
+        step = self.step_spin.value()
         current = self.current_level()
         if current is None:
-            target = levels[0] if direction > 0 else levels[-1]
+            # Enter the data from the end the user is heading away from:
+            # ▼ starts the sweep at the top, ▲ at the bottom.
+            levels = [c['level'] for c in self._suggestions]
+            if not levels:
+                self._set_status("Scan data or type a level first.")
+                return
+            target = max(levels) if direction < 0 else min(levels)
         else:
-            if direction > 0:
-                higher = [v for v in levels if v > current]
-                if not higher:
-                    return
-                target = higher[0]
-            else:
-                lower = [v for v in levels if v < current]
-                if not lower:
-                    return
-                target = lower[-1]
+            target = current + direction * step
+            span = (value_range(self._scan['value_counts'])
+                    if self._scan else None)
+            if span:
+                lo, hi = span[0] - step, span[1] + step
+                clamped = min(max(target, lo), hi)
+                if clamped != target:
+                    self._set_status("Top of data." if direction > 0
+                                     else "Bottom of data.")
+                target = clamped
         self._repopulate_level_combo(current=target)
-        self._maybe_apply()
+        self._transient_level = target
+        self._update_toggle_text()
+        self._apply_or_enable()
+        self._sync_ladder()
 
     # ------------------------------------------------------------------
     # Data scan + suggestions
@@ -568,15 +756,37 @@ class ZFilterDockWidget(QDockWidget):
             targets, feature_cap=None if manual else AUTO_SCAN_FEATURE_CAP)
         self._scanned = True
         self._suggestions = cluster_levels(self._scan['value_counts'])
+        attach_labels(self._suggestions,
+                      self._scan.get('value_labels') or {})
+        # Bake for QField: the device ladder renders from this even when
+        # the device-side scan cannot see the data.
+        self.controller.persist_suggestions(self._suggestions, self._scan)
         self._auto_tol = (suggest_tolerance(self._suggestions)
                           if self._suggestions else None)
         self.auto_tol_btn.setEnabled(self._auto_tol is not None)
         if self._auto_tol is not None:
             self.auto_tol_btn.setToolTip(
                 f"Suggested from the data: ±{format_number(self._auto_tol)} m")
+        # Auto-set the sweep step from the data, once — a step the user (or
+        # an earlier scan) already chose is never clobbered.
+        if not self._step_persisted and self._suggestions:
+            step = suggest_step(self._suggestions)
+            blocked = self.step_spin.blockSignals(True)
+            self.step_spin.setValue(step)
+            self.step_spin.blockSignals(blocked)
+            self.controller.persist_step(step)
+            self._step_persisted = True
+        # Same once-only rule for the slice width: a sensible default from
+        # the data, then it's the user's until they change it themselves.
+        if not self._tol_persisted and self._auto_tol is not None:
+            blocked = self.tolerance_spin.blockSignals(True)
+            self.tolerance_spin.setValue(self._auto_tol)
+            self.tolerance_spin.blockSignals(blocked)
+            self.controller.persist_tolerance(self._auto_tol)
+            self._tol_persisted = True
         self._update_summary_label()
-        self._rebuild_chips()
         self._repopulate_level_combo(current=self.current_level())
+        self._sync_ladder()
         if self._suggestions:
             self._set_status(f"{len(self._suggestions)} suggested level(s) "
                              f"from {self._scan['with_elev']} features.")
@@ -598,56 +808,81 @@ class ZFilterDockWidget(QDockWidget):
             if scan.get('spanning'):
                 parts.append(f"{scan['spanning']} spanning levels")
         elif scan['total']:
+            # Nothing to cluster: say why, or the panel reads as "no data"
+            # when the data is there but every feature abstained.
             parts.append(f"No elevation values yet "
                          f"({scan['blank']} blank features)")
+            if scan.get('spanning'):
+                parts.append(f"{scan['spanning']} spanning levels")
         else:
             parts.append("No features in the selected layers")
+        for entry in scan.get('skipped') or []:
+            parts.append(f"{entry['name']}: {entry['reason']}")
         if scan['truncated']:
             parts.append("skipped (large): " + ", ".join(scan['truncated']) +
                          " — press Rescan data")
         self.summary_label.setText("  ·  ".join(parts))
 
-    def _rebuild_chips(self):
-        while self.chips_grid.count():
-            item = self.chips_grid.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        suggestions = top_suggestions(self._suggestions)
-        for i, cluster in enumerate(suggestions):
-            chip = QToolButton()
-            chip.setText(f"{format_number(cluster['level'])} "
-                         f"({cluster['count']})")
-            chip.setStyleSheet(_CHIP_STYLE)
-            chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            span = (f"{format_number(cluster['lo'])}–"
-                    f"{format_number(cluster['hi'])} m"
-                    if cluster['lo'] != cluster['hi']
-                    else f"{format_number(cluster['level'])} m")
-            chip.setToolTip(
-                f"{format_number(cluster['level'])} m — {cluster['count']} "
-                f"feature(s) ({span}), suggested "
-                f"±{format_number(cluster['suggested_tol'])} m")
-            chip.clicked.connect(
-                lambda _checked, c=cluster: self._on_chip_clicked(c))
-            self.chips_grid.addWidget(chip, i // 3, i % 3)
-        self.chips_widget.setVisible(bool(suggestions))
+    def _sync_ladder(self):
+        """Push the current scan/level/width/toggle state into the ladder."""
+        self.ladder.set_step(self.step_spin.value())
+        scan_range = None
+        if self._scan is not None:
+            span = value_range(self._scan['value_counts'])
+            if span:
+                scan_range = (span[0], span[1])
+        self.ladder.set_suggestions(self._suggestions, scan_range)
+        self.ladder.set_current(self.current_level(),
+                                self.tolerance_spin.value(),
+                                self.toggle_btn.isChecked())
+        has_data = self.ladder.has_data()
+        self.ladder.setVisible(has_data)
+        self.ladder_placeholder.setVisible(not has_data)
 
-    def _on_chip_clicked(self, cluster):
-        """One click: set the level AND its fitted tolerance, then apply."""
+    def _on_rung_clicked(self, cluster):
+        """One click: set the level and filter. The width is the user's
+        choice and is never touched here."""
         self._repopulate_level_combo(current=cluster['level'])
-        blocked = self.tolerance_spin.blockSignals(True)
-        self.tolerance_spin.setValue(cluster['suggested_tol'])
-        self.tolerance_spin.blockSignals(blocked)
+        self._update_toggle_text()
+        self._apply_or_enable()
+        self._sync_ladder()
+
+    def _on_ladder_picked(self, value):
+        """Background click / drag sweep on the ladder (coalesced apply)."""
+        self._repopulate_level_combo(current=value)
+        self._transient_level = value
+        self._update_toggle_text()
+        self._live_timer.start()
+        self._sync_ladder()
+
+    def _on_step_changed(self, value):
+        if self._restoring:
+            return
+        self.controller.persist_step(value)
+        self._step_persisted = True
+        self.ladder.set_step(value)
+
+    def _on_tolerance_changed(self, value):
+        """Direct spinbox edits — the width is now the user's choice."""
+        if self._restoring:
+            return
+        self._tol_persisted = True
+        self.controller.persist_tolerance(value)
         self._update_toggle_text()
         self._maybe_apply()
+        self._sync_ladder()
 
     def _set_tolerance(self, value):
         blocked = self.tolerance_spin.blockSignals(True)
         self.tolerance_spin.setValue(value)
         self.tolerance_spin.blockSignals(blocked)
+        # Presets/Auto are explicit user choices too — persist so they
+        # stick across rung clicks and project reloads.
+        self._tol_persisted = True
+        self.controller.persist_tolerance(value)
         self._update_toggle_text()
         self._maybe_apply()
+        self._sync_ladder()
 
     def _on_auto_tolerance(self):
         if self._auto_tol is not None:
@@ -687,11 +922,24 @@ class ZFilterDockWidget(QDockWidget):
     def _on_settings_changed(self, *_args):
         if self._restoring:
             return
+        self._update_toggle_text()
         self._maybe_apply()
+        self._sync_ladder()
 
     def _maybe_apply(self):
         if self.toggle_btn.isChecked() and not self._restoring:
             self._apply()
+
+    def _apply_or_enable(self):
+        """Apply now, turning the filter on first if it is off. Used by the
+        explicit filtering gestures (steppers, ladder) — the map must
+        respond even when the toggle was off."""
+        if self._restoring:
+            return
+        if self.toggle_btn.isChecked():
+            self._apply()
+        else:
+            self.toggle_btn.setChecked(True)   # fires _on_toggled → _apply
 
     def _on_toggled(self, checked):
         self._update_toggle_text()
@@ -701,6 +949,7 @@ class ZFilterDockWidget(QDockWidget):
             self._apply()
         else:
             self._on_clear()
+        self._sync_ladder()
 
     def _on_clear(self):
         restored = self.controller.clear_filters()
@@ -712,6 +961,7 @@ class ZFilterDockWidget(QDockWidget):
         self._set_status(
             f"Filters cleared ({len(restored)} layer(s) restored)."
             if restored else "No filters to clear.")
+        self._sync_ladder()
 
     def _apply(self):
         level = self.current_level()
@@ -738,7 +988,12 @@ class ZFilterDockWidget(QDockWidget):
 
         extra_targets = self._prepare_extra_targets(extra_targets)
 
-        self._add_level(level)
+        # Swept levels are transient — persisting every ▼/▲ increment would
+        # fill z_filter/levels with noise. Typed/rung levels persist as before.
+        if self._transient_level is not None and level == self._transient_level:
+            self._transient_level = None
+        else:
+            self._add_level(level)
         report = self.controller.apply_filter(
             list(layers) + extra_targets, level, self.tolerance_spin.value(),
             self.show_null_check.isChecked())
@@ -765,6 +1020,7 @@ class ZFilterDockWidget(QDockWidget):
                 "; ".join(f"{n}: {r}" for n, r in
                           report['skipped'] + report['errors']),
                 level=Qgis.MessageLevel.Warning, duration=6)
+        self._sync_ladder()
 
     def _prepare_extra_targets(self, extra_targets):
         """Materialize geometry-Z fields for extra layers that need them.

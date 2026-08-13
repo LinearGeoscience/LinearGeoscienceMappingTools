@@ -169,7 +169,11 @@ class TestWriteSidecar(unittest.TestCase):
                        'averagedPosition',
                        # Freehand perf: node thinning + live sample cap:
                        'splineDecimate', 'splineMinNodePx',
-                       'splineLiveMaxSegments'):
+                       'splineLiveMaxSegments',
+                       # Elevation-tied rasters (v15):
+                       'lgs_z_rasters', 'rasterZTargets', 'applyRasterZ',
+                       'setLayerOpacityRaw', 'restoreRasterZ',
+                       'rasterInWindows', 'reassertRasterZFor'):
             self.assertIn(needle, text, needle)
 
 

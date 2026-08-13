@@ -29,13 +29,15 @@ from ..utils.qgis_utils import (
 
 try:
     from ...z_filter.expression import (
-        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE,
-        Z_LAYERS, parse_extra_layers, strip_z_subset_any)
+        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, ENTRY_RASTERS,
+        SCOPE as Z_FILTER_SCOPE, Z_LAYERS, parse_extra_layers,
+        parse_rasters, strip_z_subset_any)
     from ...z_filter import qfield as z_filter_qfield
 except ImportError:  # standalone use outside the plugin package
     from z_filter.expression import (
-        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, SCOPE as Z_FILTER_SCOPE,
-        Z_LAYERS, parse_extra_layers, strip_z_subset_any)
+        ELEVATION_FIELD, ENTRY_EXTRA_LAYERS, ENTRY_RASTERS,
+        SCOPE as Z_FILTER_SCOPE, Z_LAYERS, parse_extra_layers,
+        parse_rasters, strip_z_subset_any)
     from z_filter import qfield as z_filter_qfield
 
 from .default_stamp import stamp_elevation_defaults
@@ -810,6 +812,20 @@ class OfflineConverter(QObject):
             layer_tree = root.find('.//layer-tree-group')
             if layer_tree is not None:
                 self._remove_layers_from_tree(layer_tree, layers_to_remove)
+
+            # Never bake an elevation-tied raster's Z-hidden state into the
+            # export: the device sidecar drives these via opacity only and
+            # could never unhide a legend-invisible layer.
+            if self.include_zfilter_plugin and layer_tree is not None:
+                rasters_json, _ok = self.project.readEntry(
+                    Z_FILTER_SCOPE, ENTRY_RASTERS, "")
+                tied_ids = {e['id'] for e in parse_rasters(rasters_json)
+                            if e['checked'] and e['id']
+                            and e['id'] in exported_layer_ids}
+                if tied_ids:
+                    for node in layer_tree.iter('layer-tree-layer'):
+                        if node.get('id') in tied_ids:
+                            node.set('checked', 'Qt::Checked')
 
             # Update project title
             title_elem = root.find('.//title')

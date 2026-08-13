@@ -7,6 +7,7 @@ decision logic stays unit-testable without qgis.
 """
 
 from qgis.core import Qgis, QgsProject, QgsWkbTypes
+from qgis.PyQt.QtCore import QVariant
 
 from . import detect
 from .expression import Z_LAYERS, spec_field_names
@@ -35,6 +36,13 @@ def _provider_writable(provider):
     return bool(caps & add) and bool(caps & change)
 
 
+def string_field_names(layer):
+    """The layer's text-typed field names (level-name label candidates)."""
+    # QVariant.String still works on QGIS 3.36+ (deprecation warning only);
+    # if a future build drops it, key off f.typeName().lower() instead.
+    return [f.name() for f in layer.fields() if f.type() == QVariant.String]
+
+
 def detect_extra_layers(project=None, exclude_ids=()):
     """All eligible non-canonical vector layers, sorted by name.
 
@@ -58,10 +66,12 @@ def detect_extra_layers(project=None, exclude_ids=()):
         if geometry_class is None:
             continue
         numeric_fields = [f.name() for f in layer.fields() if f.isNumeric()]
+        text_fields = string_field_names(layer)
         specs = detect.candidate_specs(
             layer.name(), numeric_fields,
             QgsWkbTypes.hasZ(layer.wkbType()), geometry_class,
-            _provider_writable(layer.dataProvider()))
+            _provider_writable(layer.dataProvider()),
+            text_field_names=text_fields)
         if specs:
             spec = specs[0]
             rows.append({
@@ -93,6 +103,20 @@ def merge_with_persisted(detected, persisted_entries):
                 break
         row['checked'] = bool(entry['checked']) and \
             not row['spec']['disabled_reason']
+        # Carry the persisted level-name choice back onto the fresh specs —
+        # they arrive stamped with the auto-detected label_field, which
+        # would otherwise silently discard the user's pick on every rescan.
+        if entry.get('label_user'):
+            choice = entry.get('label_field', '')
+            if choice and choice not in string_field_names(row['layer']):
+                # Field renamed/removed: fall back to auto this session
+                # without rewriting the saved choice.
+                continue
+            row['label_user'] = True
+            detect.apply_label_choice(row['specs'], choice)
+        elif entry.get('label_field') and \
+                entry['label_field'] in string_field_names(row['layer']):
+            detect.apply_label_choice(row['specs'], entry['label_field'])
     return detected
 
 
@@ -113,5 +137,34 @@ def to_persist_entries(rows):
             entry['field_max'] = spec['field_max']
         else:
             entry['field'] = spec['field']
+        # Optional level-name field, conditional to keep the persisted JSON
+        # byte-stable for layers without one. label_user pins a manual
+        # choice (or, without a field, an explicit "(none)") across rescans.
+        if spec.get('label_field'):
+            entry['label_field'] = spec['label_field']
+        if row.get('label_user'):
+            entry['label_user'] = True
         entries.append(entry)
     return entries
+
+
+REMOTE_RASTER_PROVIDERS = {'wms', 'wcs', 'arcgismapserver'}
+
+
+def detect_raster_layers(project=None):
+    """Local raster layers eligible for an elevation tie, sorted by name.
+
+    Remote providers (XYZ/OSM basemaps register as 'wms') are excluded —
+    a web basemap has no single mine-level elevation.
+    Returns rows [{'layer': QgsRasterLayer}].
+    """
+    project = project or QgsProject.instance()
+    rows = []
+    for layer in project.mapLayers().values():
+        if layer.type() != Qgis.LayerType.Raster:
+            continue
+        if layer.providerType() in REMOTE_RASTER_PROVIDERS:
+            continue
+        rows.append({'layer': layer})
+    rows.sort(key=lambda row: row['layer'].name().lower())
+    return rows
