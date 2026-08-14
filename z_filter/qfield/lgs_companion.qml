@@ -111,15 +111,27 @@
  *    RubberbandModel/RubberbandShape (never QField's digitizing
  *    model, so this cannot fight the spline feature) and is
  *    spline-smoothed when the Spline pill is armed, straight
- *    otherwise. Candidate lookup honours the layer subsetString —
- *    reshape what you see. One-level, session-only undo restores the
- *    pre-reshape geometries from WKT (delete reshaped + recreate with
- *    copied attributes, UUID preserved). Requires QField 4.x.
+ *    otherwise (the Spline pill stays visible during reshape even
+ *    though no digitizing model exists then). Candidate lookup honours
+ *    the layer subsetString — reshape what you see. One-level,
+ *    session-only undo restores the pre-reshape geometries from WKT
+ *    (delete reshaped + recreate with copied attributes, UUID
+ *    preserved). Only offered in BROWSE mode: the pill hides while a
+ *    digitizing/measure session is active (mainWindow.currentRubberband
+ *    is non-null then — the app state machine's own signal), so the
+ *    native digitizing rubberband and crosshair never overlap the
+ *    reshape drawing. The preview line renders through QField's own
+ *    native mechanism: a RubberbandShape wrapped in Shape/ShapePath
+ *    exactly like the app's Rubberband.qml — a bare RubberbandShape
+ *    draws nothing, and it must never be anchored/sized (its C++
+ *    transform positions the item to track the map). Requires
+ *    QField 4.x.
  */
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import org.qfield
 import org.qgis
 import Theme
@@ -1836,7 +1848,12 @@ Item {
 
     Rectangle {
       id: splinePill
-      visible: plugin.featureSpline && plugin.splinePillVisible
+      // Also shown during reshape drawing (browse mode, so no digitizing
+      // model and splinePillVisible is false) — arming there decides
+      // whether the reshape line is smoothed or straight.
+      visible: plugin.featureSpline &&
+               (plugin.splinePillVisible || plugin.reshapeStep === 1 ||
+                plugin.reshapeStep === 2)
       anchors.verticalCenter: parent.verticalCenter
       width: splinePillText.contentWidth + 24
       height: splinePillText.contentHeight + 12
@@ -1860,8 +1877,11 @@ Item {
 
     Rectangle {
       id: reshapePill
+      // Browse mode only: hidden while a digitizing/measure session is
+      // active so the native rubberband/crosshair never overlap the
+      // reshape drawing.
       visible: plugin.featureReshape && plugin.reshapeStep === 0 &&
-               plugin.clipStep === 0
+               plugin.clipStep === 0 && !plugin.reshapeEditingActive
       anchors.verticalCenter: parent.verticalCenter
       width: reshapePillText.contentWidth + 24
       height: reshapePillText.contentHeight + 12
@@ -4997,6 +5017,9 @@ Item {
   // ================================================================
 
   property int reshapeStep: 0       // 0=off, 1=pick targets, 2=draw, 3=done
+  // True while a digitizing/measure session is active — the app state
+  // machine sets mainWindow.currentRubberband (null in browse mode).
+  property bool reshapeEditingActive: false
   property var reshapeDashboard: null  // item exposing activeLayer, cached
   property var reshapeLayer: null      // active layer locked on entry
   property var reshapePicks: []        // [{id, feature}] optional target picks
@@ -5013,6 +5036,13 @@ Item {
     geometryType: Qgis.GeometryType.Line
   }
 
+  // Mirror of QField's own Rubberband.qml wrapper: a bare RubberbandShape
+  // draws NOTHING — it only computes screen-space `polylines`; the child
+  // Shape/ShapePath does the actual drawing. And it must NEVER be
+  // anchored or sized: its C++ updateTransform() drives the item's own
+  // x/y/scale to keep the baked polyline glued to the map through
+  // pan/zoom, and anchors would override that (geometry lands
+  // off-screen). Parent it to the canvas and leave the geometry alone.
   RubberbandShape {
     id: reshapeShape
     visible: plugin.reshapeStep === 2
@@ -5021,8 +5051,39 @@ Item {
     geometryType: Qgis.GeometryType.Line
     // Dodger blue, desktop reshape-spline rubber band parity.
     color: '#961E90FF'
+    outlineColor: '#64FFFFFF'
     lineWidth: 3
     z: 1
+
+    Shape {
+      anchors.fill: parent
+
+      ShapePath {
+        strokeColor: reshapeShape.outlineColor
+        strokeWidth: reshapeShape.lineWidth / reshapeShape.scale + 2
+        strokeStyle: ShapePath.SolidLine
+        fillColor: 'transparent'
+        joinStyle: ShapePath.RoundJoin
+        capStyle: ShapePath.RoundCap
+
+        PathPolyline {
+          path: reshapeShape.polylines[0]
+        }
+      }
+
+      ShapePath {
+        strokeColor: reshapeShape.color
+        strokeWidth: reshapeShape.lineWidth / reshapeShape.scale
+        strokeStyle: ShapePath.SolidLine
+        fillColor: 'transparent'
+        joinStyle: ShapePath.RoundJoin
+        capStyle: ShapePath.RoundCap
+
+        PathPolyline {
+          path: reshapeShape.polylines[0]
+        }
+      }
+    }
   }
 
   function initReshape() {
@@ -5030,6 +5091,22 @@ Item {
       if (reshapeDashboard === null)
         reshapeDashboard = iface.findItemByObjectName('dashBoard')
     } catch (error) {}
+    updateReshapeEditingActive()
+  }
+
+  function updateReshapeEditingActive() {
+    // mainWindow.currentRubberband is the app state machine's own
+    // signal: null in browse, the digitizing/measuring rubberband
+    // otherwise. Unreadable (older/newer QField) counts as browse so
+    // the pill stays usable.
+    let active = false
+    try {
+      const rb = mainWindow.currentRubberband
+      active = rb !== null && rb !== undefined
+    } catch (error) {
+      active = false
+    }
+    reshapeEditingActive = active
   }
 
   // The active layer is not on iface — it is a property of QField's
@@ -5075,6 +5152,11 @@ Item {
         toast(qsTr('Reshape unavailable — no map canvas'))
         return
       }
+      updateReshapeEditingActive()
+      if (reshapeEditingActive) {
+        toast(qsTr('Turn digitizing off first'))
+        return
+      }
       const layer = reshapeActiveLayer()
       if (layer === null) {
         toast(qsTr('Reshape unavailable — no active layer (tap one in the legend)'))
@@ -5106,8 +5188,8 @@ Item {
       reshapeBanner.anchors.horizontalCenter = canvas.horizontalCenter
       reshapeBanner.anchors.top = canvas.top
       reshapeBanner.anchors.topMargin = 60
+      // No anchors/size on reshapeShape — see the comment on the item.
       reshapeShape.parent = canvas
-      reshapeShape.anchors.fill = canvas
       reshapeMarkers.parent = canvas
       reshapeMarkers.anchors.fill = canvas
       reshapePicks = []
@@ -5521,6 +5603,22 @@ Item {
       if (plugin.reshapeStep === 2 && plugin.reshapeControls.length > 0 &&
           !reshapeMarkerTimer.running)
         reshapeMarkerTimer.start()
+    }
+  }
+
+  Connections {
+    // Track the app state machine: currentRubberband flips non-null
+    // when a digitizing/measure session starts. Hide the pill then, and
+    // abandon an in-progress reshape — the two modes fight over taps.
+    target: plugin.mainWindow
+    ignoreUnknownSignals: true
+    function onCurrentRubberbandChanged() {
+      plugin.updateReshapeEditingActive()
+      if (plugin.reshapeEditingActive &&
+          (plugin.reshapeStep === 1 || plugin.reshapeStep === 2)) {
+        plugin.exitReshapeMode()
+        plugin.toast(qsTr('Reshape cancelled — digitizing started'))
+      }
     }
   }
 

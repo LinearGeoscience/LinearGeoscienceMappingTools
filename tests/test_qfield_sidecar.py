@@ -181,7 +181,11 @@ class TestWriteSidecar(unittest.TestCase):
                        'reshapeCatcher', 'reshapeBanner', 'executeReshape',
                        'reshapeFromRubberband', 'collectReshapeTargets',
                        'undoLastReshape', 'reshapeSequence', 'reshapeModel',
-                       'findHitInLayers', 'layer_property'):
+                       'findHitInLayers', 'layer_property',
+                       # Reshape round 2: browse-mode gating + native
+                       # Shape-wrapped rubberband rendering:
+                       'currentRubberband', 'reshapeEditingActive',
+                       'PathPolyline'):
             self.assertIn(needle, text, needle)
 
 
