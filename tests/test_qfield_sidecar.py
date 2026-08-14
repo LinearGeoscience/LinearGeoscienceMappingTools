@@ -62,7 +62,7 @@ class TestWriteSidecar(unittest.TestCase):
         self.assertEqual(_flag_values(source),
                          {'zfilter': 'true', 'scale': 'true',
                           'opacity': 'true', 'clipping': 'true',
-                          'spline': 'true'})
+                          'spline': 'true', 'reshape': 'true'})
         # Data lines ship empty in source; the exporter fills them.
         self.assertEqual(_data_values(source),
                          {'opacitylayers': '[]',
@@ -70,7 +70,8 @@ class TestWriteSidecar(unittest.TestCase):
                           'splineparams': '[]'})
 
     def test_all_flag_combinations(self):
-        names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline')
+        names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline',
+                 'reshape')
         for combo in itertools.product((True, False), repeat=len(names)):
             kwargs = dict(zip(names, combo))
             path, text = self._write(**kwargs)
@@ -84,14 +85,15 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_only_flag_lines_differ_from_source(self):
         # opacity_layers/spline_params=None rewrite the data lines to [] —
-        # identical to source — so only the five flag lines may differ.
+        # identical to source — so only the six flag lines may differ.
         _path, text = self._write(zfilter=False, scale=False, opacity=False,
-                                  clipping=False, spline=False)
+                                  clipping=False, spline=False,
+                                  reshape=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 5, diff)
+        self.assertEqual(len(diff), 6, diff)
         self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
 
     def test_opacity_layers_data_line(self):
@@ -173,7 +175,13 @@ class TestWriteSidecar(unittest.TestCase):
                        # Elevation-tied rasters (v15):
                        'lgs_z_rasters', 'rasterZTargets', 'applyRasterZ',
                        'setLayerOpacityRaw', 'restoreRasterZ',
-                       'rasterInWindows', 'reassertRasterZFor'):
+                       'rasterInWindows', 'reassertRasterZFor',
+                       # Reshape tool (v18):
+                       'featureReshape', 'reshapePill', 'enterReshapeMode',
+                       'reshapeCatcher', 'reshapeBanner', 'executeReshape',
+                       'reshapeFromRubberband', 'collectReshapeTargets',
+                       'undoLastReshape', 'reshapeSequence', 'reshapeModel',
+                       'findHitInLayers', 'layer_property'):
             self.assertIn(needle, text, needle)
 
 

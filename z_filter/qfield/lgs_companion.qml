@@ -99,6 +99,22 @@
  *    averagedPosition — QField strips the vertex itself after averaged
  *    adds) and below 2 committed vertices (3 for polygons), where the
  *    crosshair vertex is what keeps the geometry valid.
+ *
+ * 7. RESHAPE — "⤳ Reshape" pill: multi-polygon reshape on the ACTIVE
+ *    layer (port of map_cleaning/tools/reshape_spline_tool.py — keep
+ *    the semantics in sync). Optionally tap polygons first to limit
+ *    the targets (clip-style picks), then tap out a line and confirm:
+ *    every targeted polygon the line crosses is reshaped via
+ *    GeometryUtils.reshapeFromRubberband — the same native op QField's
+ *    own single-feature reshape editor uses, applied per feature in
+ *    one edit session. The line draws on the plugin's OWN
+ *    RubberbandModel/RubberbandShape (never QField's digitizing
+ *    model, so this cannot fight the spline feature) and is
+ *    spline-smoothed when the Spline pill is armed, straight
+ *    otherwise. Candidate lookup honours the layer subsetString —
+ *    reshape what you see. One-level, session-only undo restores the
+ *    pre-reshape geometries from WKT (delete reshaped + recreate with
+ *    copied attributes, UUID preserved). Requires QField 4.x.
  */
 
 import QtQuick
@@ -117,6 +133,7 @@ Item {
   readonly property bool featureOpacity: true // LGS-EXPORT-FLAG:opacity
   readonly property bool featureClipping: true // LGS-EXPORT-FLAG:clipping
   readonly property bool featureSpline: true // LGS-EXPORT-FLAG:spline
+  readonly property bool featureReshape: true // LGS-EXPORT-FLAG:reshape
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1109,7 +1126,7 @@ Item {
     // run even when the scale display feature is disabled at export.
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
-        featureSpline)
+        featureSpline || featureReshape)
       attachOverlay()
     startupTimer.start()
   }
@@ -1127,6 +1144,8 @@ Item {
         plugin.restoreOpacityFromProject()
       if (plugin.featureClipping)
         plugin.initClipping()
+      if (plugin.featureReshape)
+        plugin.initReshape()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1795,7 +1814,7 @@ Item {
     Rectangle {
       id: clipPill
       visible: plugin.featureClipping && plugin.clipStep === 0 &&
-               plugin.clipAvailable
+               plugin.reshapeStep === 0 && plugin.clipAvailable
       anchors.verticalCenter: parent.verticalCenter
       width: clipPillText.contentWidth + 24
       height: clipPillText.contentHeight + 12
@@ -1836,6 +1855,29 @@ Item {
 
       TapHandler {
         onTapped: plugin.toggleSplineArmed()
+      }
+    }
+
+    Rectangle {
+      id: reshapePill
+      visible: plugin.featureReshape && plugin.reshapeStep === 0 &&
+               plugin.clipStep === 0
+      anchors.verticalCenter: parent.verticalCenter
+      width: reshapePillText.contentWidth + 24
+      height: reshapePillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: reshapePillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        text: qsTr('⤳ Reshape')
+      }
+
+      TapHandler {
+        onTapped: plugin.enterReshapeMode()
       }
     }
   }
@@ -2619,14 +2661,18 @@ Item {
   }
 
   function findClipHit(pos) {
+    // The iterator honours the layer subsetString, so an active Z filter
+    // means only VISIBLE polygons are tappable — clip what you see.
+    return findHitInLayers(
+        clipLayer !== null ? [clipLayer] : candidateClipLayers(), pos)
+  }
+
+  function findHitInLayers(layers, pos) {
     const pt = canvas.mapSettings.screenToCoordinate(
         Qt.point(pos.x, pos.y))
     const tol = clipTapTolerance()
     const probe = "intersects($geometry, buffer(geom_from_wkt('POINT(" +
         pt.x + ' ' + pt.y + ")'), " + tol + '))'
-    // The iterator honours the layer subsetString, so an active Z filter
-    // means only VISIBLE polygons are tappable — clip what you see.
-    const layers = clipLayer !== null ? [clipLayer] : candidateClipLayers()
     for (const layer of layers) {
       let best = null
       let bestArea = -1
@@ -4340,6 +4386,9 @@ Item {
       splineRebuildTimer.restart()
       toast(qsTr('Splines digitise better with the freehand tool turned off'))
     }
+    // The reshape line follows the spline arming — re-render mid-draw.
+    if (reshapeStep === 2)
+      reshapeRebuildPreview()
   }
 
   // splineMinNodePx converted to map units at the current zoom (0 = gate
@@ -4932,6 +4981,889 @@ Item {
         color: 'white'
         border.color: 'black'
         border.width: 2
+      }
+    }
+  }
+
+  // ================================================================
+  // RESHAPE — multi-polygon reshape on the active layer (port of
+  // map_cleaning/tools/reshape_spline_tool.py — keep the semantics in
+  // sync). The cut line lives on the plugin's OWN RubberbandModel, so
+  // this never touches QField's digitizing model (no interference with
+  // the spline feature or the native confirm fixup). The reshape op
+  // itself is GeometryUtils.reshapeFromRubberband — the exact native
+  // call behind QField's single-feature reshape editor — looped over
+  // every targeted polygon inside one edit session.
+  // ================================================================
+
+  property int reshapeStep: 0       // 0=off, 1=pick targets, 2=draw, 3=done
+  property var reshapeDashboard: null  // item exposing activeLayer, cached
+  property var reshapeLayer: null      // active layer locked on entry
+  property var reshapePicks: []        // [{id, feature}] optional target picks
+  property var reshapeControls: []     // [{x,y,z}] tapped points, map CRS
+  property var reshapeCache: ({})      // spline segment cache, per session
+  property var reshapePlan: []         // [{fid, wkt, feature}] at confirm
+  property var reshapeUndo: null       // one-level undo, session-only
+  property string reshapeResultText: ''
+  property var reshapeMarkerPositions: []
+
+  RubberbandModel {
+    id: reshapeModel
+    frozen: false
+    geometryType: Qgis.GeometryType.Line
+  }
+
+  RubberbandShape {
+    id: reshapeShape
+    visible: plugin.reshapeStep === 2
+    model: reshapeModel
+    mapSettings: plugin.scaleSettings
+    geometryType: Qgis.GeometryType.Line
+    // Dodger blue, desktop reshape-spline rubber band parity.
+    color: '#961E90FF'
+    lineWidth: 3
+    z: 1
+  }
+
+  function initReshape() {
+    try {
+      if (reshapeDashboard === null)
+        reshapeDashboard = iface.findItemByObjectName('dashBoard')
+    } catch (error) {}
+  }
+
+  // The active layer is not on iface — it is a property of QField's
+  // dashboard/project-info QML items (objectNames are QField Main.qml
+  // conventions, so probe a few and remember whichever answers).
+  function reshapeActiveLayer() {
+    if (reshapeDashboard !== null) {
+      try {
+        const layer = reshapeDashboard.activeLayer
+        if (layer !== null && layer !== undefined)
+          return layer
+      } catch (error) {}
+    }
+    for (const name of ['dashBoard', 'projectInfo', 'locatorBridge']) {
+      try {
+        const item = iface.findItemByObjectName(name)
+        if (item === null || item === undefined)
+          continue
+        const layer = item.activeLayer
+        if (layer !== null && layer !== undefined) {
+          reshapeDashboard = item
+          return layer
+        }
+      } catch (error) {}
+    }
+    return null
+  }
+
+  function reshapeLayerLabel() {
+    try {
+      return reshapeLayer ? String(reshapeLayer.name) : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Mode lifecycle
+  // ----------------------------------------------------------------
+  function enterReshapeMode() {
+    try {
+      if (!canvas || canvas.width === undefined) {
+        toast(qsTr('Reshape unavailable — no map canvas'))
+        return
+      }
+      const layer = reshapeActiveLayer()
+      if (layer === null) {
+        toast(qsTr('Reshape unavailable — no active layer (tap one in the legend)'))
+        return
+      }
+      const geomType = evalExpr(layer, null,
+                                "layer_property(@layer, 'geometry_type')")
+      if (geomType !== 'Polygon') {
+        toast(qsTr('Reshape needs a polygon layer active in the legend'))
+        return
+      }
+      // The model CRS decides how reshapeFromRubberband reprojects the
+      // line into the layer — bail rather than reshape in a wrong CRS.
+      let crsOk = false
+      try {
+        if (scaleSettings !== null) {
+          reshapeModel.crs = scaleSettings.destinationCrs
+          crsOk = true
+        }
+      } catch (error) {}
+      if (!crsOk) {
+        toast(qsTr('Reshape unavailable — map projection not readable'))
+        return
+      }
+      reshapeLayer = layer
+      reshapeCatcher.parent = canvas
+      reshapeCatcher.anchors.fill = canvas
+      reshapeBanner.parent = canvas
+      reshapeBanner.anchors.horizontalCenter = canvas.horizontalCenter
+      reshapeBanner.anchors.top = canvas.top
+      reshapeBanner.anchors.topMargin = 60
+      reshapeShape.parent = canvas
+      reshapeShape.anchors.fill = canvas
+      reshapeMarkers.parent = canvas
+      reshapeMarkers.anchors.fill = canvas
+      reshapePicks = []
+      reshapeControls = []
+      reshapeCache = ({})
+      reshapePlan = []
+      reshapeResultText = ''
+      reshapeMarkerPositions = []
+      reshapeModel.reset(true)
+      reshapeStep = 1
+      toast(qsTr('Tap polygons to limit reshape (optional), then draw the line'))
+    } catch (error) {
+      toast(qsTr('Reshape unavailable'))
+    }
+  }
+
+  function exitReshapeMode() {
+    try {
+      if (reshapeLayer !== null)
+        reshapeLayer.removeSelection()
+    } catch (error) {}
+    try {
+      reshapeModel.reset(true)
+    } catch (error) {}
+    reshapeStep = 0
+    reshapeLayer = null
+    reshapePicks = []
+    reshapeControls = []
+    reshapeCache = ({})
+    reshapePlan = []
+    reshapeResultText = ''
+    reshapeMarkerPositions = []
+  }
+
+  // ----------------------------------------------------------------
+  // Tap handling
+  // ----------------------------------------------------------------
+  function reshapeTapOnUi(pos) {
+    // Ignore taps landing on the banner or pill bar — overlapping
+    // TapHandlers may deliver the same tap to the canvas catcher too
+    // (same guard as clipTapOnUi, which hardcodes the clip items).
+    try {
+      const b = reshapeBanner.mapFromItem(reshapeCatcher, pos.x, pos.y)
+      if (b.x >= 0 && b.y >= 0 &&
+          b.x <= reshapeBanner.width && b.y <= reshapeBanner.height)
+        return true
+    } catch (error) {}
+    try {
+      const o = overlayBar.mapFromItem(reshapeCatcher, pos.x, pos.y)
+      if (o.x >= 0 && o.y >= 0 &&
+          o.x <= overlayBar.width && o.y <= overlayBar.height)
+        return true
+    } catch (error) {}
+    try {
+      if (zDialog.visible) {
+        const d = mainWindow.contentItem.mapFromItem(
+            reshapeCatcher, pos.x, pos.y)
+        if (d.x >= zDialog.x && d.y >= zDialog.y &&
+            d.x <= zDialog.x + zDialog.width &&
+            d.y <= zDialog.y + zDialog.height)
+          return true
+      }
+    } catch (error) {}
+    return false
+  }
+
+  function updateReshapeSelection() {
+    if (reshapeLayer === null)
+      return
+    let fids = []
+    for (const entry of reshapePicks)
+      fids.push(entry.id)
+    try {
+      if (fids.length === 0) {
+        reshapeLayer.removeSelection()
+        return
+      }
+      LayerUtils.selectFeaturesInLayer(reshapeLayer, fids)
+    } catch (error) {
+      try {
+        reshapeLayer.selectByIds(fids)
+      } catch (error2) {}
+    }
+  }
+
+  function handleReshapeTap(pos) {
+    try {
+      if (reshapeStep !== 1 && reshapeStep !== 2)
+        return
+      if (reshapeTapOnUi(pos))
+        return
+      if (reshapeStep === 1) {
+        const hit = findHitInLayers([reshapeLayer], pos)
+        if (hit === null) {
+          toast(qsTr('No polygon here'))
+          return
+        }
+        reshapePicks = toggleClipPick(reshapePicks, hit.feature.id,
+                                      hit.feature)
+        updateReshapeSelection()
+        return
+      }
+      const pt = canvas.mapSettings.screenToCoordinate(
+          Qt.point(pos.x, pos.y))
+      let next = reshapeControls.slice()
+      next.push({ x: Number(pt.x), y: Number(pt.y), z: Number(pt.z) })
+      reshapeControls = next
+      reshapeRebuildPreview()
+    } catch (error) {}
+  }
+
+  // ----------------------------------------------------------------
+  // Line building (spline-armed = smoothed, otherwise straight)
+  // ----------------------------------------------------------------
+  function reshapeSequence() {
+    if (splineArmed) {
+      const seq = splineConfirmSequence(reshapeControls, false,
+          splineTightness, splineTolerance, splineMaxSegments, reshapeCache)
+      if (seq !== null)
+        return seq
+    }
+    return reshapeControls.slice()
+  }
+
+  function reshapeRebuildPreview() {
+    try {
+      const seq = reshapeSequence()
+      reshapeModel.reset(true)
+      for (let i = 0; i < seq.length; i++)
+        reshapeModel.addVertexFromPoint(GeometryUtils.point(
+            seq[i].x, seq[i].y, seq[i].z))
+      if (seq.length > 0)
+        reshapeModel.removeVertex()
+    } catch (error) {}
+    updateReshapeMarkers()
+  }
+
+  function reshapeUndoVertex() {
+    if (reshapeControls.length === 0)
+      return
+    reshapeControls = reshapeControls.slice(0, reshapeControls.length - 1)
+    reshapeRebuildPreview()
+  }
+
+  function reshapeBackToPicks() {
+    reshapeControls = []
+    reshapeMarkerPositions = []
+    try {
+      reshapeModel.reset(true)
+    } catch (error) {}
+    reshapeStep = 1
+    updateReshapeSelection()
+  }
+
+  function reshapeLineWkt() {
+    // XY only — this WKT feeds the 2D intersects probe; the reshape op
+    // reads its geometry (with Z) from the rubberband model directly.
+    const seq = reshapeSequence()
+    if (seq.length < 2)
+      return ''
+    let coords = []
+    for (const p of seq)
+      coords.push(p.x + ' ' + p.y)
+    return 'LINESTRING (' + coords.join(', ') + ')'
+  }
+
+  function reshapeProbeExpr() {
+    const wkt = reshapeLineWkt()
+    if (wkt === '')
+      return ''
+    let term = "geom_from_wkt('" + wkt + "')"
+    try {
+      // The line is in map (= project) CRS; reproject the probe when the
+      // layer disagrees. Unreadable authids skip the transform (LGS
+      // exports are single-CRS mine grids) — worst case 0 candidates.
+      const layerCrs = evalExpr(reshapeLayer, null,
+                                "layer_property(@layer, 'crs')")
+      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
+      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
+        term = "transform(" + term + ", '" + mapCrs + "', '" +
+               layerCrs + "')"
+    } catch (error) {}
+    return 'intersects($geometry, ' + term + ')'
+  }
+
+  // ----------------------------------------------------------------
+  // Target collection + execution
+  // ----------------------------------------------------------------
+  function collectReshapeTargets() {
+    reshapePlan = []
+    const layer = reshapeLayer
+    if (layer === null || reshapeControls.length < 2)
+      return 0
+    const probe = reshapeProbeExpr()
+    if (probe === '')
+      return 0
+    let pickFids = null
+    if (reshapePicks.length > 0) {
+      pickFids = {}
+      for (const entry of reshapePicks)
+        pickFids[entry.id] = true
+    }
+    let plan = []
+    let failed = 0
+    let iterator = null
+    try {
+      // The iterator honours the layer subsetString, so an active Z
+      // filter means only VISIBLE polygons reshape — reshape what you see.
+      iterator = LayerUtils.createFeatureIteratorFromExpression(layer, probe)
+      while (iterator.hasNext()) {
+        const feature = iterator.next()
+        if (pickFids !== null && pickFids[feature.id] !== true)
+          continue
+        // Pre-reshape snapshot: geometry WKT + the feature itself feed
+        // the one-level undo.
+        const wkt = evalExpr(layer, feature, 'geom_to_wkt($geometry)')
+        if (wkt === '') {
+          failed++
+          continue
+        }
+        plan.push({ fid: feature.id, wkt: wkt, feature: feature })
+      }
+    } catch (error) {}
+    try {
+      if (iterator !== null)
+        iterator.close()
+    } catch (error) {}
+    if (failed > 0)
+      toast(qsTr('%1 polygon(s) skipped (geometry read failed)').arg(failed))
+    reshapePlan = plan
+    return plan.length
+  }
+
+  function executeReshape() {
+    try {
+      const layer = reshapeLayer
+      if (layer === null || reshapePlan.length === 0)
+        return
+      reshapeResultText = qsTr('Reshaping…')
+      const names = attributeNames(layer, reshapePlan[0].feature)
+      const uuidField = detectUuidField(names)
+      let undoEntries = []
+      let unchanged = 0
+      let failed = 0
+      try {
+        layer.startEditing()
+      } catch (error) {}
+      for (const target of reshapePlan) {
+        let result = -1
+        try {
+          result = Number(GeometryUtils.reshapeFromRubberband(
+              layer, target.fid, reshapeModel))
+        } catch (error) {
+          result = -1
+        }
+        if (result === 0) {                 // GeometryUtils.Success
+          // Reshape mutates in place — fid and UUID stay stable, so the
+          // undo can find the feature again by either.
+          let uuid = ''
+          if (uuidField !== null) {
+            try {
+              const value = target.feature.attribute(uuidField)
+              if (value !== undefined && value !== null)
+                uuid = String(value)
+            } catch (error) {}
+          }
+          undoEntries.push({ fid: target.fid, uuid: uuid,
+                             wkt: target.wkt, feature: target.feature })
+        } else if (result === 1000) {       // GeometryUtils.NothingHappened
+          unchanged++
+        } else {
+          failed++
+        }
+      }
+      if (undoEntries.length > 0) {
+        let ok = false
+        try {
+          ok = layer.commitChanges()
+        } catch (error) {
+          ok = false
+        }
+        if (!ok) {
+          try {
+            layer.rollBack()
+          } catch (error) {}
+          toast(qsTr('Reshape failed — no changes made'))
+          reshapeResultText = ''
+          return
+        }
+      } else {
+        try {
+          layer.rollBack()
+        } catch (error) {}
+      }
+      reshapeUndo = undoEntries.length === 0 ? null : {
+        layer: layer,
+        layerName: reshapeLayerLabel(),
+        names: names,
+        uuidField: uuidField,
+        entries: undoEntries
+      }
+      try {
+        layer.removeSelection()
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      let message = qsTr('Reshaped %1 polygon(s)').arg(undoEntries.length)
+      if (unchanged > 0)
+        message += qsTr(' — %1 unchanged (the line must cross the boundary at two points)').arg(unchanged)
+      if (failed > 0)
+        message += qsTr(' — %1 failed').arg(failed)
+      reshapeResultText = message
+      toast(message)
+      reshapeStep = 3
+    } catch (error) {
+      toast(qsTr('Reshape failed'))
+      reshapeResultText = ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Undo (one level, session-only — never persisted)
+  // ----------------------------------------------------------------
+  function undoLastReshape() {
+    const undo = reshapeUndo
+    if (undo === null || undo === undefined)
+      return
+    try {
+      let layer = undo.layer
+      try {
+        if (layer === null || layer.name === undefined)
+          layer = layerByName(undo.layerName)
+      } catch (error) {
+        layer = layerByName(undo.layerName)
+      }
+      if (layer === null) {
+        toast(qsTr('Undo failed — layer not found'))
+        return
+      }
+      // The reshaped features, looked up fresh by UUID when possible
+      // (fids survive commits but a resync could renumber them).
+      let doomed = []
+      let restored = []
+      for (const entry of undo.entries) {
+        let fids = []
+        if (undo.uuidField !== null && entry.uuid !== '')
+          fids = collectFidsByExpression(layer,
+              '"' + undo.uuidField + "\" = '" + entry.uuid + "'")
+        if (fids.length === 0)
+          fids = [entry.fid]
+        for (const fid of fids)
+          doomed.push(fid)
+        // Rebuild the original from its pre-reshape WKT, all attributes
+        // copied verbatim — including the UUID (identity restored).
+        const geometry = GeometryUtils.createGeometryFromWkt(entry.wkt)
+        let created = FeatureUtils.createFeature(layer, geometry)
+        copyClipAttributes(created, entry.feature, undo.names, null, '')
+        restored.push(created)
+      }
+      if (!applyClipEdits(layer, restored, doomed)) {
+        toast(qsTr('Undo failed — no changes made'))
+        return
+      }
+      try {
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      toast(qsTr('Reshape undone'))
+      reshapeUndo = null
+    } catch (error) {
+      toast(qsTr('Undo failed'))
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Control-point markers (desktop parity: dots at the tapped points)
+  // ----------------------------------------------------------------
+  function updateReshapeMarkers() {
+    if (reshapeStep !== 2 || reshapeControls.length === 0 ||
+        !canvas || !scaleSettings) {
+      reshapeMarkerPositions = []
+      return
+    }
+    const out = []
+    try {
+      for (let i = 0; i < reshapeControls.length; i++) {
+        const p = scaleSettings.coordinateToScreen(GeometryUtils.point(
+            reshapeControls[i].x, reshapeControls[i].y))
+        out.push({ x: Number(p.x), y: Number(p.y) })
+      }
+    } catch (error) {
+      reshapeMarkerPositions = []
+      return
+    }
+    reshapeMarkerPositions = out
+  }
+
+  Timer {
+    // Same pan-throttle as the spline dots: extentChanged fires every
+    // frame, and replacing the marker array rebuilds the Repeater.
+    id: reshapeMarkerTimer
+    interval: 40
+    repeat: false
+    onTriggered: plugin.updateReshapeMarkers()
+  }
+
+  Connections {
+    target: plugin.scaleSettings
+    ignoreUnknownSignals: true
+    function onExtentChanged() {
+      if (plugin.reshapeStep === 2 && plugin.reshapeControls.length > 0 &&
+          !reshapeMarkerTimer.running)
+        reshapeMarkerTimer.start()
+    }
+  }
+
+  Item {
+    id: reshapeMarkers
+    visible: plugin.reshapeStep === 2 &&
+             plugin.reshapeMarkerPositions.length > 0
+    z: 1
+
+    Repeater {
+      model: plugin.reshapeMarkerPositions
+
+      delegate: Rectangle {
+        required property var modelData
+        x: modelData.x - 5
+        y: modelData.y - 5
+        width: 10
+        height: 10
+        radius: 5
+        color: 'white'
+        border.color: 'black'
+        border.width: 2
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Reshape UI: tap catcher + instruction banner + confirm dialog
+  // ----------------------------------------------------------------
+  Item {
+    id: reshapeCatcher
+    visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
+    z: 1
+
+    TapHandler {
+      // Default DragThreshold gesture policy: passive grab, so pan and
+      // pinch on the canvas underneath keep working — only clean taps
+      // land here.
+      onSingleTapped: function(eventPoint, button) {
+        plugin.handleReshapeTap(eventPoint.position)
+      }
+    }
+  }
+
+  Rectangle {
+    id: reshapeBanner
+    visible: plugin.reshapeStep > 0
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: reshapeBannerColumn.height + 24
+
+    Column {
+      id: reshapeBannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 12
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 24
+      spacing: 8
+
+      Text {
+        width: parent.width
+        font.pixelSize: 15
+        font.bold: true
+        color: 'white'
+        text: plugin.reshapeStep === 1
+            ? qsTr('Reshape — pick targets (optional)')
+            : plugin.reshapeStep === 2 ? qsTr('Reshape — draw the new edge')
+                                       : qsTr('Reshape done')
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 14
+        color: 'white'
+        text: plugin.reshapeStep === 1
+            ? qsTr('Tap polygons to limit the reshape, or draw straight away — with no picks every polygon the line crosses is reshaped')
+            : plugin.reshapeStep === 2
+              ? qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes')
+              : plugin.reshapeResultText
+      }
+
+      Text {
+        visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: '#CCFFFFFF'
+        text: {
+          if (plugin.reshapeStep === 1) {
+            let line = qsTr('%1 selected — tap again to unselect')
+                .arg(plugin.reshapePicks.length)
+            return line + ' · ' + plugin.reshapeLayerLabel()
+          }
+          let line = qsTr('%1 point(s)').arg(plugin.reshapeControls.length)
+          line += ' · ' + (plugin.splineArmed ? qsTr('smoothed')
+                                              : qsTr('straight'))
+          if (plugin.reshapePicks.length > 0)
+            line += ' · ' + qsTr('%1 picked').arg(plugin.reshapePicks.length)
+          return line + ' · ' + plugin.reshapeLayerLabel()
+        }
+      }
+
+      Flow {
+        width: parent.width
+        spacing: 8
+
+        Button {
+          id: reshapeDrawButton
+          visible: plugin.reshapeStep === 1
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Draw line ▸')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.reshapeStep = 2
+            plugin.toast(qsTr('Tap along the new edge — at least 2 points'))
+          }
+        }
+
+        Button {
+          id: reshapeUndoPointButton
+          visible: plugin.reshapeStep === 2
+          enabled: plugin.reshapeControls.length > 0
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Undo point')
+            color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: reshapeUndoPointButton.enabled
+                ? '#AAFFFFFF' : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.reshapeUndoVertex()
+        }
+
+        Button {
+          id: reshapeBackButton
+          visible: plugin.reshapeStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('◂ Back')
+            color: 'white'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: '#AAFFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.reshapeBackToPicks()
+        }
+
+        Button {
+          id: reshapeCancelButton
+          visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Cancel')
+            color: 'white'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: '#AAFFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitReshapeMode()
+        }
+
+        Button {
+          id: reshapeExecuteButton
+          visible: plugin.reshapeStep === 2
+          enabled: plugin.reshapeControls.length >= 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Reshape ✓')
+            color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: reshapeExecuteButton.enabled
+                ? Theme.mainColor : 'transparent'
+            border.color: reshapeExecuteButton.enabled
+                ? Theme.mainColor : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            // Count first so the dialog can show how many polygons are
+            // about to change; refuse a no-op reshape outright.
+            if (plugin.collectReshapeTargets() === 0) {
+              plugin.toast(qsTr('The line does not cross any polygon'))
+              return
+            }
+            reshapeConfirmDialog.open()
+          }
+        }
+
+        Button {
+          id: reshapeUndoButton
+          visible: plugin.reshapeStep === 3
+          enabled: plugin.reshapeUndo !== null
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Undo last reshape')
+            color: reshapeUndoButton.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: reshapeUndoButton.enabled
+                ? '#AAFFFFFF' : '#66FFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.undoLastReshape()
+            plugin.exitReshapeMode()
+          }
+        }
+
+        Button {
+          id: reshapeDoneButton
+          visible: plugin.reshapeStep === 3
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Done')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitReshapeMode()
+        }
+      }
+    }
+  }
+
+  Dialog {
+    id: reshapeConfirmDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Reshape polygons')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onOpened: {
+      try {
+        const okButton = reshapeConfirmDialog.standardButton(Dialog.Ok)
+        if (okButton)
+          okButton.text = qsTr('Reshape now')
+      } catch (error) {}
+    }
+
+    onAccepted: plugin.executeReshape()
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 8
+
+      Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        text: {
+          let lines = qsTr('%1 polygon(s) will be reshaped to the drawn line.')
+              .arg(plugin.reshapePlan.length)
+          if (plugin.reshapePicks.length > 0)
+            lines += '\n' + qsTr('Limited to your %1 picked polygon(s).')
+                .arg(plugin.reshapePicks.length)
+          lines += '\n' + (plugin.splineArmed
+              ? qsTr('Line: smoothed (Spline armed)')
+              : qsTr('Line: straight segments'))
+          lines += '\n' + qsTr('Layer: %1').arg(plugin.reshapeLayerLabel())
+          return lines
+        }
       }
     }
   }

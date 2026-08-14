@@ -25,6 +25,7 @@ _FLAG_MARKERS = {
     "opacity": "LGS-EXPORT-FLAG:opacity",
     "clipping": "LGS-EXPORT-FLAG:clipping",
     "spline": "LGS-EXPORT-FLAG:spline",
+    "reshape": "LGS-EXPORT-FLAG:reshape",
 }
 
 _DATA_MARKERS = {
@@ -35,16 +36,16 @@ _DATA_MARKERS = {
 
 
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
-                  opacity=True, clipping=True, spline=True,
+                  opacity=True, clipping=True, spline=True, reshape=True,
                   opacity_layers=None, vector_layers=None,
                   spline_params=None):
     """Write the companion plugin next to the exported project file.
 
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
-    zfilter / scale / opacity / clipping / spline: enable the Z filter /
-        scale display / layer opacity / polygon clip / spline
-        digitizing features
+    zfilter / scale / opacity / clipping / spline / reshape: enable the
+        Z filter / scale display / layer opacity / polygon clip / spline
+        digitizing / multi-polygon reshape features
     opacity_layers: names of the exported raster layers the opacity
         panel should act on (baked into the QML as a JSON array)
     vector_layers: names of the exported spatial vector layers for the
@@ -60,7 +61,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
         text = fh.read()
     for name, enabled in (("zfilter", zfilter), ("scale", scale),
                           ("opacity", opacity), ("clipping", clipping),
-                          ("spline", spline)):
+                          ("spline", spline), ("reshape", reshape)):
         marker = _FLAG_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property bool \w+: )(?:true|false)( // %s)$"

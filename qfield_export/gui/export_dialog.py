@@ -481,6 +481,21 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_spline_check)
 
+        # Multi-polygon reshape tool feature of the same companion plugin
+        self.include_reshape_check = QCheckBox(
+            "Include multi-polygon reshape tool (QField plugin)")
+        self.include_reshape_check.setChecked(True)
+        self.include_reshape_check.setToolTip(
+            "Adds a Reshape button on the QField map: tap out a line "
+            "across one or more polygons on the active layer and every "
+            "crossed polygon is reshaped to it — optionally limited to "
+            "polygons you tap first. The line is smoothed while the "
+            "Spline tool is armed."
+        )
+        self.include_reshape_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_reshape_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -863,7 +878,8 @@ class ExportDialog(QDialog):
             include_scale_plugin=self.include_scale_check.isChecked(),
             include_opacity_plugin=self.include_opacity_check.isChecked(),
             include_clipping_plugin=self.include_clipping_check.isChecked(),
-            include_spline_plugin=self.include_spline_check.isChecked()
+            include_spline_plugin=self.include_spline_check.isChecked(),
+            include_reshape_plugin=self.include_reshape_check.isChecked()
         )
 
         try:
@@ -907,6 +923,7 @@ class ExportDialog(QDialog):
         self.include_opacity_check.setEnabled(enabled)
         self.include_clipping_check.setEnabled(enabled)
         self.include_spline_check.setEnabled(enabled)
+        self.include_reshape_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):
