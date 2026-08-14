@@ -34,6 +34,7 @@ apply_text_overrides = legend_config.apply_text_overrides
 format_text_sections = legend_config.format_text_sections
 build_text_section_lines = legend_config.build_text_section_lines
 strip_table_suffix = legend_config.strip_table_suffix
+field_matches_family = legend_config.field_matches_family
 strip_family_suffix = legend_config.strip_family_suffix
 group_fields_into_families = legend_config.group_fields_into_families
 DEFAULT_EXCLUDED_FIELDS = legend_config.DEFAULT_EXCLUDED_FIELDS
@@ -447,6 +448,21 @@ class TestFamilyGrouping(unittest.TestCase):
         self.assertEqual(strip_table_suffix('Mineral'), 'Mineral')
         # A bare suffix name is left alone, not stripped to ''
         self.assertEqual(strip_table_suffix('Codes'), 'Codes')
+
+    def test_field_matches_family(self):
+        # Direct family members
+        self.assertTrue(field_matches_family('Mineral', 'Mineral'))
+        self.assertTrue(field_matches_family('Mineral2', 'Mineral'))
+        self.assertTrue(field_matches_family('texture3', 'Texture'))
+        # Lithology-scoped members (Basemap Lith1/Lith2 modifiers)
+        self.assertTrue(field_matches_family('Lith1Mineral1', 'Mineral'))
+        self.assertTrue(field_matches_family('Lith2Texture2', 'Texture'))
+        # Non-members: substring is not enough, and 'Lith' needs a digit
+        self.assertFalse(field_matches_family('Sulphides/Mineralisation',
+                                              'Mineral'))
+        self.assertFalse(field_matches_family('Lithology1', 'Mineral'))
+        self.assertFalse(field_matches_family('LithMineral', 'Mineral'))
+        self.assertFalse(field_matches_family('Lith1Mineral1', 'Texture'))
 
     def test_strip_family_suffix(self):
         self.assertEqual(strip_family_suffix('Mineral3'), 'Mineral')

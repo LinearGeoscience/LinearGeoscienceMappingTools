@@ -27,6 +27,7 @@ display modes:
 """
 
 import json
+import re
 import uuid
 
 CONFIG_VERSION = 2
@@ -66,6 +67,21 @@ def strip_table_suffix(table_name):
         if table_name.endswith(suffix) and len(table_name) > len(suffix):
             return table_name[:-len(suffix)]
     return table_name
+
+
+def field_matches_family(field_name, family_prefix):
+    """True when a field belongs to a lookup-table field family by name.
+
+    Direct members start with the family prefix ('Texture', 'Texture2').
+    Lithology-scoped members carry a 'Lith<n>' prefix (Basemap's
+    'Lith1Mineral1', 'Lith2Texture2') which is stripped before matching.
+    A name like 'Sulphides/Mineralisation' matches neither form.
+    """
+    name = field_name.lower()
+    scoped = re.match(r'lith\d+(.+)', name)
+    if scoped:
+        name = scoped.group(1)
+    return name.startswith(family_prefix.lower())
 
 
 def strip_family_suffix(field_name):

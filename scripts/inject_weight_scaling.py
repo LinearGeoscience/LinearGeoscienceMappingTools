@@ -54,6 +54,7 @@ SCALED_PROPS = {
 # dot size constant), and wash alpha steps evenly (7,13,20,26,33).
 INTENSITY_DIST_FACTORS = {"1": "1.732", "2": "1.225", "4": "0.866", "5": "0.775"}
 INTENSITY_WASH_ALPHA = {"1": "7", "2": "13", "4": "26", "5": "33"}  # else 20 (= static)
+INTENSITY_WASH_ALPHA_DEFAULT = "20"  # Intensity 3 / NULL (all Weathering) = authored static alpha
 
 # Structure-zone Weight ramp: Major is deliberately subtle (the old Moderate look),
 # Moderate/Minor progressively lighter from there.
@@ -103,7 +104,7 @@ def intensity_expression(dd_key, base):
         r, g, b = parts[0], parts[1], parts[2]
         branches = " ".join(f"WHEN \"Intensity\" = {k} THEN {v}"
                             for k, v in INTENSITY_WASH_ALPHA.items())
-        return f"color_rgba({r},{g},{b}, CASE {branches} ELSE 33 END)"
+        return f"color_rgba({r},{g},{b}, CASE {branches} ELSE {INTENSITY_WASH_ALPHA_DEFAULT} END)"
     try:
         if float(base) <= 0:
             return None

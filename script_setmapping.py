@@ -458,6 +458,50 @@ class LayerConfigurator:
         text_format.setColor(QColor(128, 128, 128))  # Medium gray #808080
         return text_format
 
+    def set_overlap_handling(self, settings, handling):
+        """Set label overlap handling so it actually takes effect.
+
+        Plain `settings.overlapHandling = ...` is a silent no-op in PyQGIS
+        (sip stores a Python-side attribute; the real setting lives in
+        QgsLabelPlacementSettings).
+        """
+        placement_settings = settings.placementSettings()
+        placement_settings.setOverlapHandling(handling)
+        settings.setPlacementSettings(placement_settings)
+
+    def create_comment_callout(self):
+        """Grey dashed leader line for the comment rules (Regolith/Fallback)."""
+        callout = QgsSimpleLineCallout()
+        line_symbol = QgsLineSymbol.createSimple({
+            'line_color': '#808080',  # Medium grey
+            'line_style': 'dash',
+            'width': '0.15'  # Thinner line
+        })
+        callout.setLineSymbol(line_symbol)
+        callout.setEnabled(True)
+        callout.setOffsetFromAnchor(0.5)  # MM gap at the feature end
+        callout.setOffsetFromLabel(1)  # MM gap at the label end
+        callout.setMinimumLength(1)  # MM; no stub when label sits at its ring
+        return callout
+
+    def apply_dynamic_comment_placement(self, settings, x_value):
+        """Engine-arranged placement for comment labels: 8 candidate
+        orientations around the point, pushed further out (up to 5x the
+        nominal ring) only when closer spots are taken, drawn even when
+        overlap is truly unavoidable - so comments never silently vanish.
+        Callout length/direction follows wherever the label lands."""
+        settings.placement = Qgis.LabelPlacement.OrderedPositionsAroundPoint
+        settings.offsetType = Qgis.LabelOffsetType.FromSymbolBounds
+        settings.dist = x_value
+        settings.distUnits = Qgis.RenderUnit.MapUnits
+        point_settings = settings.pointSettings()
+        point_settings.setMaximumDistance(5 * x_value)
+        point_settings.setMaximumDistanceUnit(Qgis.RenderUnit.MapUnits)
+        settings.setPointSettings(point_settings)
+        self.set_overlap_handling(
+            settings, Qgis.LabelOverlapHandling.AllowOverlapIfRequired)
+        settings.setCallout(self.create_comment_callout())
+
     def create_dip_rule(self, x_value):
         """Create rule for Dip field labels (above symbol, no callouts)"""
         settings = QgsPalLayerSettings()
@@ -475,7 +519,8 @@ class LayerConfigurator:
         settings.autoWrapLength = 35
 
         # Allow overlaps without penalty
-        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
+        self.set_overlap_handling(
+            settings, Qgis.LabelOverlapHandling.AllowOverlapAtNoCost)
 
         # Data-defined placement (original expression)
         placement_expression = (
@@ -513,8 +558,10 @@ class LayerConfigurator:
         settings.isOffsetFromPoint = True
         settings.offsetUnits = Qgis.RenderUnit.MapUnits
 
-        # Allow overlaps without penalty
-        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
+        # Suffixes are decluttered rather than drawn on top of each other
+        # (matches the hand-tuned template style)
+        self.set_overlap_handling(
+            settings, Qgis.LabelOverlapHandling.PreventOverlap)
 
         # Data-defined properties
         props = QgsPropertyCollection()
@@ -546,27 +593,21 @@ class LayerConfigurator:
 
         return rule
 
-    def create_regolith_note_rule(self):
-        """Create rule for Regolith Note labels (Cartographic placement, no callouts)"""
+    def create_regolith_note_rule(self, x_value):
+        """Create rule for Regolith Note labels (dynamic placement + callout)"""
         settings = QgsPalLayerSettings()
         settings.fieldName = '"Comments"'
         settings.isExpression = True
         settings.enabled = True
 
-        # Regolith Note text formatting - NO callouts
+        # Regolith Note text formatting
         settings.setFormat(self.create_regolith_note_text_format())
-
-        # Placement settings - Cartographic (AroundPoint)
-        settings.placement = Qgis.LabelPlacement.AroundPoint
-
-        settings.dist = 0.0  # Distance from feature
-        settings.distUnits = Qgis.RenderUnit.Millimeters
 
         # Prioritize closer labels (cartographic placement setting)
         settings.priority = 5  # Medium-high priority
 
-        # Allow overlaps without penalty
-        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
+        # Dynamic engine-arranged placement with callout
+        self.apply_dynamic_comment_placement(settings, x_value)
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -580,10 +621,9 @@ class LayerConfigurator:
         """Create fallback rule for Comments/Labels when no Dip data (with callouts)"""
         settings = QgsPalLayerSettings()
 
-        # Original complex expression for fallback
+        # Label/Comments expression (the rule filter already excludes Dip points)
         label_expression = (
             'CASE '
-            'WHEN "Dip" IS NOT NULL AND "Dip" != \'\' THEN "Dip" '
             'WHEN "Label" IS NOT NULL AND "Label" != \'\' THEN "Label" '
             'WHEN "Comments" IS NOT NULL AND "Comments" != \'\' THEN "Comments" '
             'ELSE \'\' '
@@ -596,41 +636,10 @@ class LayerConfigurator:
 
         # Standard text formatting WITH callouts
         settings.setFormat(self.create_fallback_text_format())
-
-        # Placement settings - using version-compatible placement
-        settings.placement = get_over_point_placement()
-        settings.isOffsetFromPoint = True
-        settings.offsetUnits = Qgis.RenderUnit.MapUnits
         settings.autoWrapLength = 35
 
-        # Allow overlaps without penalty
-        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-
-        # Improved placement expression - handle invalid DipDirection and moderate offset
-        placement_expression = (
-            f'CASE '
-            f'WHEN "Type" = \'Structure\' AND "DipDirection" IS NOT NULL AND "DipDirection" != \'\' THEN '
-            f'to_string(({x_value} * cos(radians("DipDirection" - 90)))) || \',\' || '
-            f'to_string(({x_value} * sin(radians("DipDirection" - 90)))) '
-            f'ELSE \'{int(x_value * 4)},-{int(x_value * 2)}\' END'
-        )
-
-        props = QgsPropertyCollection()
-        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
-                          QgsProperty.fromExpression(placement_expression))
-        settings.setDataDefinedProperties(props)
-
-        # Create callout line (ONLY for fallback rule)
-        callout = QgsSimpleLineCallout()
-        line_symbol = QgsLineSymbol.createSimple({
-            'line_color': '#808080',  # Medium grey
-            'line_style': 'dash',
-            'width': '0.15'  # Thinner line
-        })
-        callout.setLineSymbol(line_symbol)
-        callout.setEnabled(True)
-        callout.setOffsetFromLabel(1)  # Short callout offset
-        settings.setCallout(callout)
+        # Dynamic engine-arranged placement with callout
+        self.apply_dynamic_comment_placement(settings, x_value)
 
         # Create rule - triggers when no Dip available but other fields have data
         # Excludes RegolithNote items which are handled by the dedicated Regolith Note rule
@@ -659,7 +668,7 @@ class LayerConfigurator:
 
         QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
-        QgsMessageLog.logMessage(f"[Label] All rules have 'Allow Overlaps without Penalty' enabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"[Label] Comment rules use dynamic callouts (engine-arranged, always visible)", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
 def offset_for_scale(scale_value):
@@ -687,9 +696,9 @@ def build_structural_labeling(scale_value):
     root.appendChild(configurator.create_dip_rule(x_value))
     # Rule 2: SymbolSuffix field (small, italic, no callouts)
     root.appendChild(configurator.create_suffix_rule(x_value))
-    # Rule 3: Regolith Note (Cartographic placement, no callouts)
-    root.appendChild(configurator.create_regolith_note_rule())
-    # Rule 4: Fallback rule (with callouts)
+    # Rule 3: Regolith Note (dynamic placement, callout)
+    root.appendChild(configurator.create_regolith_note_rule(x_value))
+    # Rule 4: Fallback rule (dynamic placement, callout)
     root.appendChild(configurator.create_fallback_rule(x_value))
     return QgsRuleBasedLabeling(root)
 

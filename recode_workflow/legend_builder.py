@@ -24,12 +24,14 @@ try:
     from .legend_config import (
         is_valid_value as _is_valid_value,
         normalize_section, strip_table_suffix, group_fields_into_families,
+        field_matches_family,
         LOOKUP_TABLE_SUFFIXES, DEFAULT_EXCLUDED_FIELDS,
     )
 except ImportError:
     from legend_config import (
         is_valid_value as _is_valid_value,
         normalize_section, strip_table_suffix, group_fields_into_families,
+        field_matches_family,
         LOOKUP_TABLE_SUFFIXES, DEFAULT_EXCLUDED_FIELDS,
     )
 
@@ -218,7 +220,8 @@ def find_fields_for_table(project, table_name):
     """Find fields across spatial layers that correspond to a lookup table.
 
     Name-pattern matching: 'TextureCodes' → fields starting with 'Texture'
-    (Texture, Texture2, Texture3...).  Returns [(layer, field_name), ...].
+    (Texture, Texture2, Texture3...) plus lithology-scoped members like
+    Basemap's Lith1Texture1/Lith2Texture2.  Returns [(layer, field_name), ...].
     """
     prefix = strip_table_suffix(table_name)
 
@@ -227,7 +230,7 @@ def find_fields_for_table(project, table_name):
         if lyr.type() != Qgis.LayerType.Vector or not lyr.isSpatial():
             continue
         for field in lyr.fields():
-            if field.name().lower().startswith(prefix.lower()):
+            if field_matches_family(field.name(), prefix):
                 results.append((lyr, field.name()))
     return results
 
