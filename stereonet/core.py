@@ -170,6 +170,43 @@ DEFAULT_STRUCTURE_COLORS = {
     "LNS": "#00FFFF",   # Cyan - slickenside lineation
     "STR": "#9933FF",   # Purple - stretching lineation
 
+    # Younging / facing - earth tones near bedding
+    "FAC": "#8B7355",   # Tan brown - younging
+    "FACP": "#A0785A",  # Light brown - pillow younging
+    "FACSP": "#B8860B", # Dark goldenrod - spinifex facing
+
+    # Cleavages and additional foliations
+    "CLV": "#DC143C",   # Crimson - cleavage (undiff)
+    "SCR": "#C71585",   # Medium violet red - crenulation cleavage
+    "GSN": "#696969",   # Dim gray - gneissosity
+    "MYL": "#36454F",   # Charcoal - mylonitic foliation
+
+    # Additional fold axial planes
+    "FAPCR": "#DA70D6", # Orchid - crenulation axial plane
+    "FAPSZ": "#556B2F", # Dark olive - shear fold axial plane
+
+    # Parasitic fold axis variants (M/S/Z) - shades of the parent generation
+    "FAX1M": "#E60000", "FAX1S": "#B30000", "FAX1Z": "#990000",
+    "FAX2M": "#E600E6", "FAX2S": "#B300B3", "FAX2Z": "#990099",
+    "FAX3M": "#5C00B8", "FAX3S": "#4D0099", "FAX3Z": "#3D007A",
+    "FAX4M": "#00B300", "FAX4S": "#009900", "FAX4Z": "#007A00",
+    "FAX5M": "#0088B3", "FAX5S": "#007799", "FAX5Z": "#00617A",
+
+    # Lineation generations - mirror S1-S5 pairing convention
+    "L1": "#FF0000",    # Pure red - L1 (pairs with S1)
+    "L2": "#FF00FF",    # Magenta - L2 (pairs with S2)
+    "L3": "#9933FF",    # Purple - L3 (pairs with S3)
+    "L4": "#00FF00",    # Lime green - L4 (pairs with S4)
+    "L5": "#00FFFF",    # Cyan - L5 (pairs with S5)
+
+    # Fault kinematic lineations
+    "SLK": "#FF6600",   # Orange - slickenline
+    "SLF": "#CC5200",   # Dark orange - slickenfibre
+
+    # Shear zone boundary and dyke margin
+    "SZBDY": "#008080", # Teal - shear zone boundary
+    "DYK": "#FF7F50",   # Coral - dyke margin
+
     # Additional common codes with DISTINCT colors
     "JT": "#8B4513",    # Saddle brown - joint
     "LIN": "#9932CC",   # Dark orchid - lineation
@@ -1798,15 +1835,18 @@ class StereonetPluginCore:
         
         # Define structure groups with their codes and descriptions
         structure_groups = [
-            ("Bedding && Layering", ["BO", "LAY", "S0", "S0T"], "#8B4513"),
-            ("Foliations", ["S1", "S2", "S3", "S4", "S5"], "#708090"),
+            ("Bedding && Layering", ["BO", "LAY", "S0", "S0T", "FAC", "FACP", "FACSP"], "#8B4513"),
+            ("Foliations && Cleavages", ["S1", "S2", "S3", "S4", "S5", "CLV", "SCR", "GSN", "MYL"], "#708090"),
             ("Fractures", ["FB", "FCT", "FO", "FT", "FTD", "FTN", "FTR", "FTS", "FTT"], "#DC143C"),
-            ("Fault Planes", ["FAP", "FAP1", "FAP2", "FAP3", "FAP4", "FAP5", "FAPK"], "#800080"),
-            ("Fault Axes", ["FAX", "FAX1", "FAX2", "FAX3", "FAX4", "FAX5", "FAXCR", "FAXK", "FAXSZ"], "#8B008B"),
-            ("Shear Zones", ["SZB", "SZC", "SZCD", "SZCN", "SZCR", "SZCS", "SZS"], "#2F4F4F"),
+            ("Fold Axial Planes", ["FAP", "FAP1", "FAP2", "FAP3", "FAP4", "FAP5", "FAPK", "FAPCR", "FAPSZ"], "#800080"),
+            ("Fold Axes", ["FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z", "FAX2", "FAX2M", "FAX2S", "FAX2Z",
+                           "FAX3", "FAX3M", "FAX3S", "FAX3Z", "FAX4", "FAX4M", "FAX4S", "FAX4Z",
+                           "FAX5", "FAX5M", "FAX5S", "FAX5Z", "FAXCR", "FAXK", "FAXSZ"], "#8B008B"),
+            ("Shear Zones", ["SZB", "SZBDY", "SZC", "SZCD", "SZCN", "SZCR", "SZCS", "SZS"], "#2F4F4F"),
             ("Veins", ["VL", "VN", "VS", "VT", "VX"], "#00FF7F"),
-            ("Contacts", ["CT"], "#FF8C00"),
-            ("Linear Structures", ["BAX", "LME", "LNI", "LNISC", "LNS", "STR"], "#FF1493")
+            ("Contacts && Dykes", ["CT", "DYK"], "#FF8C00"),
+            ("Linear Structures", ["BAX", "L1", "L2", "L3", "L4", "L5", "LME", "LNI", "LNISC", "LNS",
+                                   "SLK", "SLF", "STR"], "#FF1493")
         ]
         
         for group_name, codes, group_color in structure_groups:
