@@ -28,7 +28,10 @@ import sqlite3
 import traceback
 
 from ..recode_workflow.remove_unused import remove_unused_categories
-from ..script_setmapping import build_structural_labeling, is_lgs_structural_labeling
+from ..script_setmapping import (
+    build_structural_labeling, is_lgs_structural_labeling,
+    is_lgs_overlay_labeling, rescale_overlay_label_distance,
+)
 from ..layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 from .graphics_check import find_unembedded_graphics
 from .mapping_export import (
@@ -324,6 +327,9 @@ class LayerExporter:
                 target_layer.setLabeling(build_structural_labeling(int(reference_scale)))
                 target_layer.setLabelsEnabled(True)
                 self.log(f"  Structural label offsets regenerated for 1:{reference_scale}", "SUCCESS")
+            elif is_lgs_overlay_labeling(target_layer.labeling()):
+                rescale_overlay_label_distance(target_layer, int(reference_scale))
+                self.log(f"  Overlay label distance rescaled for 1:{reference_scale}", "SUCCESS")
 
         self._save_style_to_database(target_layer, has_renderer, has_labeling)
 

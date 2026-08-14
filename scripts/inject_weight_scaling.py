@@ -47,14 +47,15 @@ SCALED_PROPS = {
     "SimpleFill":   {"outline_width": "outlineWidth"},
 }
 
-# Intensity (1-5) scaling for Overlay alteration/weathering symbols; 3/NULL -> authored look.
-# The ramp is deliberately gentle: the wash opacity carries most of the signal so even
-# Intensity 5 leaves the underlying mapping readable.
+# Intensity (1-5) scaling for Overlay alteration/weathering symbols; NULL -> authored look.
 # Linear ramp: dot density is proportional to Intensity (spacing factor = sqrt(3/k),
-# dot size constant), and wash alpha steps evenly (7,13,20,26,33).
+# dot size constant), and wash alpha steps evenly 7 -> 64 (Aug 2026 bump: level 1
+# kept, level 5 roughly doubled, intermediates linear). Level 3 is an explicit
+# branch so the stronger ramp applies only where Intensity is actually set —
+# the ELSE keeps NULL (all Weathering, legacy features) at the authored alpha 20.
 INTENSITY_DIST_FACTORS = {"1": "1.732", "2": "1.225", "4": "0.866", "5": "0.775"}
-INTENSITY_WASH_ALPHA = {"1": "7", "2": "13", "4": "26", "5": "33"}  # else 20 (= static)
-INTENSITY_WASH_ALPHA_DEFAULT = "20"  # Intensity 3 / NULL (all Weathering) = authored static alpha
+INTENSITY_WASH_ALPHA = {"1": "7", "2": "21", "3": "36", "4": "50", "5": "64"}
+INTENSITY_WASH_ALPHA_DEFAULT = "20"  # Intensity NULL = authored static alpha
 
 # Structure-zone Weight ramp: Major is deliberately subtle (the old Moderate look),
 # Moderate/Minor progressively lighter from there.

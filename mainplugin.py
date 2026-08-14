@@ -785,6 +785,10 @@ class LinearGeosciencePluginMain:
         grp = FeatureGroup("Set Mapping Scale", self.plugin_dir, page)
         grp.addFeature("Set Mapping Scale", None,
                         feature_info.INFO_SETUP_MAPPING, self.run_setmapping)
+        grp.addSeparator()
+        self.btn_cover = grp.addFeature(
+            "Transported Cover Opacity", None,
+            feature_info.INFO_COVER_OPACITY, self.run_cover_toggle)
         lay.addWidget(grp)
         lay.addStretch()
         return page
@@ -931,6 +935,16 @@ class LinearGeosciencePluginMain:
     def run_setmapping(self):
         from .script_setmapping import run
         run(self.iface)
+
+    def run_cover_toggle(self):
+        from . import cover_toggle
+        # Read the live state first so the toggle self-corrects after a
+        # project switch or an externally changed subset.
+        hidden = not cover_toggle.is_cover_hidden()
+        if cover_toggle.set_cover_hidden(self.iface, hidden):
+            self.btn_cover.setText(
+                "Transported Cover Opacity: %s"
+                % ("Hidden" if hidden else "Visible"))
 
     def run_hardcode_data(self):
         from .hardcode_data import run

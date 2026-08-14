@@ -75,6 +75,14 @@ VAR_EXTRA = "lgs_z_extra"
 # hides out-of-window rasters via opacity 0 (no layer-tree access in QML).
 VAR_RASTERS = "lgs_z_rasters"
 
+# Transported-cover visibility toggle on the Basemap layer. TypeLith1 is
+# the category axis of the Basemap coding scheme (Lithology / Regolith /
+# Transported Cover), so one field comparison hides every T* code without
+# consulting BasemapCodes. Semantics mirrored in lgs_companion.qml.
+COVER_FIELD = "TypeLith1"
+COVER_VALUE = "Transported Cover"
+VAR_COVER_HIDDEN = "lgs_cover_hidden"
+
 DEFAULT_TOLERANCE = 5.0
 
 
@@ -215,6 +223,48 @@ def strip_z_subset_any(subset, specs=()):
         if stripped is not None:
             return stripped
     return subset
+
+
+def cover_hide_clause():
+    """Clause hiding transported-cover polygons on the Basemap layer.
+
+    NULL-guarded like z_clause(): un-attributed / mid-digitizing features
+    stay visible. The clause always lives in the baseline subset, beneath
+    any z clause, so strip_z_subset_any keeps working unchanged.
+    """
+    return '("%s" IS NULL OR "%s" <> \'%s\')' % (
+        COVER_FIELD, COVER_FIELD, COVER_VALUE)
+
+
+def _cover_clause_pattern():
+    """Whitespace/case-tolerant regex matching cover_hide_clause() output."""
+    f = re.escape(COVER_FIELD)
+    v = re.escape(COVER_VALUE)
+    return r'\(\s*"%s"\s+IS\s+NULL\s+OR\s+"%s"\s*<>\s*\'%s\'\s*\)' % (f, f, v)
+
+
+def strip_cover_subset(subset):
+    """Remove a cover_hide_clause() previously combined into a subset.
+
+    Returns the pre-toggle subset, '' if the whole string was the clause,
+    or the input unchanged when no cover clause is recognized.
+    """
+    if not subset:
+        return ""
+    stripped = _try_strip(subset.strip(), [_cover_clause_pattern()])
+    return subset if stripped is None else stripped
+
+
+def apply_cover_to_subset(subset, hidden):
+    """Set/clear the transported-cover hide clause on a baseline subset.
+
+    Strip-then-add, so repeated application never nests clauses — safe to
+    re-run on restore paths that may already carry the clause.
+    """
+    base = strip_cover_subset(subset)
+    if hidden:
+        return combine(base, cover_hide_clause())
+    return base
 
 
 def parse_levels(text):

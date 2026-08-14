@@ -106,7 +106,7 @@ class ModernLayerConfigDialog(QDialog):
         options = [
             ("apply_crs", "Align layer CRS with project CRS"),
             ("apply_snapping", "Configure advanced snapping settings"),
-            ("apply_labeling", "Apply scale-dependent labeling to Field Notebook")
+            ("apply_labeling", "Apply scale-dependent labeling to Field Notebook and Overlay")
         ]
 
         self.option_checkboxes = {}
@@ -656,28 +656,86 @@ class LayerConfigurator:
         return rule
 
     def configure_labeling(self, layers_dict, scale_value):
-        """Configure rule-based labeling for the Field Notebook layer"""
+        """Configure scale-dependent labeling: rebuild the Field Notebook
+        rule-based labeling, rescale the Overlay label distances in place."""
         layer = self.get_layer(layers_dict.get("FieldNotebook"))
-        if not layer:
+        if layer:
+            layer.setLabeling(build_structural_labeling(scale_value))
+            layer.setLabelsEnabled(True)
+            layer.triggerRepaint()
+
+            QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"[Label] Comment rules use dynamic callouts (engine-arranged, always visible)", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        else:
             QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
-            return
 
-        layer.setLabeling(build_structural_labeling(scale_value))
-        layer.setLabelsEnabled(True)
-        layer.triggerRepaint()
-
-        QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
-        QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
-        QgsMessageLog.logMessage(f"[Label] Comment rules use dynamic callouts (engine-arranged, always visible)", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        overlay = self.get_layer(layers_dict.get("Overlay"))
+        if overlay:
+            if is_lgs_overlay_labeling(overlay.labeling()):
+                rescale_overlay_label_distance(overlay, scale_value)
+                QgsMessageLog.logMessage(f"[Label] Rescaled Overlay label distance to {callout_dist_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            else:
+                QgsMessageLog.logMessage(f"[Label] {overlay.name()} labeling is not the LGS Overlay style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
 def offset_for_scale(scale_value):
     """Map-unit label offset distance for a mapping scale.
 
     Every SCALE_TO_OFFSET entry is exactly 0.006 * scale, so unlisted
-    scales fall back to the same linear fit.
+    scales fall back to the same linear fit. Drives the Dip/SymbolSuffix
+    data-defined offsets; the callout comment rings use
+    callout_dist_for_scale instead.
     """
     return LayerConfigurator.SCALE_TO_OFFSET.get(scale_value, scale_value * 0.006)
+
+
+# Nominal ring distance for callout-bearing labels (FieldNotebook comment
+# rules + Overlay outside-polygon labels), deliberately a touch wider than
+# the structural offset unit so leader lines read clearly. Mirrored by the
+# baked template values in scripts/inject_dynamic_callouts.py and
+# scripts/inject_overlay_label_placement.py (U = 5000 * this).
+CALLOUT_DIST_FACTOR = 0.0075
+
+
+def callout_dist_for_scale(scale_value):
+    """Map-unit callout ring distance for a mapping scale."""
+    return scale_value * CALLOUT_DIST_FACTOR
+
+
+def is_lgs_overlay_labeling(labeling):
+    """True if labeling is the LGS Overlay simple labeling shaped by
+    scripts/inject_overlay_label_placement.py (Horizontal placement with a
+    callout) — the guard that keeps rescaling off hand-customized styles."""
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+    settings = labeling.settings()
+    if settings.placement != Qgis.LabelPlacement.Horizontal:
+        return False
+    callout = settings.callout()
+    return callout is not None and callout.enabled()
+
+
+def rescale_overlay_label_distance(layer, scale_value):
+    """Rescale the Overlay outside-label distance to a mapping scale.
+
+    Edits the existing simple labeling by copy — never rebuilds — so the
+    auxiliary-storage dd bindings (manual label moves), fonts, expression
+    and callout all survive. dist is the only knob PAL uses for outside
+    placement on polygons; maximumDistance is kept mirrored at 5x purely
+    for consistency with the injector (it is inert for polygon placement).
+    """
+    settings = QgsPalLayerSettings(layer.labeling().settings())
+    x_value = callout_dist_for_scale(scale_value)
+    settings.dist = x_value
+    settings.distUnits = Qgis.RenderUnit.MapUnits
+    point_settings = settings.pointSettings()
+    point_settings.setMaximumDistance(5 * x_value)
+    point_settings.setMaximumDistanceUnit(Qgis.RenderUnit.MapUnits)
+    settings.setPointSettings(point_settings)
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    layer.setLabelsEnabled(True)
+    layer.triggerRepaint()
 
 
 def build_structural_labeling(scale_value):
@@ -689,6 +747,7 @@ def build_structural_labeling(scale_value):
     """
     configurator = LayerConfigurator()
     x_value = offset_for_scale(scale_value)
+    callout_x = callout_dist_for_scale(scale_value)
 
     # Root rule (overlap handling is set on each individual rule)
     root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
@@ -696,10 +755,10 @@ def build_structural_labeling(scale_value):
     root.appendChild(configurator.create_dip_rule(x_value))
     # Rule 2: SymbolSuffix field (small, italic, no callouts)
     root.appendChild(configurator.create_suffix_rule(x_value))
-    # Rule 3: Regolith Note (dynamic placement, callout)
-    root.appendChild(configurator.create_regolith_note_rule(x_value))
-    # Rule 4: Fallback rule (dynamic placement, callout)
-    root.appendChild(configurator.create_fallback_rule(x_value))
+    # Rule 3: Regolith Note (dynamic placement, callout — wider ring unit)
+    root.appendChild(configurator.create_regolith_note_rule(callout_x))
+    # Rule 4: Fallback rule (dynamic placement, callout — wider ring unit)
+    root.appendChild(configurator.create_fallback_rule(callout_x))
     return QgsRuleBasedLabeling(root)
 
 

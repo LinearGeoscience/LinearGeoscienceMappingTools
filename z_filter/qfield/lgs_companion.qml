@@ -46,6 +46,17 @@
  *    layers from QML on the device. Per-layer values persist as a JSON
  *    object in lgs_opacity; a legacy plain number applies to rasters
  *    only (it predates vector support).
+ *    The '4 - Basemap' row carries a nested "Transported cover" On/Off
+ *    sub-toggle: hides polygons whose TypeLith1 is 'Transported Cover'
+ *    via a subset-string clause (mirror of z_filter/expression.py
+ *    cover_* helpers + cover_toggle.py — keep in sync; QML has no
+ *    renderer access, so this is visibility, not true opacity). The
+ *    clause always sits in the baseline subset BENEATH any z clause —
+ *    toggling while the z filter owns the layer rewrites the stored
+ *    lgs_z_orig_3 baseline too, so z level changes and clears keep the
+ *    cover state. State shared with desktop via lgs_cover_hidden; the
+ *    field's existence is attempt-and-verified (no field enumeration
+ *    from QML), and the sub-row hides on providers that reject it.
  *
  * 4. CLIPPING — "✂ Clip" pill offering the three desktop Map Cleaning
  *    Toolkit clip modes on the LGS polygon layers (ports of
@@ -1181,8 +1192,12 @@ Item {
         plugin.restoreFromProject()
       if (plugin.featureScale)
         plugin.restoreScaleFromProject()
-      if (plugin.featureOpacity)
+      if (plugin.featureOpacity) {
         plugin.restoreOpacityFromProject()
+        // After the z restore (:restoreFromProject) — setCoverHidden
+        // needs the z stored-baseline vars to be settled first.
+        plugin.restoreCoverFromProject()
+      }
       if (plugin.featureClipping)
         plugin.initClipping()
       if (plugin.featureReshape)
@@ -2298,45 +2313,108 @@ Item {
         Repeater {
           model: opacityDialog.vectorNames
 
-          delegate: RowLayout {
+          delegate: ColumnLayout {
             id: vectorOpacityRow
             required property var modelData
             Layout.fillWidth: true
-            spacing: 4
+            spacing: 2
 
-            Label {
+            RowLayout {
               Layout.fillWidth: true
-              elide: Text.ElideRight
-              text: vectorOpacityRow.modelData
+              spacing: 4
+
+              Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: vectorOpacityRow.modelData
+              }
+
+              Repeater {
+                model: plugin.opacitySteps
+
+                delegate: Button {
+                  id: vectorStepButton
+                  required property var modelData
+                  readonly property bool current:
+                      Math.abs(plugin.layerOpacityValue(
+                                   vectorOpacityRow.modelData)
+                               - modelData) < 0.01
+                  flat: true
+                  topPadding: 4
+                  bottomPadding: 4
+                  leftPadding: 10
+                  rightPadding: 10
+                  text: modelData === 0 ? qsTr('Off')
+                                        : Math.round(modelData * 100)
+                  font.bold: current
+                  background: Rectangle {
+                    color: 'transparent'
+                    border.color: vectorStepButton.current
+                        ? Theme.mainColor : Theme.secondaryTextColor
+                    border.width: vectorStepButton.current ? 2 : 1
+                    radius: 2
+                  }
+                  onClicked: plugin.applyLayerOpacity(
+                                 vectorOpacityRow.modelData, modelData, false)
+                }
+              }
             }
 
-            Repeater {
-              model: plugin.opacitySteps
+            // Transported-cover sub-toggle, nested under the Basemap row.
+            // Visibility (subset string on TypeLith1), not true opacity —
+            // QML has no renderer access.
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: 4
+              visible: vectorOpacityRow.modelData === plugin.coverLayerName &&
+                       !plugin.coverUnsupported
 
-              delegate: Button {
-                id: vectorStepButton
-                required property var modelData
-                readonly property bool current:
-                    Math.abs(plugin.layerOpacityValue(
-                                 vectorOpacityRow.modelData)
-                             - modelData) < 0.01
+              Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                elide: Text.ElideRight
+                text: qsTr('Transported cover')
+                color: Theme.secondaryTextColor
+              }
+
+              Button {
+                id: coverOnButton
+                readonly property bool current: !plugin.coverHidden
                 flat: true
                 topPadding: 4
                 bottomPadding: 4
                 leftPadding: 10
                 rightPadding: 10
-                text: modelData === 0 ? qsTr('Off')
-                                      : Math.round(modelData * 100)
+                text: qsTr('On')
                 font.bold: current
                 background: Rectangle {
                   color: 'transparent'
-                  border.color: vectorStepButton.current
+                  border.color: coverOnButton.current
                       ? Theme.mainColor : Theme.secondaryTextColor
-                  border.width: vectorStepButton.current ? 2 : 1
+                  border.width: coverOnButton.current ? 2 : 1
                   radius: 2
                 }
-                onClicked: plugin.applyLayerOpacity(
-                               vectorOpacityRow.modelData, modelData, false)
+                onClicked: plugin.setCoverHidden(false, false)
+              }
+
+              Button {
+                id: coverOffButton
+                readonly property bool current: plugin.coverHidden
+                flat: true
+                topPadding: 4
+                bottomPadding: 4
+                leftPadding: 10
+                rightPadding: 10
+                text: qsTr('Off')
+                font.bold: current
+                background: Rectangle {
+                  color: 'transparent'
+                  border.color: coverOffButton.current
+                      ? Theme.mainColor : Theme.secondaryTextColor
+                  border.width: coverOffButton.current ? 2 : 1
+                  radius: 2
+                }
+                onClicked: plugin.setCoverHidden(true, false)
               }
             }
           }
@@ -2486,6 +2564,147 @@ Item {
       }
     } catch (error) {}
     refreshOpacityLabel()
+  }
+
+  // ----------------------------------------------------------------
+  // Transported-cover visibility (mirror of z_filter/expression.py
+  // cover_* helpers + cover_toggle.py — keep in sync). Hides Basemap
+  // polygons whose TypeLith1 is 'Transported Cover' via a subset-string
+  // clause; the clause always lives in the baseline subset, beneath any
+  // z clause, so the z filter's stored-original bookkeeping keeps
+  // working unchanged.
+  // ----------------------------------------------------------------
+  property bool coverHidden: false
+  // Set when the provider rejects the clause (no TypeLith1 on this copy)
+  // — hides the dialog sub-row. QML cannot enumerate fields, so support
+  // is attempt-and-verified like the z filter's subset writes.
+  property bool coverUnsupported: false
+  readonly property string coverLayerName: '4 - Basemap'
+  // '4 - Basemap' is index 3 of layerNames — the z filter's stored
+  // baseline for it lives under these keys (see allTargets).
+  readonly property string coverZOrigKey: 'lgs_z_orig_3'
+  readonly property string coverZSavedKey: 'lgs_z_orig_saved_3'
+
+  // mirror of z_filter/expression.py::cover_hide_clause — NULL-guarded so
+  // un-attributed / mid-digitizing polygons stay visible
+  function coverClause() {
+    return '("TypeLith1" IS NULL OR "TypeLith1" <> \'Transported Cover\')'
+  }
+
+  // mirror of z_filter/expression.py::strip_cover_subset — returns the
+  // pre-toggle subset, '' when the whole string was the clause, or the
+  // input unchanged when no cover clause is recognized
+  function stripCoverSubset(subset) {
+    const text = String(subset || '').trim()
+    if (text === '')
+      return ''
+    const clause = '\\(\\s*"TypeLith1"\\s+IS\\s+NULL\\s+OR\\s+"TypeLith1"' +
+                   '\\s*<>\\s*\'Transported Cover\'\\s*\\)'
+    const combined = new RegExp(
+        '^\\(([\\s\\S]*)\\)\\s+AND\\s+' + clause + '$', 'i')
+    const match = text.match(combined)
+    if (match)
+      return match[1]
+    if (new RegExp('^' + clause + '$', 'i').test(text))
+      return ''
+    return String(subset)
+  }
+
+  // mirror of z_filter/expression.py::apply_cover_to_subset —
+  // strip-then-add, so repeated application never nests clauses
+  function applyCoverToSubset(subset, hidden) {
+    const base = stripCoverSubset(subset)
+    if (hidden)
+      return combineSubset(base, coverClause())
+    return base
+  }
+
+  function setCoverHidden(hidden, quiet) {
+    const layer = layerByName(coverLayerName)
+    if (layer === null) {
+      if (!quiet)
+        toast(qsTr('%1 not found').arg(coverLayerName))
+      return false
+    }
+    const live = layer.subsetString || ''
+    let zOwns = projVar(coverZSavedKey, '0') === '1'
+    let oldBaseline = ''
+    let zPart = null
+    if (zOwns) {
+      // The z filter owns the layer: applyFilter always sets the live
+      // subset to combineSubset(storedBaseline, zClause), so recover the
+      // z text from that exact shape.
+      oldBaseline = projVar(coverZOrigKey, '')
+      const prefix = oldBaseline !== '' ? '(' + oldBaseline + ') AND ' : ''
+      if (live === oldBaseline)
+        zPart = null
+      else if (prefix !== '' && live.indexOf(prefix) === 0)
+        zPart = live.substring(prefix.length)
+      else if (prefix === '' && live !== '')
+        zPart = live
+      else
+        // Unrecognized state — treat the live subset as the baseline;
+        // the z filter re-saves its original on the next apply.
+        zOwns = false
+    }
+    let newLive
+    let newBaseline = ''
+    if (zOwns) {
+      newBaseline = applyCoverToSubset(oldBaseline, hidden)
+      newLive = zPart !== null
+          ? combineSubset(newBaseline, zPart) : newBaseline
+    } else {
+      newLive = applyCoverToSubset(live, hidden)
+    }
+    try {
+      layer.subsetString = newLive
+      if (layer.subsetString !== newLive) {
+        // Provider rejected the clause (no TypeLith1 on this copy) —
+        // put the original back rather than half-filter.
+        layer.subsetString = live
+        coverUnsupported = true
+        if (!quiet)
+          toast(qsTr('%1: no TypeLith1 field').arg(coverLayerName))
+        return false
+      }
+      layer.triggerRepaint()
+    } catch (error) {
+      return false
+    }
+    if (zOwns)
+      // Keep the z filter's stored baseline in step so its level changes
+      // and clears preserve the cover state in both directions.
+      saveVar(coverZOrigKey, newBaseline)
+    coverHidden = hidden
+    saveVar('lgs_cover_hidden', hidden ? '1' : '0')
+    try {
+      iface.mapCanvas().refresh()
+    } catch (error) {}
+    if (!quiet)
+      toast(hidden ? qsTr('Transported cover hidden')
+                   : qsTr('Transported cover visible'))
+    return true
+  }
+
+  function restoreCoverFromProject() {
+    const saved = projVar('lgs_cover_hidden', '')
+    let hidden = saved === '1'
+    if (saved === '') {
+      // No variable — a desktop-baked clause may still sit in the
+      // datasource (or in the z filter's stored baseline when the z
+      // restore has already re-wrapped the live subset).
+      try {
+        const layer = layerByName(coverLayerName)
+        if (layer !== null) {
+          const subject = projVar(coverZSavedKey, '0') === '1'
+              ? projVar(coverZOrigKey, '')
+              : (layer.subsetString || '')
+          hidden = stripCoverSubset(subject) !== subject
+        }
+      } catch (error) {}
+    }
+    if (hidden)
+      setCoverHidden(true, true)  // idempotent — never double-wraps
   }
 
   // ----------------------------------------------------------------

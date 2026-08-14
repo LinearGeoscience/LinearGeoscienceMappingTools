@@ -71,6 +71,25 @@ INFO_SETUP_MAPPING = """
 </ol>
 """
 
+INFO_COVER_OPACITY = """
+<h1>Transported Cover Opacity</h1>
+<p>Toggles the visibility of <b>Transported Cover</b> polygons in the
+<i>'4 - Basemap'</i> layer, so the bedrock and regolith geology mapped
+beneath cover can be seen without deleting or re-styling anything.</p>
+<ul>
+<li>Hides every polygon whose <b>TypeLith1</b> is <i>'Transported Cover'</i>
+(all the T-prefixed lithology codes) by applying a layer filter — both the
+polygons <b>and their labels</b> disappear.</li>
+<li>Polygons with <b>no lithology type set</b> stay visible, so features
+being digitised are never hidden.</li>
+<li>Works alongside the <b>Pit/Underground Z filter</b> — the cover state
+survives applying, changing and clearing elevation levels.</li>
+<li>The state is carried into <b>QField exports</b>: the same toggle appears
+under <i>'4 - Basemap'</i> in the sidecar's Layer Opacity popup.</li>
+<li>Press the button again to show transported cover.</li>
+</ul>
+"""
+
 # Field Photos Section
 INFO_GEOREFERENCE_PHOTOS = """
 <h1>Georeference Field Photos</h1>

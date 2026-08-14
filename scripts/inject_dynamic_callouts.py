@@ -5,9 +5,10 @@ in the template's "1 - FieldNotebook" labeling so comment labels are
 engine-arranged instead of pinned at a fixed offset:
 
     - OrderedPositionsAroundPoint placement: 8 candidate orientations.
-    - dist=30 / maximumDistance=150 map units (1x / 5x the scale-5000
-      label offset unit): labels pushed further out only when closer
-      spots are taken -> variable callout length, PreferCloser.
+    - dist=37.5 / maximumDistance=187.5 map units (1x / 5x the
+      scale-5000 callout ring unit, callout_dist_for_scale): labels
+      pushed further out only when closer spots are taken -> variable
+      callout length, PreferCloser.
     - overlapHandling=AllowOverlapIfRequired: a label that truly cannot
       fit is drawn anyway instead of hidden - comments never vanish.
     - Callout enabled on both rules (grey dashed leader), minLength 1 MM
@@ -38,13 +39,13 @@ import xml.etree.ElementTree as ET
 LAYER = "1 - FieldNotebook"
 RULES = ("Regolith Note", "Fallback Labels (Comments/Labels)")
 
-U = 30.0  # offset_for_scale(5000) = 0.006 * 5000 map units
+U = 37.5  # callout_dist_for_scale(5000) = 0.0075 * 5000 map units
 PLACEMENT_ATTRS = {
     "placement": "6",              # OrderedPositionsAroundPoint
     "offsetType": "1",             # FromSymbolBounds
-    "dist": "30",                  # 1 x U
+    "dist": "37.5",                # 1 x U
     "distUnits": "MapUnit",
-    "maximumDistance": "150",      # 5 x U
+    "maximumDistance": "187.5",    # 5 x U
     "maximumDistanceUnit": "MapUnit",
     "overlapHandling": "AllowOverlapIfRequired",
 }
