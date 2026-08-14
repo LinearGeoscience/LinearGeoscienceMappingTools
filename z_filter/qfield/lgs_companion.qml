@@ -66,7 +66,7 @@
  *    one edit session (adds before deletes) with a one-level,
  *    session-only undo. Requires QField 4.x.
  *
- * 5. SPLINE — "∿ Spline" pill arming a spline digitizing mode (port of
+ * 5. SPLINE — "~ Spline" pill arming a spline digitizing mode (port of
  *    the desktop Map Cleaning spline tools, map_cleaning/core/
  *    spline_interp.py — keep the Hermite math in sync). While armed,
  *    the companion mirrors the control points the user places and keeps
@@ -100,7 +100,7 @@
  *    adds) and below 2 committed vertices (3 for polygons), where the
  *    crosshair vertex is what keeps the geometry valid.
  *
- * 7. RESHAPE — "⤳ Reshape" pill: multi-polygon reshape on the ACTIVE
+ * 7. RESHAPE — "→ Reshape" pill: multi-polygon reshape on the ACTIVE
  *    layer (port of map_cleaning/tools/reshape_spline_tool.py — keep
  *    the semantics in sync). Optionally tap polygons first to limit
  *    the targets (clip-style picks), then tap out a line and confirm:
@@ -180,6 +180,8 @@ Item {
   property bool suggestionsFromDesktop: false
   property string scanIssue: ''      // per-layer device scan failures
   property bool filterActive: false
+  // Guard against accidental ▼/▲ taps in the field (lgs_z_step_locked).
+  property bool zStepLocked: false
 
   // ----------------------------------------------------------------
   // Shared-state helpers (lgs_z_* project variables)
@@ -743,7 +745,17 @@ Item {
 
   // Numeric sweep: move the level down/up by stepSize (desktop parity —
   // dockwidget._step_level). Applying also turns the filter ON when off.
+  function toggleZStepLock() {
+    zStepLocked = !zStepLocked
+    saveVar('lgs_z_step_locked', zStepLocked ? '1' : '0')
+    toast(zStepLocked ? qsTr('Level locked') : qsTr('Level unlocked'))
+  }
+
   function stepLevel(direction) {
+    if (zStepLocked) {
+      toast(qsTr('Level locked'))
+      return
+    }
     const level = currentLevel()
     let target
     if (level === undefined) {
@@ -1121,6 +1133,7 @@ Item {
       stepSize = step
     showNullSwitch.checked = projVar('lgs_z_shownull', '1') === '1'
     adjacentSwitch.checked = projVar('lgs_z_adjacent', '0') === '1'
+    zStepLocked = projVar('lgs_z_step_locked', '0') === '1'
     const level = Number(projVar('lgs_z_level', ''))
     if (!isNaN(level) && projVar('lgs_z_level', '') !== '') {
       rebuildLevelModel(level)
@@ -1196,8 +1209,8 @@ Item {
     id: zDialog
     parent: mainWindow.contentItem
     // Non-modal right-side panel: no overlay grab and no dim, so the map
-    // keeps panning/zooming beside it; the Z button and the header ✕
-    // both close.
+    // keeps panning/zooming beside it; the Z button and the header
+    // Close button both close.
     modal: false
     dim: false
     closePolicy: Popup.CloseOnEscape
@@ -1223,8 +1236,15 @@ Item {
       }
 
       ToolButton {
-        text: '✕'
-        font.pointSize: 14
+        // Plain text with a full-size touch target: the old '✕' glyph
+        // (U+2715) is missing from Android's fonts and its default
+        // ToolButton hit area was too small to tap reliably there.
+        text: qsTr('Close')
+        font.bold: true
+        topPadding: 12
+        bottomPadding: 12
+        leftPadding: 16
+        rightPadding: 16
         Layout.rightMargin: 4
         onClicked: zDialog.close()
       }
@@ -1720,6 +1740,29 @@ Item {
     spacing: 8
 
     Rectangle {
+      id: levelLockPill
+      visible: plugin.featureZFilter && plugin.filterActive
+      anchors.verticalCenter: parent.verticalCenter
+      width: 44
+      height: levelLockText.contentHeight + 12
+      radius: height / 2
+      // Inverted while locked — same active-state language as the
+      // spline pill.
+      color: plugin.zStepLocked ? '#E6FFFFFF' : '#99000000'
+
+      Text {
+        id: levelLockText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        text: plugin.zStepLocked ? '🔒' : '🔓'
+      }
+
+      TapHandler {
+        onTapped: plugin.toggleZStepLock()
+      }
+    }
+
+    Rectangle {
       id: levelDownPill
       visible: plugin.featureZFilter && plugin.filterActive
       anchors.verticalCenter: parent.verticalCenter
@@ -1732,7 +1775,7 @@ Item {
         id: levelDownText
         anchors.centerIn: parent
         font.pixelSize: 14
-        color: 'white'
+        color: plugin.zStepLocked ? '#66FFFFFF' : 'white'
         text: '▼'
       }
 
@@ -1754,7 +1797,7 @@ Item {
         id: levelUpText
         anchors.centerIn: parent
         font.pixelSize: 14
-        color: 'white'
+        color: plugin.zStepLocked ? '#66FFFFFF' : 'white'
         text: '▲'
       }
 
@@ -1867,7 +1910,8 @@ Item {
         anchors.centerIn: parent
         font.pixelSize: 14
         color: plugin.splineArmed ? 'black' : 'white'
-        text: qsTr('∿ Spline')
+        // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
+        text: qsTr('~ Spline')
       }
 
       TapHandler {
@@ -1893,7 +1937,8 @@ Item {
         anchors.centerIn: parent
         font.pixelSize: 14
         color: 'white'
-        text: qsTr('⤳ Reshape')
+        // Basic arrow on purpose: '⤳' (U+2933) is not in Android's fonts.
+        text: qsTr('→ Reshape')
       }
 
       TapHandler {

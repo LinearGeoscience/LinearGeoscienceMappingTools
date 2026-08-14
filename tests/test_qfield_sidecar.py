@@ -185,7 +185,10 @@ class TestWriteSidecar(unittest.TestCase):
                        # Reshape round 2: browse-mode gating + native
                        # Shape-wrapped rubberband rendering:
                        'currentRubberband', 'reshapeEditingActive',
-                       'PathPolyline'):
+                       'PathPolyline',
+                       # Z level lock + Android glyph fixes:
+                       'zStepLocked', 'lgs_z_step_locked',
+                       'levelLockPill'):
             self.assertIn(needle, text, needle)
 
 
