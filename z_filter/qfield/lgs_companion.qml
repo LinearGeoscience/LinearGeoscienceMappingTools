@@ -126,6 +126,21 @@
  *    draws nothing, and it must never be anchored/sized (its C++
  *    transform positions the item to track the map). Requires
  *    QField 4.x.
+ *
+ * 8. REVERSE — "↔ Reverse" pill: flip the vertex order of a line
+ *    feature so asymmetric line symbology (ticks, teeth, dip marks)
+ *    renders on the other side. Tap the pill, then tap a line — it
+ *    reverses immediately; tap the same line again to flip it back
+ *    (reversal is its own undo, so no undo state is kept). Targets are
+ *    hit-tested on the active layer first (when it is a line layer),
+ *    then the standard LGS line layers; the iterator honours the layer
+ *    subsetString — reverse what you see. The reversed geometry comes
+ *    from the expression engine (reverse($geometry)) with a pure-JS
+ *    WKT fallback for multi-part lines on engines whose reverse() is
+ *    curve-only; both preserve Z. Applied as add-before-delete in one
+ *    edit session (attributes copied verbatim, UUID preserved — same
+ *    identity rules as the reshape undo). Browse mode only, same
+ *    gating as Reshape. Requires QField 4.x.
  */
 
 import QtQuick
@@ -146,6 +161,7 @@ Item {
   readonly property bool featureClipping: true // LGS-EXPORT-FLAG:clipping
   readonly property bool featureSpline: true // LGS-EXPORT-FLAG:spline
   readonly property bool featureReshape: true // LGS-EXPORT-FLAG:reshape
+  readonly property bool featureReverse: true // LGS-EXPORT-FLAG:reverse
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1151,7 +1167,7 @@ Item {
     // run even when the scale display feature is disabled at export.
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
-        featureSpline || featureReshape)
+        featureSpline || featureReshape || featureReverse)
       attachOverlay()
     startupTimer.start()
   }
@@ -1171,6 +1187,8 @@ Item {
         plugin.initClipping()
       if (plugin.featureReshape)
         plugin.initReshape()
+      if (plugin.featureReverse)
+        plugin.initReverse()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1869,7 +1887,8 @@ Item {
     Rectangle {
       id: clipPill
       visible: plugin.featureClipping && plugin.clipStep === 0 &&
-               plugin.reshapeStep === 0 && plugin.clipAvailable
+               plugin.reshapeStep === 0 && plugin.reverseStep === 0 &&
+               plugin.clipAvailable
       anchors.verticalCenter: parent.verticalCenter
       width: clipPillText.contentWidth + 24
       height: clipPillText.contentHeight + 12
@@ -1925,7 +1944,8 @@ Item {
       // active so the native rubberband/crosshair never overlap the
       // reshape drawing.
       visible: plugin.featureReshape && plugin.reshapeStep === 0 &&
-               plugin.clipStep === 0 && !plugin.reshapeEditingActive
+               plugin.clipStep === 0 && plugin.reverseStep === 0 &&
+               !plugin.reshapeEditingActive
       anchors.verticalCenter: parent.verticalCenter
       width: reshapePillText.contentWidth + 24
       height: reshapePillText.contentHeight + 12
@@ -1943,6 +1963,33 @@ Item {
 
       TapHandler {
         onTapped: plugin.enterReshapeMode()
+      }
+    }
+
+    Rectangle {
+      id: reversePill
+      // Browse mode only — same gating as Reshape: hidden while a
+      // digitizing/measure session or another canvas mode is active.
+      visible: plugin.featureReverse && plugin.reverseStep === 0 &&
+               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               !plugin.reshapeEditingActive && plugin.reverseAvailable
+      anchors.verticalCenter: parent.verticalCenter
+      width: reversePillText.contentWidth + 24
+      height: reversePillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: reversePillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        // Basic arrow on purpose: '⇄' (U+21C4) is not in Android's fonts.
+        text: qsTr('↔ Reverse')
+      }
+
+      TapHandler {
+        onTapped: plugin.enterReverseMode()
       }
     }
   }
@@ -5664,6 +5711,10 @@ Item {
         plugin.exitReshapeMode()
         plugin.toast(qsTr('Reshape cancelled — digitizing started'))
       }
+      if (plugin.reshapeEditingActive && plugin.reverseStep === 1) {
+        plugin.exitReverseMode()
+        plugin.toast(qsTr('Reverse cancelled — digitizing started'))
+      }
     }
   }
 
@@ -6006,6 +6057,311 @@ Item {
               : qsTr('Line: straight segments'))
           lines += '\n' + qsTr('Layer: %1').arg(plugin.reshapeLayerLabel())
           return lines
+        }
+      }
+    }
+  }
+
+  // ================================================================
+  // REVERSE (v19) — flip a line feature's vertex order so asymmetric
+  // line symbology (ticks, teeth, dip marks) renders on the other
+  // side. Tap-per-line, applies immediately; reversal is its own
+  // inverse, so tapping the line again IS the undo — no undo state.
+  // ================================================================
+
+  property int reverseStep: 0        // 0=off, 1=tap lines
+  property bool reverseAvailable: false
+  property var reverseLayers: []     // hit-test order, locked on entry
+  property int reverseCount: 0       // flips this session (banner)
+
+  function initReverse() {
+    // Pill availability from the standard layers only — the active
+    // layer is re-probed on entry (the dashboard may not exist yet).
+    try {
+      reverseAvailable = candidateReverseLayers().length > 0
+    } catch (error) {
+      reverseAvailable = false
+    }
+  }
+
+  function layerIsLine(layer) {
+    if (layer === null || layer === undefined)
+      return false
+    return evalExpr(layer, null,
+                    "layer_property(@layer, 'geometry_type')") === 'Line'
+  }
+
+  function candidateReverseLayers() {
+    // Active layer first — reverse what you're working on — then the
+    // standard LGS layers that hold lines (normally '3 - Linework').
+    let layers = []
+    try {
+      const active = reshapeActiveLayer()
+      if (layerIsLine(active))
+        layers.push(active)
+    } catch (error) {}
+    for (const name of layerNames) {
+      const layer = layerByName(name)
+      if (layer === null || !layerIsLine(layer))
+        continue
+      let seen = false
+      for (const known of layers) {
+        try {
+          if (known === layer)
+            seen = true
+        } catch (error) {}
+      }
+      if (!seen)
+        layers.push(layer)
+    }
+    return layers
+  }
+
+  // ----------------------------------------------------------------
+  // Mode lifecycle
+  // ----------------------------------------------------------------
+  function enterReverseMode() {
+    try {
+      if (!canvas || canvas.width === undefined) {
+        toast(qsTr('Reverse unavailable — no map canvas'))
+        return
+      }
+      updateReshapeEditingActive()
+      if (reshapeEditingActive) {
+        toast(qsTr('Turn digitizing off first'))
+        return
+      }
+      const layers = candidateReverseLayers()
+      if (layers.length === 0) {
+        toast(qsTr('Reverse unavailable — no line layer found'))
+        return
+      }
+      reverseLayers = layers
+      reverseCatcher.parent = canvas
+      reverseCatcher.anchors.fill = canvas
+      reverseBanner.parent = canvas
+      reverseBanner.anchors.horizontalCenter = canvas.horizontalCenter
+      reverseBanner.anchors.top = canvas.top
+      reverseBanner.anchors.topMargin = 60
+      reverseCount = 0
+      reverseStep = 1
+      toast(qsTr('Tap a line to reverse its direction'))
+    } catch (error) {
+      toast(qsTr('Reverse unavailable'))
+    }
+  }
+
+  function exitReverseMode() {
+    reverseStep = 0
+    reverseLayers = []
+    reverseCount = 0
+  }
+
+  // ----------------------------------------------------------------
+  // Tap handling
+  // ----------------------------------------------------------------
+  function reverseTapOnUi(pos) {
+    // Ignore taps landing on the banner or pill bar — overlapping
+    // TapHandlers may deliver the same tap to the canvas catcher too
+    // (same guard as clipTapOnUi / reshapeTapOnUi).
+    try {
+      const b = reverseBanner.mapFromItem(reverseCatcher, pos.x, pos.y)
+      if (b.x >= 0 && b.y >= 0 &&
+          b.x <= reverseBanner.width && b.y <= reverseBanner.height)
+        return true
+    } catch (error) {}
+    try {
+      const o = overlayBar.mapFromItem(reverseCatcher, pos.x, pos.y)
+      if (o.x >= 0 && o.y >= 0 &&
+          o.x <= overlayBar.width && o.y <= overlayBar.height)
+        return true
+    } catch (error) {}
+    try {
+      if (zDialog.visible) {
+        const d = mainWindow.contentItem.mapFromItem(
+            reverseCatcher, pos.x, pos.y)
+        if (d.x >= zDialog.x && d.y >= zDialog.y &&
+            d.x <= zDialog.x + zDialog.width &&
+            d.y <= zDialog.y + zDialog.height)
+          return true
+      }
+    } catch (error) {}
+    return false
+  }
+
+  function handleReverseTap(pos) {
+    try {
+      if (reverseStep !== 1)
+        return
+      if (reverseTapOnUi(pos))
+        return
+      // The iterator honours the layer subsetString, so an active Z
+      // filter means only VISIBLE lines are tappable — reverse what
+      // you see.
+      const hit = findHitInLayers(reverseLayers, pos)
+      if (hit === null) {
+        toast(qsTr('No line here'))
+        return
+      }
+      reverseFeature(hit.layer, hit.feature)
+    } catch (error) {}
+  }
+
+  // ----------------------------------------------------------------
+  // WKT reversal (pure JS fallback for the expression engine)
+  // ----------------------------------------------------------------
+  function reverseWktCoordGroups(text) {
+    // Reverse the comma-separated vertex list inside every innermost
+    // parenthesis group; whole vertex tokens move, so Z/M ride along.
+    // Works for LINESTRING [ZM] and each part of MULTILINESTRING.
+    return text.replace(/\(([^()]*)\)/g, function(match, body) {
+      if (body.indexOf(',') === -1)
+        return match
+      const coords = body.split(',')
+      let out = []
+      for (let i = coords.length - 1; i >= 0; i--)
+        out.push(coords[i].trim())
+      return '(' + out.join(', ') + ')'
+    })
+  }
+
+  function reverseLineWkt(wkt) {
+    const text = String(wkt).trim()
+    const kind = text.substring(0, text.indexOf('(') === -1
+        ? text.length : text.indexOf('(')).trim().toUpperCase()
+    if (kind.indexOf('LINESTRING') === -1 &&
+        kind.indexOf('MULTILINESTRING') === -1)
+      return ''
+    return reverseWktCoordGroups(text)
+  }
+
+  // ----------------------------------------------------------------
+  // Execution — add-before-delete in one edit session, attributes
+  // copied verbatim (UUID preserved: identity kept, same rules as the
+  // reshape undo).
+  // ----------------------------------------------------------------
+  function reverseFeature(layer, feature) {
+    try {
+      const wkt = evalExpr(layer, feature, 'geom_to_wkt($geometry)')
+      if (wkt === '') {
+        toast(qsTr('Reverse failed — geometry unreadable'))
+        return
+      }
+      // reverse() is curve-only on some engine versions (NULL for
+      // multi-part lines) — the JS WKT fallback covers those.
+      let reversed = evalExpr(layer, feature,
+                              'geom_to_wkt(reverse($geometry))')
+      if (reversed === '' || reversed.toUpperCase().indexOf('EMPTY') !== -1)
+        reversed = reverseLineWkt(wkt)
+      if (reversed === '') {
+        toast(qsTr('Reverse failed — not a line geometry'))
+        return
+      }
+      const names = attributeNames(layer, feature)
+      const geometry = GeometryUtils.createGeometryFromWkt(reversed)
+      let created = FeatureUtils.createFeature(layer, geometry)
+      copyClipAttributes(created, feature, names, null, '')
+      if (!applyClipEdits(layer, [created], [feature.id])) {
+        toast(qsTr('Reverse failed — no changes made'))
+        return
+      }
+      try {
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      reverseCount++
+      toast(qsTr('Direction reversed — tap the line again to flip back'))
+    } catch (error) {
+      toast(qsTr('Reverse failed'))
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Reverse UI: tap catcher + instruction banner
+  // ----------------------------------------------------------------
+  Item {
+    id: reverseCatcher
+    visible: plugin.reverseStep === 1
+    z: 1
+
+    TapHandler {
+      // Default DragThreshold gesture policy: passive grab, so pan and
+      // pinch on the canvas underneath keep working — only clean taps
+      // land here.
+      onSingleTapped: function(eventPoint, button) {
+        plugin.handleReverseTap(eventPoint.position)
+      }
+    }
+  }
+
+  Rectangle {
+    id: reverseBanner
+    visible: plugin.reverseStep === 1
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: reverseBannerColumn.height + 24
+
+    Column {
+      id: reverseBannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 12
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 24
+      spacing: 8
+
+      Text {
+        width: parent.width
+        font.pixelSize: 15
+        font.bold: true
+        color: 'white'
+        text: qsTr('Reverse line direction')
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 14
+        color: 'white'
+        text: qsTr('Tap a line to flip its direction — tap it again to flip it back')
+      }
+
+      Text {
+        visible: plugin.reverseCount > 0
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: '#CCFFFFFF'
+        text: qsTr('%1 reversed').arg(plugin.reverseCount)
+      }
+
+      Flow {
+        width: parent.width
+        spacing: 8
+
+        Button {
+          id: reverseDoneButton
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Done')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitReverseMode()
         }
       }
     }

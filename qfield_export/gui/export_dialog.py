@@ -496,6 +496,20 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_reshape_check)
 
+        # Line direction reverse tool feature of the same companion plugin
+        self.include_reverse_check = QCheckBox(
+            "Include line direction reverse tool (QField plugin)")
+        self.include_reverse_check.setChecked(True)
+        self.include_reverse_check.setToolTip(
+            "Adds a Reverse button on the QField map: tap a line to flip "
+            "its vertex order so asymmetric line symbology (ticks, teeth, "
+            "dip marks) renders on the other side. Tap the line again to "
+            "flip it back."
+        )
+        self.include_reverse_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_reverse_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -879,7 +893,8 @@ class ExportDialog(QDialog):
             include_opacity_plugin=self.include_opacity_check.isChecked(),
             include_clipping_plugin=self.include_clipping_check.isChecked(),
             include_spline_plugin=self.include_spline_check.isChecked(),
-            include_reshape_plugin=self.include_reshape_check.isChecked()
+            include_reshape_plugin=self.include_reshape_check.isChecked(),
+            include_reverse_plugin=self.include_reverse_check.isChecked()
         )
 
         try:
@@ -924,6 +939,7 @@ class ExportDialog(QDialog):
         self.include_clipping_check.setEnabled(enabled)
         self.include_spline_check.setEnabled(enabled)
         self.include_reshape_check.setEnabled(enabled)
+        self.include_reverse_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

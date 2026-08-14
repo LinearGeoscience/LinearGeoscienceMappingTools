@@ -60,7 +60,8 @@ class OfflineConverter(QObject):
                  include_opacity_plugin: bool = True,
                  include_clipping_plugin: bool = True,
                  include_spline_plugin: bool = True,
-                 include_reshape_plugin: bool = True):
+                 include_reshape_plugin: bool = True,
+                 include_reverse_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -82,6 +83,8 @@ class OfflineConverter(QObject):
                 are baked in at export)
             include_reshape_plugin: If True, enable the multi-polygon
                 reshape tool feature of the companion sidecar
+            include_reverse_plugin: If True, enable the line direction
+                reverse tool feature of the companion sidecar
         """
         super().__init__()
         self.project = project
@@ -94,6 +97,7 @@ class OfflineConverter(QObject):
         self.include_clipping_plugin = include_clipping_plugin
         self.include_spline_plugin = include_spline_plugin
         self.include_reshape_plugin = include_reshape_plugin
+        self.include_reverse_plugin = include_reverse_plugin
         self._raster_layer_names = []  # names the opacity panel acts on
         self._vector_layer_names = []  # spatial vectors for the same panel
         self.exported_layers = {}
@@ -197,7 +201,8 @@ class OfflineConverter(QObject):
                     or self.include_opacity_plugin
                     or self.include_clipping_plugin
                     or self.include_spline_plugin
-                    or self.include_reshape_plugin):
+                    or self.include_reshape_plugin
+                    or self.include_reverse_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
@@ -207,6 +212,7 @@ class OfflineConverter(QObject):
                         clipping=self.include_clipping_plugin,
                         spline=self.include_spline_plugin,
                         reshape=self.include_reshape_plugin,
+                        reverse=self.include_reverse_plugin,
                         opacity_layers=self._raster_layer_names,
                         vector_layers=self._vector_layer_names,
                         spline_params=self._read_spline_params())
@@ -217,7 +223,8 @@ class OfflineConverter(QObject):
                          ("imagery opacity", self.include_opacity_plugin),
                          ("polygon clipping", self.include_clipping_plugin),
                          ("spline drawing", self.include_spline_plugin),
-                         ("polygon reshape", self.include_reshape_plugin))
+                         ("polygon reshape", self.include_reshape_plugin),
+                         ("line reverse", self.include_reverse_plugin))
                         if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "
