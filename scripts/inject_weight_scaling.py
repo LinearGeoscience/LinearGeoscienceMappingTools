@@ -12,9 +12,14 @@ and dash patterns are deliberately NOT scaled (matches the pre-Weight
 Major/Minor symbol convention).
 
 Scope: every symbol in the "3 - Linework" renderer; only the Structure zone
-symbols in "2 - Overlay" (alteration/weathering/infrastructure untouched).
+symbols in "2 - Overlay" (infrastructure untouched).
 Existing data-defined properties (e.g. the OverlayStrike-driven lineAngle on
 zone hatches) are preserved.
+
+Also injects "Intensity" (1-5) scaling into the Overlay Alteration/Weathering
+stipple symbols: marker size grows and stipple spacing tightens with intensity
+(3 or NULL = authored look). Weight is deliberately NOT applied to those
+symbols - Intensity replaces it for alteration/weathering.
 
 Idempotent and re-runnable: expressions are rebuilt from each layer's CURRENT
 static values, so re-run this script after restyling symbols in QGIS to keep
@@ -42,6 +47,23 @@ SCALED_PROPS = {
     "SimpleFill":   {"outline_width": "outlineWidth"},
 }
 
+# Intensity (1-5) scaling for Overlay alteration/weathering symbols; 3/NULL -> authored look.
+# The ramp is deliberately gentle: the wash opacity carries most of the signal so even
+# Intensity 5 leaves the underlying mapping readable.
+# Linear ramp: dot density is proportional to Intensity (spacing factor = sqrt(3/k),
+# dot size constant), and wash alpha steps evenly (7,13,20,26,33).
+INTENSITY_DIST_FACTORS = {"1": "1.732", "2": "1.225", "4": "0.866", "5": "0.775"}
+INTENSITY_WASH_ALPHA = {"1": "7", "2": "13", "4": "26", "5": "33"}  # else 20 (= static)
+
+# Structure-zone Weight ramp: Major is deliberately subtle (the old Moderate look),
+# Moderate/Minor progressively lighter from there.
+OVERLAY_ZONE_FACTORS = {"Major": "1.32", "Minor": "0.65"}
+
+INTENSITY_PROPS = {
+    "PointPatternFill": {"distance_x": "distanceX", "distance_y": "distanceY"},
+    "SimpleFill": {"color": "fillColor"},
+}
+
 OVERLAY_ZONE_CODES = [
     "Fault Zone", "Shear Zone", "Breccia Zone", "Mylonite Zone",
     "Stockwork Zone", "Vein Array Zone", "Damage Zone", "Fold Hinge Zone",
@@ -53,9 +75,45 @@ def bail(msg):
     raise SystemExit("ABORT: " + msg)
 
 
-def weight_expression(base):
+def weight_expression(dd_key, base):
+    try:
+        if float(base) <= 0:
+            return None
+    except ValueError:
+        return None
     return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {FACTORS['Major']} "
             f"WHEN \"Weight\" = 'Minor' THEN {FACTORS['Minor']} ELSE 1 END")
+
+
+def zone_weight_expression(dd_key, base):
+    try:
+        if float(base) <= 0:
+            return None
+    except ValueError:
+        return None
+    return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {OVERLAY_ZONE_FACTORS['Major']} "
+            f"WHEN \"Weight\" = 'Minor' THEN {OVERLAY_ZONE_FACTORS['Minor']} ELSE 1 END")
+
+
+def intensity_expression(dd_key, base):
+    if dd_key == "fillColor":
+        parts = base.split(",")
+        if len(parts) < 3:
+            return None
+        r, g, b = parts[0], parts[1], parts[2]
+        branches = " ".join(f"WHEN \"Intensity\" = {k} THEN {v}"
+                            for k, v in INTENSITY_WASH_ALPHA.items())
+        return f"color_rgba({r},{g},{b}, CASE {branches} ELSE 33 END)"
+    try:
+        if float(base) <= 0:
+            return None
+    except ValueError:
+        return None
+    if dd_key not in ("distanceX", "distanceY"):
+        return None
+    branches = " ".join(f"WHEN \"Intensity\" = {k} THEN {v}"
+                        for k, v in INTENSITY_DIST_FACTORS.items())
+    return f"{base} * CASE {branches} ELSE 1 END"
 
 
 def rebuild_dd_block(dd_xml, new_props):
@@ -83,7 +141,7 @@ def rebuild_dd_block(dd_xml, new_props):
     return ET.tostring(root, encoding="unicode")
 
 
-def inject_into_scope(scope, stats):
+def inject_into_scope(scope, stats, prop_map=SCALED_PROPS, expr_fn=weight_expression):
     """Process every <layer class=...> block inside the scope string."""
     out = []
     pos = 0
@@ -95,20 +153,17 @@ def inject_into_scope(scope, stats):
         if not dd_m:
             continue
         statics_region = scope[lt.end():lt.end() + dd_m.start()]
-        mapping = SCALED_PROPS.get(cls, {})
+        mapping = prop_map.get(cls, {})
         new_props = {}
         for static_name, dd_key in mapping.items():
             vm = re.search(r'<Option name="%s" type="QString" value="([^"]+)"' % static_name,
                            statics_region)
             if not vm:
                 continue
-            try:
-                base = float(vm.group(1))
-            except ValueError:
+            expr = expr_fn(dd_key, vm.group(1))
+            if expr is None:
                 continue
-            if base <= 0:
-                continue
-            new_props[dd_key] = weight_expression(vm.group(1))
+            new_props[dd_key] = expr
         if not new_props:
             continue
         dd_start = lt.end() + dd_m.start()
@@ -165,10 +220,27 @@ def main():
             bail(f"Overlay category {code!r} not found")
         sym = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
         s, e = symbol_block(qml, sym)
-        qml = qml[:s] + inject_into_scope(qml[s:e], stats) + qml[e:]
+        qml = qml[:s] + inject_into_scope(qml[s:e], stats,
+                                          expr_fn=zone_weight_expression) + qml[e:]
+    print("2 - Overlay zones:", dict(stats))
+
+    # 2 - Overlay: Intensity scaling on Alteration/Weathering stipples
+    stats = Counter()
+    cur.execute("SELECT Code FROM OverlayCodes WHERE Type IN ('Alteration','Weathering')")
+    stipple_codes = [r[0] for r in cur.fetchall()]
+    if not stipple_codes:
+        bail("no Alteration/Weathering codes found in OverlayCodes")
+    for code in stipple_codes:
+        cm = re.search(r'<category[^>]*value="%s"[^>]*/>' % re.escape(code), qml)
+        if not cm:
+            bail(f"Overlay category {code!r} not found")
+        sym = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
+        s, e = symbol_block(qml, sym)
+        qml = qml[:s] + inject_into_scope(qml[s:e], stats, INTENSITY_PROPS,
+                                          intensity_expression) + qml[e:]
     cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='2 - Overlay'", (qml,))
     assert cur.rowcount == 1
-    print("2 - Overlay zones:", dict(stats))
+    print(f"2 - Overlay intensity ({len(stipple_codes)} stipple symbols):", dict(stats))
 
     con.commit()
     cur.execute("PRAGMA integrity_check")
