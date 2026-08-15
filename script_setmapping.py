@@ -505,7 +505,11 @@ class LayerConfigurator:
     def create_dip_rule(self, x_value):
         """Create rule for Dip field labels (above symbol, no callouts)"""
         settings = QgsPalLayerSettings()
-        settings.fieldName = '"Dip"'
+        # Queried structures label as e.g. '75?' (Confidence system - keep in
+        # step with scripts/inject_confidence_system.py)
+        settings.fieldName = (
+            '"Dip" || CASE WHEN "Confidence" = \'Queried\' '
+            'THEN \'?\' ELSE \'\' END')
         settings.isExpression = True
         settings.enabled = True
 
