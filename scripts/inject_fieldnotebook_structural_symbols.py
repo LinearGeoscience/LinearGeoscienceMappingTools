@@ -19,16 +19,17 @@ and makes the whole set consistent (user decisions 2026-08-15):
     family (authored 39 pt, glyph spanning only 420 of the 500 canvas)
     is wrapper-scaled x500/420 about its strike-line centre, so the
     uniform size value reproduces the authored footprints;
-  * one stroke setting: QML outline_width 0.9 Point everywhere
-    (0.9 pt = the authored 15/500-viewBox stroke at 30 pt);
+  * one stroke setting: QML outline_width 1.3 Point everywhere (the
+    authored equivalent was 0.9 pt; 1.3 pt is a deliberate weight bump
+    so symbols stay legible over mapping data - user 2026-08-15);
   * unique graphics: the 7 duplicate groups (CT/FB/LAY/DYK,
     FO/CLV/SCR/GSN, LNS/L1-L5, STR/SLK/SLF, SZC/MYL/SZBDY, FAP/FAPCR,
     FAC/FACSP) get path-only modifier glyphs; clones shed the parent's
     inherited <text> label (L1 rendered "LNS", SLK "LSTR");
   * generation lineations recoded: L1-L5 (which wrongly cloned the LNS
     stretching-lineation graphic) become LNI1-LNI5 - the LNI arrow plus
-    a Century Gothic digit baked as a path outline (no font needed at
-    render time) - in both the renderer and FieldNotebookCodes;
+    a bold Century Gothic 'L1'..'L5' label baked as path outlines (no
+    font needed at render time) - in both renderer and FieldNotebookCodes;
   * FAP1-5 digit <text> sat at x 437-560, overflowing the canvas
     (already clipped); the digits are relocated below the axial plane.
 
@@ -39,8 +40,8 @@ inert QML colour options held junk and are overwritten wholesale.
 
 Deliberate visual changes, everything else must render identically:
 black unification, FAX5 shaft #FF1717 -> #FF0000, invisible-cruft
-deletion, the variant glyphs, FAP digit relocation, FAP-family strokes
-rendering at the common 0.9 pt (was 0.94 pt).
+deletion, the variant glyphs, FAP digit relocation, and every stroke
+rendering at the common 1.3 pt weight.
 
 Second pass: the 3 Linework SvgMarkers that regressed to hardcoded
 #131313 (1 in "Formline - S0 (Younging Known)", 2 in "Costean") go
@@ -87,7 +88,8 @@ for _g, _h in GEN_HEX.items():
         EXPECT_ACCENT["FAX" + _g + _s] = _h          # 25 accent codes
 
 SIZE = "30"                       # Point, uniform
-OUTLINE_W = "0.9"                 # Point = 15/500 viewBox units at 30 pt
+OUTLINE_W = "1.3"                 # Point; deliberate bump over the authored
+                                  # 0.9 pt so symbols read over mapping data
 MAIN_W_LO, MAIN_W_HI = 10.0, 20.0  # stroke widths that count as "main"
 SNAP_15_LO, SNAP_15_HI = 13.5, 16.5  # near-15 widths snap to 15
 
@@ -108,19 +110,20 @@ RENAME_LABEL = {"LNI%d" % i: "LNI%d - L%d Intersection Lineation" % (i, i)
                 for i in (1, 2, 3, 4, 5)}
 CLONE_SOURCE = {"LNI%d" % i: "LNI" for i in (1, 2, 3, 4, 5)}
 
-# Century Gothic digit outlines (extracted from GOTHIC.TTF via matplotlib
-# TextPath, y-down, height 100) so the glyphs need no font at render time.
-FONT_DIGITS = {
-    "1": ("M25.8,0.0 L45.4,0.0 L45.4,100.0 L35.5,100.0 L35.5,9.8 L19.8,9.8 L25.8,0.0 Z", 45.4),
-    "2": ("M15.7,33.0 L6.4,33.0 Q6.8,18.6 16.0,9.3 Q25.3,0.0 38.8,0.0 Q52.3,0.0 60.6,8.7 Q69.0,17.4 69.0,29.2 Q69.0,37.5 65.0,44.7 Q61.0,52.0 49.5,64.4 L25.3,90.6 L70.3,90.6 L70.3,100.0 L4.1,100.0 L41.3,59.7 Q52.6,47.6 56.1,41.8 Q59.5,35.9 59.5,29.4 Q59.5,21.2 53.3,15.2 Q47.2,9.3 38.3,9.3 Q29.0,9.3 22.8,15.5 Q16.6,21.7 15.7,33.0 Z", 70.3),
-    "3": ("M17.5,24.5 L7.8,24.5 Q10.5,12.7 18.0,6.4 Q25.5,0.0 35.7,0.0 Q43.2,0.0 49.6,3.4 Q56.0,6.8 59.6,12.6 Q63.1,18.3 63.1,24.6 Q63.1,36.9 50.9,44.1 Q57.7,46.9 62.1,52.2 Q68.3,59.8 68.3,69.2 Q68.3,77.3 64.1,84.6 Q59.8,92.0 52.4,96.0 Q45.0,100.0 35.9,100.0 Q23.6,100.0 15.4,92.9 Q7.2,85.8 4.7,72.1 L14.0,72.1 Q16.4,81.4 21.0,85.5 Q26.9,90.7 36.1,90.7 Q46.4,90.7 52.7,84.5 Q59.0,78.3 59.0,70.0 Q59.0,64.4 55.8,59.6 Q52.7,54.7 47.4,52.2 Q42.1,49.8 31.1,49.2 L31.1,40.5 Q37.6,40.5 43.0,38.2 Q48.3,35.9 50.8,32.3 Q53.2,28.7 53.2,24.5 Q53.2,18.3 48.3,13.8 Q43.3,9.3 35.7,9.3 Q29.6,9.3 25.1,12.7 Q20.6,16.2 17.5,24.5 Z", 68.3),
-    "4": ("M57.8,0.0 L59.8,0.0 L59.8,68.0 L71.6,68.0 L71.6,77.3 L59.8,77.3 L59.8,100.0 L50.1,100.0 L50.1,77.3 L3.5,77.3 L57.8,0.0 Z M50.1,68.0 L50.1,27.3 L21.3,68.0 L50.1,68.0 Z", 71.6),
-    "5": ("M66.8,0.0 L66.8,9.3 L32.0,9.3 L27.2,35.9 Q33.5,34.0 38.7,34.0 Q52.0,34.0 60.6,42.9 Q69.3,51.9 69.3,65.8 Q69.3,75.4 64.8,83.4 Q60.4,91.4 52.8,95.7 Q45.2,100.0 35.3,100.0 Q23.4,100.0 15.2,92.7 Q7.1,85.5 5.5,73.9 L15.5,73.9 Q16.6,79.6 19.3,83.1 Q22.0,86.6 26.5,88.8 Q31.0,90.9 35.9,90.9 Q45.5,90.9 52.4,83.6 Q59.3,76.3 59.3,65.4 Q59.3,55.5 53.0,49.3 Q46.8,43.2 36.4,43.2 Q27.8,43.2 15.5,48.4 L24.5,0.0 L66.8,0.0 Z", 69.3),
+# Bold Century Gothic "L1".."L5" outlines (extracted from GOTHICB.TTF via
+# matplotlib TextPath, y-down, height 100) so the generation labels need
+# no font at render time and match the 1.3 pt line weight.
+FONT_LABELS = {
+    "L1": ("M11.4,0.0 L30.5,0.0 L30.5,81.9 L58.2,81.9 L58.2,100.0 L11.4,100.0 L11.4,0.0 Z M84.2,0.0 L112.7,0.0 L112.7,100.0 L93.7,100.0 L93.7,17.9 L73.1,17.9 L84.2,0.0 Z", 112.7),
+    "L2": ("M11.1,2.5 L29.7,2.5 L29.7,82.3 L56.8,82.3 L56.8,100.0 L11.1,100.0 L11.1,2.5 Z M83.4,33.9 L65.3,33.9 Q66.0,18.1 75.2,9.1 Q84.4,0.0 98.8,0.0 Q107.7,0.0 114.5,3.8 Q121.3,7.5 125.3,14.6 Q129.4,21.6 129.4,28.9 Q129.4,37.6 124.5,47.6 Q119.6,57.6 106.4,71.3 L95.5,82.8 L130.2,82.8 L130.2,100.0 L62.7,100.0 L62.7,91.1 L92.8,60.3 Q103.8,49.3 107.4,42.5 Q111.0,35.8 111.0,30.4 Q111.0,24.7 107.2,21.1 Q103.5,17.4 97.6,17.4 Q91.6,17.4 87.6,21.8 Q83.7,26.3 83.4,33.9 Z", 130.2),
+    "L3": ("M10.9,2.4 L29.0,2.4 L29.0,80.3 L55.4,80.3 L55.4,97.6 L10.9,97.6 L10.9,2.4 Z M83.5,25.9 L66.1,25.9 Q67.4,15.3 73.7,8.9 Q82.3,0.0 95.5,0.0 Q107.2,0.0 115.1,7.5 Q123.0,14.9 123.0,25.1 Q123.0,31.5 119.6,36.7 Q116.1,41.9 109.5,45.2 Q118.2,47.8 123.1,54.2 Q127.9,60.7 127.9,69.4 Q127.9,82.2 118.5,91.1 Q109.0,100.0 94.4,100.0 Q80.6,100.0 71.8,91.6 Q63.1,83.2 62.3,68.8 L80.2,68.8 Q81.4,76.2 85.3,79.8 Q89.3,83.4 95.4,83.4 Q101.7,83.4 105.9,79.3 Q110.1,75.2 110.1,69.3 Q110.1,62.8 104.4,58.4 Q98.8,53.9 88.2,53.8 L88.2,38.2 Q94.7,37.7 97.9,36.2 Q101.2,34.7 102.9,32.0 Q104.7,29.4 104.7,26.4 Q104.7,22.5 102.0,20.0 Q99.3,17.4 94.9,17.4 Q91.0,17.4 87.8,19.8 Q84.6,22.1 83.5,25.9 Z", 127.9),
+    "L4": ("M11.1,2.5 L29.7,2.5 L29.7,82.3 L56.8,82.3 L56.8,100.0 L11.1,100.0 L11.1,2.5 Z M104.7,0.0 L123.3,0.0 L123.3,62.8 L131.9,62.8 L131.9,80.0 L123.3,80.0 L123.3,100.0 L105.1,100.0 L105.1,80.0 L62.5,80.0 L62.5,62.8 L104.7,0.0 Z M105.1,62.8 L105.1,30.1 L82.8,62.8 L105.1,62.8 Z", 131.9),
+    "L5": ("M11.1,0.0 L29.7,0.0 L29.7,79.8 L56.8,79.8 L56.8,97.5 L11.1,97.5 L11.1,0.0 Z M82.4,0.0 L128.1,0.0 L128.1,17.1 L96.3,17.1 L92.3,34.9 Q94.0,34.4 95.6,34.2 Q97.1,33.9 98.6,33.9 Q111.9,33.9 120.6,43.0 Q129.4,52.0 129.4,66.2 Q129.4,80.4 119.7,90.2 Q110.0,100.0 96.1,100.0 Q83.6,100.0 74.7,92.9 Q65.7,85.8 62.9,73.5 L82.4,73.5 Q84.7,78.0 88.3,80.4 Q92.0,82.7 96.5,82.7 Q102.6,82.7 107.0,78.3 Q111.3,73.9 111.3,66.9 Q111.3,60.1 107.2,55.8 Q103.2,51.5 97.5,51.5 Q94.5,51.5 91.5,53.0 Q88.6,54.5 85.7,57.6 L70.6,54.2 L82.4,0.0 Z", 129.4),
 }
 
 
-def _digit(n, cx, cy):
-    d, w = FONT_DIGITS[n]
+def _label(n, cx, cy):
+    d, w = FONT_LABELS[n]
     return {"tag": "path", "solid": True, "d": d,
             "transform": "translate(%g,%g)" % (cx - w / 2, cy)}
 
@@ -137,11 +140,11 @@ VARIANTS = {
     "CLV":   [_stroke("M251,303.7 v52")],
     "SCR":   [_stroke("M60,303.7 l22,-22 l22,22 l22,-22 l22,22", "12")],
     "GSN":   [_stroke("M100,303.7 v-52"), _stroke("M400,303.7 v-52")],
-    "LNI1":  [_digit("1", 335, 330)],
-    "LNI2":  [_digit("2", 335, 330)],
-    "LNI3":  [_digit("3", 335, 330)],
-    "LNI4":  [_digit("4", 335, 330)],
-    "LNI5":  [_digit("5", 335, 330)],
+    "LNI1":  [_label("L1", 340, 330)],
+    "LNI2":  [_label("L2", 340, 330)],
+    "LNI3":  [_label("L3", 340, 330)],
+    "LNI4":  [_label("L4", 340, 330)],
+    "LNI5":  [_label("L5", 340, 330)],
     "SLK":   [_stroke("M203,310 h71", "14")],
     "SLF":   [{"tag": "polygon", "solid": True,
                "points": "238.6,282 262,310 238.6,338 215.2,310"}],
