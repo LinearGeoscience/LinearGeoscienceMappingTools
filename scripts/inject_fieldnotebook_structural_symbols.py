@@ -25,6 +25,10 @@ and makes the whole set consistent (user decisions 2026-08-15):
     FO/CLV/SCR/GSN, LNS/L1-L5, STR/SLK/SLF, SZC/MYL/SZBDY, FAP/FAPCR,
     FAC/FACSP) get path-only modifier glyphs; clones shed the parent's
     inherited <text> label (L1 rendered "LNS", SLK "LSTR");
+  * generation lineations recoded: L1-L5 (which wrongly cloned the LNS
+    stretching-lineation graphic) become LNI1-LNI5 - the LNI arrow plus
+    a Century Gothic digit baked as a path outline (no font needed at
+    render time) - in both the renderer and FieldNotebookCodes;
   * FAP1-5 digit <text> sat at x 437-560, overflowing the canvas
     (already clipped); the digits are relocated below the axial plane.
 
@@ -93,27 +97,32 @@ FAP_FAMILY = {"FAP", "FAP1", "FAP2", "FAP3", "FAP4", "FAP5",
 FAC_SCALE = 25.0 / 30.0
 FAP_SCALE = 500.0 / 420.0
 
-TEXT_DELETE = {"L1", "L2", "L3", "L4", "L5", "SLK", "SLF"}
+TEXT_DELETE = {"LNI1", "LNI2", "LNI3", "LNI4", "LNI5", "SLK", "SLF"}
 TEXT_RELOCATE = {c: (300.0, 410.0) for c in
                  ("FAP1", "FAP2", "FAP3", "FAP4", "FAP5")}
 
-# Path-drawn digits in a 60x100 box (viewport units, offset at use).
-DIGITS = {"1": "M20,20 L40,4 V100",
-          "2": "M4,8 H56 V52 H4 V96 H56",
-          "3": "M4,4 H56 V96 H4 M16,50 H56",
-          "4": "M10,4 V52 H56 M42,4 V100",
-          "5": "M56,4 H4 V48 H56 V96 H4"}
+# Generation lineations were miscoded L1-L5 cloning the LNS graphic; they
+# are LNI1-LNI5: the LNI arrow plus a digit (user decision 2026-08-15).
+RENAME = {"L%d" % i: "LNI%d" % i for i in (1, 2, 3, 4, 5)}
+RENAME_LABEL = {"LNI%d" % i: "LNI%d - L%d Intersection Lineation" % (i, i)
+                for i in (1, 2, 3, 4, 5)}
+CLONE_SOURCE = {"LNI%d" % i: "LNI" for i in (1, 2, 3, 4, 5)}
+
+# Century Gothic digit outlines (extracted from GOTHIC.TTF via matplotlib
+# TextPath, y-down, height 100) so the glyphs need no font at render time.
+FONT_DIGITS = {
+    "1": ("M25.8,0.0 L45.4,0.0 L45.4,100.0 L35.5,100.0 L35.5,9.8 L19.8,9.8 L25.8,0.0 Z", 45.4),
+    "2": ("M15.7,33.0 L6.4,33.0 Q6.8,18.6 16.0,9.3 Q25.3,0.0 38.8,0.0 Q52.3,0.0 60.6,8.7 Q69.0,17.4 69.0,29.2 Q69.0,37.5 65.0,44.7 Q61.0,52.0 49.5,64.4 L25.3,90.6 L70.3,90.6 L70.3,100.0 L4.1,100.0 L41.3,59.7 Q52.6,47.6 56.1,41.8 Q59.5,35.9 59.5,29.4 Q59.5,21.2 53.3,15.2 Q47.2,9.3 38.3,9.3 Q29.0,9.3 22.8,15.5 Q16.6,21.7 15.7,33.0 Z", 70.3),
+    "3": ("M17.5,24.5 L7.8,24.5 Q10.5,12.7 18.0,6.4 Q25.5,0.0 35.7,0.0 Q43.2,0.0 49.6,3.4 Q56.0,6.8 59.6,12.6 Q63.1,18.3 63.1,24.6 Q63.1,36.9 50.9,44.1 Q57.7,46.9 62.1,52.2 Q68.3,59.8 68.3,69.2 Q68.3,77.3 64.1,84.6 Q59.8,92.0 52.4,96.0 Q45.0,100.0 35.9,100.0 Q23.6,100.0 15.4,92.9 Q7.2,85.8 4.7,72.1 L14.0,72.1 Q16.4,81.4 21.0,85.5 Q26.9,90.7 36.1,90.7 Q46.4,90.7 52.7,84.5 Q59.0,78.3 59.0,70.0 Q59.0,64.4 55.8,59.6 Q52.7,54.7 47.4,52.2 Q42.1,49.8 31.1,49.2 L31.1,40.5 Q37.6,40.5 43.0,38.2 Q48.3,35.9 50.8,32.3 Q53.2,28.7 53.2,24.5 Q53.2,18.3 48.3,13.8 Q43.3,9.3 35.7,9.3 Q29.6,9.3 25.1,12.7 Q20.6,16.2 17.5,24.5 Z", 68.3),
+    "4": ("M57.8,0.0 L59.8,0.0 L59.8,68.0 L71.6,68.0 L71.6,77.3 L59.8,77.3 L59.8,100.0 L50.1,100.0 L50.1,77.3 L3.5,77.3 L57.8,0.0 Z M50.1,68.0 L50.1,27.3 L21.3,68.0 L50.1,68.0 Z", 71.6),
+    "5": ("M66.8,0.0 L66.8,9.3 L32.0,9.3 L27.2,35.9 Q33.5,34.0 38.7,34.0 Q52.0,34.0 60.6,42.9 Q69.3,51.9 69.3,65.8 Q69.3,75.4 64.8,83.4 Q60.4,91.4 52.8,95.7 Q45.2,100.0 35.3,100.0 Q23.4,100.0 15.2,92.7 Q7.1,85.5 5.5,73.9 L15.5,73.9 Q16.6,79.6 19.3,83.1 Q22.0,86.6 26.5,88.8 Q31.0,90.9 35.9,90.9 Q45.5,90.9 52.4,83.6 Q59.3,76.3 59.3,65.4 Q59.3,55.5 53.0,49.3 Q46.8,43.2 36.4,43.2 Q27.8,43.2 15.5,48.4 L24.5,0.0 L66.8,0.0 Z", 69.3),
+}
 
 
-def _digit(n, dx, dy):
-    d = re.sub(r"([MLHV])(\d+(?:\.\d+)?)(?:,(\d+(?:\.\d+)?))?",
-               lambda m: (m.group(1)
-                          + str(float(m.group(2))
-                                + (dx if m.group(1) in "MLH" else dy))
-                          + ("," + str(float(m.group(3)) + dy)
-                             if m.group(3) else "")),
-               DIGITS[n])
-    return {"tag": "path", "d": d, "sw": "14"}
+def _digit(n, cx, cy):
+    d, w = FONT_DIGITS[n]
+    return {"tag": "path", "solid": True, "d": d,
+            "transform": "translate(%g,%g)" % (cx - w / 2, cy)}
 
 
 def _stroke(d, sw="15"):
@@ -128,11 +137,11 @@ VARIANTS = {
     "CLV":   [_stroke("M251,303.7 v52")],
     "SCR":   [_stroke("M60,303.7 l22,-22 l22,22 l22,-22 l22,22", "12")],
     "GSN":   [_stroke("M100,303.7 v-52"), _stroke("M400,303.7 v-52")],
-    "L1":    [_digit("1", 300, 330)],
-    "L2":    [_digit("2", 300, 330)],
-    "L3":    [_digit("3", 300, 330)],
-    "L4":    [_digit("4", 300, 330)],
-    "L5":    [_digit("5", 300, 330)],
+    "LNI1":  [_digit("1", 335, 330)],
+    "LNI2":  [_digit("2", 335, 330)],
+    "LNI3":  [_digit("3", 335, 330)],
+    "LNI4":  [_digit("4", 335, 330)],
+    "LNI5":  [_digit("5", 335, 330)],
     "SLK":   [_stroke("M203,310 h71", "14")],
     "SLF":   [{"tag": "polygon", "solid": True,
                "points": "238.6,282 262,310 238.6,338 215.2,310"}],
@@ -421,7 +430,7 @@ def rewrite_svg(svg_text, code):
                            "param(outline-width) %g" % main_w)
                 else:
                     el.set("stroke-width", "%g" % sw)
-            for k in ("d", "points"):
+            for k in ("d", "points", "transform"):
                 if k in spec:
                     el.set(k, spec[k])
 
@@ -523,6 +532,11 @@ def process_fieldnotebook(qml, dump):
     symbols = rend.find("symbols").findall("symbol")
     if len(cats) != 102 or len(symbols) != 102:
         bail(f"expected 102 categories/symbols, got {len(cats)}/{len(symbols)}")
+    for c in cats:                       # L1-L5 -> LNI1-LNI5 (no-op if done)
+        new = RENAME.get(c.get("value"))
+        if new:
+            c.set("value", new)
+            c.set("label", RENAME_LABEL[new])
     code_of = {c.get("symbol"): c.get("value") for c in cats}
 
     markers = []
@@ -546,9 +560,10 @@ def process_fieldnotebook(qml, dump):
         bail("DipDirection angle property not on all 86 markers (pre)")
 
     totals = {"deleted_unstyled": 0, "deleted_invisible": 0}
+    originals = {code: decoded(options_of(layer)) for code, layer in markers}
     for code, layer in markers:
         opts = options_of(layer)
-        before = decoded(opts)
+        before = originals[CLONE_SOURCE.get(code, code)]
         after, outline_hex, fill_hex, stats = rewrite_svg(before, code)
         expect = EXPECT_ACCENT.get(code, BLACK)
         if outline_hex != expect or fill_hex != expect:
@@ -577,7 +592,8 @@ def process_fieldnotebook(qml, dump):
 
 def verify_fieldnotebook(rend, markers):
     groups = [("CT", "FB", "LAY", "DYK"), ("FO", "CLV", "SCR", "GSN"),
-              ("LNS", "L1", "L2", "L3", "L4", "L5"), ("STR", "SLK", "SLF"),
+              ("LNI", "LNI1", "LNI2", "LNI3", "LNI4", "LNI5"),
+              ("STR", "SLK", "SLF"),
               ("SZC", "MYL", "SZBDY"), ("FAP", "FAPCR"), ("FAC", "FACSP")]
     svgs = {}
     n_text = 0
@@ -691,6 +707,19 @@ def main():
     cur = con.cursor()
 
     changed = False
+    for old, new in sorted(RENAME.items()):        # lookup-table rename
+        n_old = cur.execute("SELECT COUNT(*) FROM FieldNotebookCodes "
+                            "WHERE Code=?", (old,)).fetchone()[0]
+        n_new = cur.execute("SELECT COUNT(*) FROM FieldNotebookCodes "
+                            "WHERE Code=?", (new,)).fetchone()[0]
+        if (n_old, n_new) == (1, 0):
+            cur.execute("UPDATE FieldNotebookCodes SET Code=?, Description=? "
+                        "WHERE Code=?", (new, RENAME_LABEL[new], old))
+            assert cur.rowcount == 1
+            changed = True
+            print(f"FieldNotebookCodes: {old} -> {new}")
+        elif (n_old, n_new) != (0, 1):
+            bail(f"FieldNotebookCodes {old}/{new} state out of step")
     for layer_name, fn in ((FN_LAYER, process_fieldnotebook),
                            (LW_LAYER, process_linework)):
         qml, = cur.execute(

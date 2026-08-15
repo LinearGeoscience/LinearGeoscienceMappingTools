@@ -193,11 +193,11 @@ DEFAULT_STRUCTURE_COLORS = {
     "FAX5M": "#0088B3", "FAX5S": "#007799", "FAX5Z": "#00617A",
 
     # Lineation generations - mirror S1-S5 pairing convention
-    "L1": "#FF0000",    # Pure red - L1 (pairs with S1)
-    "L2": "#FF00FF",    # Magenta - L2 (pairs with S2)
-    "L3": "#9933FF",    # Purple - L3 (pairs with S3)
-    "L4": "#00FF00",    # Lime green - L4 (pairs with S4)
-    "L5": "#00FFFF",    # Cyan - L5 (pairs with S5)
+    "LNI1": "#FF0000",  # Pure red - L1 (pairs with S1)
+    "LNI2": "#FF00FF",  # Magenta - L2 (pairs with S2)
+    "LNI3": "#9933FF",  # Purple - L3 (pairs with S3)
+    "LNI4": "#00FF00",  # Lime green - L4 (pairs with S4)
+    "LNI5": "#00FFFF",  # Cyan - L5 (pairs with S5)
 
     # Fault kinematic lineations
     "SLK": "#FF6600",   # Orange - slickenline
@@ -1845,8 +1845,8 @@ class StereonetPluginCore:
             ("Shear Zones", ["SZB", "SZBDY", "SZC", "SZCD", "SZCN", "SZCR", "SZCS", "SZS"], "#2F4F4F"),
             ("Veins", ["VL", "VN", "VS", "VT", "VX"], "#00FF7F"),
             ("Contacts && Dykes", ["CT", "DYK"], "#FF8C00"),
-            ("Linear Structures", ["BAX", "L1", "L2", "L3", "L4", "L5", "LME", "LNI", "LNISC", "LNS",
-                                   "SLK", "SLF", "STR"], "#FF1493")
+            ("Linear Structures", ["BAX", "LME", "LNI", "LNI1", "LNI2", "LNI3", "LNI4", "LNI5",
+                                   "LNISC", "LNS", "SLK", "SLF", "STR"], "#FF1493")
         ]
         
         for group_name, codes, group_color in structure_groups:
