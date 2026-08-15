@@ -206,21 +206,27 @@ def main():
         bail(f"no styleQML for {LAYER!r}")
     qml = original = row[0]
 
-    # 1. Label: plain 'Label' field -> vein-aware expression.
-    m = re.search(r'<text-style\b[^>]*\bfieldName="Label"[^>]*>', qml)
-    if m:
-        tag = m.group(0)
-        if 'isExpression="0"' not in tag:
-            bail("text-style fieldName=\"Label\" found but isExpression != 0")
-        tag = tag.replace('fieldName="Label"',
-                          "fieldName=%s" % quoteattr(LABEL_EXPR))
-        tag = tag.replace('isExpression="0"', 'isExpression="1"')
-        qml = qml[:m.start()] + tag + qml[m.end():]
+    # 1. Label: plain 'Label' field -> vein-aware expression.  Later
+    # injectors may WRAP this expression (e.g. the Confidence '?' suffix), so
+    # "already applied" means the vein expression appears WITHIN the current
+    # one, not that it matches exactly.
+    lm = re.search(r'<labeling type="simple">.*?</labeling>', qml, re.S)
+    if not lm:
+        bail("simple labeling block not found")
+    lab = ET.fromstring(lm.group(0))
+    ts = lab.find(".//text-style")
+    current = ts.get("fieldName")
+    if current == "Label" and ts.get("isExpression") == "0":
+        ts.set("fieldName", LABEL_EXPR)
+        ts.set("isExpression", "1")
+        qml = (qml[:lm.start()] + ET.tostring(lab, encoding="unicode")
+               + qml[lm.end():])
         print("label: vein expression injected")
-    elif quoteattr(LABEL_EXPR) in qml:
+    elif LABEL_EXPR in current:
         print("label: already applied")
     else:
-        bail("labeling text-style not found (neither plain Label nor expression)")
+        bail("labeling text-style unexpected (neither plain Label nor "
+             "vein expression): %r" % current[:120])
 
     # 2. New field config.
     for field, _sqltype, kind, alias, _vis in SPEC:
@@ -290,7 +296,7 @@ def main():
     print(f"QML parses: {LAYER}")
 
     ts = root.find(".//labeling/settings/text-style")
-    assert ts.get("fieldName") == LABEL_EXPR and ts.get("isExpression") == "1", \
+    assert LABEL_EXPR in ts.get("fieldName") and ts.get("isExpression") == "1", \
         "label expression wrong"
     widgets = {fl.get("name"): fl.find("editWidget")
                for fl in root.find("fieldConfiguration")}
