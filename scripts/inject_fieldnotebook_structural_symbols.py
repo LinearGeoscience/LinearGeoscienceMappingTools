@@ -19,9 +19,9 @@ and makes the whole set consistent (user decisions 2026-08-15):
     family (authored 39 pt, glyph spanning only 420 of the 500 canvas)
     is wrapper-scaled x500/420 about its strike-line centre, so the
     uniform size value reproduces the authored footprints;
-  * one stroke setting: QML outline_width 1.3 Point everywhere (the
-    authored equivalent was 0.9 pt; 1.3 pt is a deliberate weight bump
-    so symbols stay legible over mapping data - user 2026-08-15);
+  * one stroke setting: QML outline_width 1.59 MapUnit everywhere
+    (the SVG-native ratio; 0.9 pt at the 1:5000 reference scale) so the
+    weight is zoom- and rotation-invariant relative to the marker;
   * unique graphics: the 7 duplicate groups (CT/FB/LAY/DYK,
     FO/CLV/SCR/GSN, LNS/L1-L5, STR/SLK/SLF, SZC/MYL/SZBDY, FAP/FAPCR,
     FAC/FACSP) get path-only modifier glyphs; clones shed the parent's
@@ -40,8 +40,7 @@ inert QML colour options held junk and are overwritten wholesale.
 
 Deliberate visual changes, everything else must render identically:
 black unification, FAX5 shaft #FF1717 -> #FF0000, invisible-cruft
-deletion, the variant glyphs, FAP digit relocation, and every stroke
-rendering at the common 1.3 pt weight.
+deletion, the variant glyphs, and the FAP digit relocation.
 
 Second pass: the 3 Linework SvgMarkers that regressed to hardcoded
 #131313 (1 in "Formline - S0 (Younging Known)", 2 in "Costean") go
@@ -88,8 +87,17 @@ for _g, _h in GEN_HEX.items():
         EXPECT_ACCENT["FAX" + _g + _s] = _h          # 25 accent codes
 
 SIZE = "30"                       # Point, uniform
-OUTLINE_W = "1.3"                 # Point; deliberate bump over the authored
-                                  # 0.9 pt so symbols read over mapping data
+# The renderer reference scale (1:5000) makes the Point-sized markers
+# behave ground-fixed.  Point/MM stroke widths pick up the reference-
+# scale factor inconsistently between the rotated (direct) and
+# unrotated (cached) SVG render paths, which made stroke weight depend
+# on whether a feature had a DipDirection.  MapUnit widths bypass the
+# reference-scale factor entirely, so the stroke is expressed as ground
+# units: 1.59 mu = the SVG-native 15/500 ratio of the 52.9 mu marker
+# (= 0.9 pt at reference scale; user 2026-08-15: uniform, thinner look).
+OUTLINE_W = "1.59"
+OUTLINE_W_UNIT = "MapUnit"
+OUTLINE_W_MUS = "3x:0,0,0,0,0,0"
 MAIN_W_LO, MAIN_W_HI = 10.0, 20.0  # stroke widths that count as "main"
 SNAP_15_LO, SNAP_15_HI = 13.5, 16.5  # near-15 widths snap to 15
 
@@ -577,7 +585,8 @@ def process_fieldnotebook(qml, dump):
         opts["outline_color"].set("value", qgis_color(outline_hex))
         opts["size"].set("value", SIZE)
         opts["outline_width"].set("value", OUTLINE_W)
-        opts["outline_width_unit"].set("value", "Point")
+        opts["outline_width_unit"].set("value", OUTLINE_W_UNIT)
+        opts["outline_width_map_unit_scale"].set("value", OUTLINE_W_MUS)
         for k in totals:
             totals[k] += stats[k]
         if dump:

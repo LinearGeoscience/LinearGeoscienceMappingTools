@@ -1,20 +1,22 @@
 """Family-aware dip-label offsets for 1 - FieldNotebook.
 
-The Dip Labels rule offsets the dip value down-dip by a flat 30 map
-units.  On the repaired symbol set (uniform 30 pt markers) that is too
-far for planar symbols (strike bar + short tick, reach ~11 map units at
-the 1:5000 reference scale) and too close for linear symbols (full-length
-plunge arrows, tip at ~26 map units - the arrowhead touches the label).
+The renderer reference scale (1:5000) makes the Point-sized markers
+behave ground-fixed, so the authored MapUnit label offsets are the
+correct pairing - they track the symbol at every zoom.  What needed
+fixing was the flat 30-unit distance: too far for planar strike
+symbols (dip tick reaches ~11 map units) and inside the plunge arrows
+(tip at ~26 map units, so the arrowhead touched the dip value).
 
-This injector rewrites the rule's data-defined OffsetXY expression so
-the distance depends on the structural family (user decision 2026-08-15):
+The Dip Labels OffsetXY expression picks the distance by structural
+family (user decision 2026-08-15):
 
-    linear (plunge arrows)  -> 34 map units (clears the arrowhead)
+    linear (plunge arrows)  -> 38 map units (clears the arrowhead)
     planar (strike symbols) -> 17 map units (hugs the dip tick)
 
 The linear code list mirrors stereonet/data.py structure_classification
-('L'/'l' entries).  The Type='Structure' gate and the '4,-4' fallback
-are kept exactly as before, as is the SymbolSuffix rule.
+('L'/'l' entries).  The SymbolSuffix rule and all offset units keep
+their authored MapUnit form (an interim MM conversion is reverted if
+present).  Type='Structure' gating is kept as-is.
 
 Idempotent and re-runnable; QML parse-validated BEFORE writing.
 
@@ -38,19 +40,39 @@ LINEAR = ("BAX", "FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z",
 D_LINEAR = "38.0"
 D_PLANAR = "17.0"
 
-OLD = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
-       "to_string((30.0 * cos(radians(&quot;DipDirection&quot; - 90)))) "
-       "|| ',' || "
-       "to_string((30.0 * sin(radians(&quot;DipDirection&quot; - 90)))) "
-       "ELSE '4,-4' END")
+_in = ",".join("'%s'" % c for c in LINEAR)
 
-_in_list = ",".join("'%s'" % c for c in LINEAR)
-NEW = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN with_variable('lgs_d', "
-       "CASE WHEN &quot;Subtype1&quot; IN (%s) THEN %s ELSE %s END, "
-       "to_string((@lgs_d * cos(radians(&quot;DipDirection&quot; - 90)))) "
-       "|| ',' || "
-       "to_string((@lgs_d * sin(radians(&quot;DipDirection&quot; - 90))))) "
-       "ELSE '4,-4' END" % (_in_list, D_LINEAR, D_PLANAR))
+
+def dip_expr(dist_linear, dist_planar, fallback):
+    return ("CASE WHEN &quot;Type&quot; = 'Structure' THEN with_variable('lgs_d', "
+            "CASE WHEN &quot;Subtype1&quot; IN (%s) THEN %s ELSE %s END, "
+            "to_string((@lgs_d * cos(radians(&quot;DipDirection&quot; - 90)))) "
+            "|| ',' || "
+            "to_string((@lgs_d * sin(radians(&quot;DipDirection&quot; - 90))))) "
+            "ELSE '%s' END" % (_in, dist_linear, dist_planar, fallback))
+
+
+# Prior states of the Dip Labels OffsetXY expression
+OLD_FLAT30 = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
+              "to_string((30.0 * cos(radians(&quot;DipDirection&quot; - 90)))) "
+              "|| ',' || "
+              "to_string((30.0 * sin(radians(&quot;DipDirection&quot; - 90)))) "
+              "ELSE '4,-4' END")
+OLD_MM = dip_expr("7.2", "3.2", "0.8,-0.8")
+NEW = dip_expr(D_LINEAR, D_PLANAR, "4,-4")
+
+# SymbolSuffix rule: authored MapUnit form (kept); SUF_MM is the interim
+# MM conversion this script now reverts if found
+SUF_OLD = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
+           "to_string((30.0 * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+           "|| ',' || "
+           "to_string((30.0 * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+           "ELSE '15,15' END")
+SUF_MM = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
+           "to_string((5.7 * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+           "|| ',' || "
+           "to_string((5.7 * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+           "ELSE '2.8,2.8' END")
 
 
 def bail(msg):
@@ -67,34 +89,70 @@ def main():
     cur = con.cursor()
     qml, = cur.execute("SELECT styleQML FROM layer_styles WHERE "
                        "f_table_name=?", (LAYER,)).fetchone()
+    original = qml
 
-    n_old, n_new = qml.count(OLD), qml.count(NEW)
-    if n_new and not n_old:
-        print(f"already applied ({n_new} occurrence(s)) - no-op")
-    elif n_old and not n_new:
-        # the flat-30 expression appears once per storage site of the rule
-        qml2 = qml.replace(OLD, NEW)
-        assert qml2.count(NEW) == n_old
+    # 1. Dip Labels expression (from either prior state)
+    if NEW in qml:
+        print("dip expression already family-aware MapUnit")
+    elif OLD_MM in qml:
+        qml = qml.replace(OLD_MM, NEW)
+        print("dip expression reverted from interim MM form")
+    elif OLD_FLAT30 in qml:
+        qml = qml.replace(OLD_FLAT30, NEW)
+        print("dip expression upgraded from flat 30 MapUnit")
+    else:
+        bail("Dip Labels OffsetXY expression not in any known state")
+
+    # 2. SymbolSuffix expression stays in its authored MapUnit form;
+    #    revert the interim MM conversion if present
+    if SUF_OLD in qml:
+        print("suffix expression in authored MapUnit form")
+    elif SUF_MM in qml:
+        qml = qml.replace(SUF_MM, SUF_OLD)
+        print("suffix expression reverted to MapUnit form")
+    else:
+        bail("SymbolSuffix OffsetXY expression not in any known state")
+
+    # 3. offsetUnits stay MapUnit on the structural rules (ground-fixed
+    #    symbols need ground-fixed offsets); revert the interim MM swap
+    for desc in ("Dip Labels", "SymbolSuffix Labels"):
+        m = re.search(r'<rule\b[^>]*description="%s">.*?</rule>' % desc,
+                      qml, re.S)
+        if not m:
+            bail(f"rule {desc!r} not found")
+        block = m.group(0)
+        if 'offsetUnits="MM"' in block:
+            qml = (qml[:m.start()]
+                   + block.replace('offsetUnits="MM"',
+                                   'offsetUnits="MapUnit"')
+                   + qml[m.end():])
+            print(f"{desc}: offsetUnits reverted MM -> MapUnit")
+
+    if qml != original:
         try:
-            ET.fromstring(qml2)
+            ET.fromstring(qml)
         except ET.ParseError as exc:
             bail(f"edited QML no longer parses: {exc}")
         cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name=?",
-                    (qml2, LAYER))
+                    (qml, LAYER))
         assert cur.rowcount == 1
         con.commit()
-        print(f"OffsetXY rewritten ({n_old} occurrence(s)): "
-              f"linear {D_LINEAR} / planar {D_PLANAR} map units")
     else:
-        bail(f"unexpected state: old={n_old} new={n_new}")
+        print("no-op")
 
     cur.execute("PRAGMA integrity_check")
     print("integrity_check:", cur.fetchone()[0])
     q, = cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?",
                      (LAYER,)).fetchone()
     ET.fromstring(q)
-    assert q.count(NEW) >= 1 and q.count(OLD) == 0
-    print(f"round-trip ok: {LAYER} dip-label offsets family-aware")
+    assert NEW in q and SUF_OLD in q
+    for desc in ("Dip Labels", "SymbolSuffix Labels"):
+        block = re.search(r'<rule\b[^>]*description="%s">.*?</rule>' % desc,
+                          q, re.S).group(0)
+        assert 'offsetUnits="MM"' not in block, desc
+    assert OLD_FLAT30 not in q and OLD_MM not in q and SUF_MM not in q
+    print(f"round-trip ok: {LAYER} dip labels family-aware "
+          f"(linear {D_LINEAR} / planar {D_PLANAR} map units)")
     con.close()
 
 
