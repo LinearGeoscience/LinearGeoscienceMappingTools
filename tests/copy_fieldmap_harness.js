@@ -162,15 +162,24 @@ check('unmapped pair -> whitelist only',
   pairString(ovFn))
 
 // --- Overlay <-> Linework vein map ---------------------------------------
+// Linework's single Percent was retired for per-mineral percentages;
+// Overlay's one Percent pairs with Mineral 1's percentage.
 const lwNames = ['fid', 'Type', 'Category', 'Mineral1', 'Mineral2',
-                 'Percent', 'Weight', 'Comments', 'Confidence', 'UUID']
+                 'Mineral1Pct', 'Mineral2Pct', 'Weight', 'Comments',
+                 'Confidence', 'UUID']
 const ovLw = buildCopyPairs(ovNames, lwNames, '2 - Overlay', '3 - Linework')
 check('Overlay->Linework maps mineral/percent/weight',
   hasPair(ovLw, 'Mineral1', 'Mineral1') &&
-  hasPair(ovLw, 'Percent', 'Percent') &&
+  hasPair(ovLw, 'Percent', 'Mineral1Pct') &&
   hasPair(ovLw, 'Weight', 'Weight') &&
   hasPair(ovLw, 'Comments', 'Comments'),
   pairString(ovLw))
+const lwOv = buildCopyPairs(lwNames, ovNames, '3 - Linework', '2 - Overlay')
+check('Linework->Overlay maps Mineral1Pct back to Percent',
+  hasPair(lwOv, 'Mineral1', 'Mineral1') &&
+  hasPair(lwOv, 'Mineral1Pct', 'Percent') &&
+  !lwOv.some(function(p) { return p.from === 'Mineral2Pct' }),
+  pairString(lwOv))
 
 // --- empty inputs -> no pairs --------------------------------------------
 check('no shared fields -> empty plan',

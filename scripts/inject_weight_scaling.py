@@ -11,11 +11,15 @@ Moderate (or NULL) renders at the symbol's authored size; intervals, offsets
 and dash patterns are deliberately NOT scaled (matches the pre-Weight
 Major/Minor symbol convention).
 
-Linework expressions additionally carry the vein-width factor (see
-VEIN_WIDTH_FACTOR): features with Category='Veins' and a recorded
-Width_cm bulk up in 5 steps (x0.75 hairline .. x2 thick lodes),
-multiplying with the Weight tier. All other categories, and veins with
-no width, get factor 1.
+Linework expressions additionally carry the recorded-width factor (see
+DETAIL_WIDTH_FACTOR): any detail-scope feature (veins, dykes/sills/
+pegmatite, faults, shears) with a recorded Width_cm scales in 5 steps
+(x0.55 hairline .. x2 thick lodes), multiplying with the Weight tier.
+NULL width sits mid-ramp at the authored thickness (factor 1), so an
+explicitly thin feature (<=2 cm) renders THINNER than one whose width
+was never recorded - the Aug 2026 fix: the old ramp mapped 0.5-2 cm to
+1.0, indistinguishable from "unknown". All other categories, and
+features with no width, get factor 1.
 
 Scope: every symbol in the "3 - Linework" renderer; only the Structure zone
 symbols in "2 - Overlay" (infrastructure untouched).
@@ -43,16 +47,21 @@ from collections import Counter
 
 FACTORS = {"Major": "1.5", "Minor": "0.5"}  # Moderate/NULL -> 1 (ELSE branch)
 
-# Vein width factor (Linework only): recorded Width_cm bulks up the drawn
-# stroke in 5 steps, multiplying with the Weight tier.  Gated per-feature on
-# Category='Veins' so the same renderer-wide expression is a no-op for every
-# other category; NULL width renders at the authored thickness.
-VEIN_WIDTH_FACTOR = (
-    "CASE WHEN \"Category\" = 'Veins' AND \"Width_cm\" IS NOT NULL THEN "
-    "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.75 "
-    "WHEN \"Width_cm\" <= 2 THEN 1 "
-    "WHEN \"Width_cm\" <= 5 THEN 1.3 "
-    "WHEN \"Width_cm\" <= 10 THEN 1.6 "
+# Recorded-width factor (Linework only): Width_cm scales the drawn stroke in
+# 5 steps, multiplying with the Weight tier.  Gated per-feature on the detail
+# scope (veins + Lithology dykes/sills/pegmatite + faults/shears - kept in
+# step with inject_linework_detail_scope.DETAIL_VIS) so the same
+# renderer-wide expression is a no-op elsewhere.  NULL width renders at the
+# authored thickness (factor 1, mid-ramp): explicit thin widths sit BELOW it.
+DETAIL_WIDTH_FACTOR = (
+    "CASE WHEN (\"Category\" IN ('Veins','Lithology') "
+    "OR \"Type\" LIKE 'Fault%' OR \"Type\" LIKE 'Shear%' "
+    "OR \"Type\" IN ('Shear Zone Boundary','Detachment')) "
+    "AND \"Width_cm\" IS NOT NULL THEN "
+    "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.55 "
+    "WHEN \"Width_cm\" <= 2 THEN 0.75 "
+    "WHEN \"Width_cm\" <= 5 THEN 1.15 "
+    "WHEN \"Width_cm\" <= 10 THEN 1.5 "
     "ELSE 2 END) ELSE 1 END"
 )
 
@@ -104,7 +113,7 @@ def weight_expression(dd_key, base):
         return None
     return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {FACTORS['Major']} "
             f"WHEN \"Weight\" = 'Minor' THEN {FACTORS['Minor']} ELSE 1 END"
-            f" * ({VEIN_WIDTH_FACTOR})")
+            f" * ({DETAIL_WIDTH_FACTOR})")
 
 
 def zone_weight_expression(dd_key, base):

@@ -158,8 +158,11 @@
  *    minerals and modal percents onto Field Notebook points). Tap the
  *    source, then tap targets — the source stays armed so several
  *    features can be stamped in a row; the first stamp of a session
- *    shows a confirm dialog listing the fields, later stamps apply
- *    instantly. Same-layer copies transfer every content field by
+ *    opens a field panel with a checkbox per field (untick = never
+ *    copied this session, keyed by SOURCE field name so choices hold
+ *    across layers; reopenable via the banner's Fields… button),
+ *    later stamps apply instantly with the ticked set. Same-layer
+ *    copies transfer every content field by
  *    name; cross-layer copies use a declarative pair map
  *    (copyFieldMapFor) plus the shared Comments/Confidence whitelist,
  *    each pair kept only when both ends exist in the live schemas.
@@ -194,6 +197,18 @@
  *    undo that restores every parent from its pre-merge WKT (all
  *    original UUIDs preserved). Browse mode only, same gating as
  *    Reshape. Requires QField 4.x.
+ *
+ * 11. RECENTER HOLD — "📌 Hold" pill: locks out QField's automatic
+ *    map recentring after a freehand stroke ends near a screen edge
+ *    (qgismobileapp.qml freehandHandler — the mid-drawing jump that
+ *    causes mis-placed linework). Works by writing a huge sentinel to
+ *    the hidden /QField/Digitizing/FreehandRecenterScreenFraction
+ *    settings key: QField reads it live on every stroke (stock
+ *    default 5) and the recenter threshold is min(w, h) / fraction,
+ *    so the sentinel drives it below one pixel — no QField patching.
+ *    Unlocking restores the stock value. QSettings persists across
+ *    restarts, so the hold stays locked until toggled off; the pill
+ *    re-detects the sentinel at startup.
  */
 
 import QtQuick
@@ -217,6 +232,7 @@ Item {
   readonly property bool featureReverse: true // LGS-EXPORT-FLAG:reverse
   readonly property bool featureCopyAttrs: true // LGS-EXPORT-FLAG:copyattrs
   readonly property bool featureMerge: true // LGS-EXPORT-FLAG:merge
+  readonly property bool featureRecenterHold: true // LGS-EXPORT-FLAG:recenterhold
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1222,7 +1238,8 @@ Item {
     // run even when the scale display feature is disabled at export.
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
-        featureSpline || featureReshape || featureReverse)
+        featureSpline || featureReshape || featureReverse ||
+        featureRecenterHold)
       attachOverlay()
     startupTimer.start()
   }
@@ -1252,6 +1269,8 @@ Item {
         plugin.initCopyAttrs()
       if (plugin.featureMerge)
         plugin.initMerge()
+      if (plugin.featureRecenterHold)
+        plugin.initRecenterHold()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1839,6 +1858,12 @@ Item {
       }
 
       TapHandler {
+        // ReleaseWithinBounds on every pill: the default DragThreshold
+        // policy only takes a passive grab, so the same tap ALSO
+        // reached QField's canvas handlers underneath — pressing a
+        // pill placed a digitising point / selected the feature below.
+        // The exclusive grab consumes the tap at the pill.
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.toggleZStepLock()
       }
     }
@@ -1861,6 +1886,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.stepLevel(-1)
       }
     }
@@ -1883,6 +1909,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.stepLevel(+1)
       }
     }
@@ -1920,6 +1947,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: scaleDialog.open()
       }
     }
@@ -1943,6 +1971,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: opacityDialog.open()
       }
     }
@@ -1968,6 +1997,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.enterClipMode()
       }
     }
@@ -1998,6 +2028,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.toggleSplineArmed()
       }
     }
@@ -2027,6 +2058,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.enterReshapeMode()
       }
     }
@@ -2055,6 +2087,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.enterReverseMode()
       }
     }
@@ -2084,6 +2117,7 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.enterCopyMode()
       }
     }
@@ -2112,7 +2146,41 @@ Item {
       }
 
       TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.enterMergeMode()
+      }
+    }
+
+    Rectangle {
+      id: holdPill
+      // Settings toggle, not a canvas mode — stays visible while
+      // digitizing (that is exactly when the freehand recenter bites);
+      // hidden only while another sidecar tool is mid-flow.
+      visible: plugin.featureRecenterHold && plugin.recenterHoldAvailable &&
+               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.reverseStep === 0 && plugin.copyStep === 0 &&
+               plugin.mergeStep === 0
+      anchors.verticalCenter: parent.verticalCenter
+      width: holdPillText.contentWidth + 24
+      height: holdPillText.contentHeight + 12
+      radius: height / 2
+      // Inverted while holding — same active-state language as the
+      // spline pill.
+      color: plugin.recenterHoldActive ? '#E6FFFFFF' : '#99000000'
+
+      Text {
+        id: holdPillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: plugin.recenterHoldActive ? 'black' : 'white'
+        // Emoji on purpose — crosshair glyphs like '⌖' (U+2316) are
+        // not in Android's fonts.
+        text: qsTr('📌 Hold')
+      }
+
+      TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: plugin.setRecenterHold(!plugin.recenterHoldActive)
       }
     }
   }
@@ -3284,10 +3352,18 @@ Item {
       if (lower === 'fid' || lower === 'id' || lower === 'ogc_fid')
         continue
       try {
-        if (uuidField !== null && name === uuidField)
+        if (uuidField !== null && name === uuidField) {
           target.setAttribute(name, freshUuid)
-        else
-          target.setAttribute(name, source.attribute(name))
+        } else {
+          // NULL source values are SKIPPED, not written: a null variant
+          // pushed through the QML bridge lands as 0 on numeric fields
+          // (0 width, 0 modal % — false data on every recreate/undo),
+          // while an untouched attribute on the fresh feature stays
+          // NULL (or keeps its default-value stamp).
+          const value = source.attribute(name)
+          if (!isEmptyValue(value))
+            target.setAttribute(name, value)
+        }
       } catch (error) {}
     }
     return target
@@ -6713,6 +6789,9 @@ Item {
   property var copyPendingHit: null  // target awaiting the confirm dialog
   property var copyPendingPlan: []
   property string copyPlanSummary: ''
+  property var copyExcludedFields: ({}) // source-field name -> true (session)
+  property var copyDialogEntries: []    // rows shown by the field panel
+  property var copyDialogChecks: ({})   // source-field name -> ticked
 
   // ----------------------------------------------------------------
   // Pure helpers — no QML identifiers, extracted verbatim into the
@@ -6784,14 +6863,17 @@ Item {
         ['Texture', 'Lith1Texture1'],
         ['Texture2', 'Lith1Texture2']
       ],
+      // Linework's single Percent was retired for per-mineral
+      // percentages (inject_linework_mineral_pcts.py); Overlay keeps
+      // one Percent, so it pairs with Mineral 1's percentage.
       '2 - Overlay>3 - Linework': [
         ['Mineral1', 'Mineral1'],
-        ['Percent', 'Percent'],
+        ['Percent', 'Mineral1Pct'],
         ['Weight', 'Weight']
       ],
       '3 - Linework>2 - Overlay': [
         ['Mineral1', 'Mineral1'],
-        ['Percent', 'Percent'],
+        ['Mineral1Pct', 'Percent'],
         ['Weight', 'Weight']
       ]
     }
@@ -6903,6 +6985,9 @@ Item {
       copyPendingHit = null
       copyPendingPlan = []
       copyPlanSummary = ''
+      copyExcludedFields = {}
+      copyDialogEntries = []
+      copyDialogChecks = {}
       copyStep = 1
       toast(qsTr('Tap the feature to copy FROM'))
     } catch (error) {
@@ -6925,6 +7010,9 @@ Item {
     copyPendingHit = null
     copyPendingPlan = []
     copyPlanSummary = ''
+    copyExcludedFields = {}
+    copyDialogEntries = []
+    copyDialogChecks = {}
   }
 
   // ----------------------------------------------------------------
@@ -7003,12 +7091,13 @@ Item {
         return
       }
       if (!copyConfirmedThisSession) {
-        // First stamp of the session confirms; later stamps apply
-        // instantly — that is the rapid-stamping win.
+        // First stamp of the session opens the field panel; later
+        // stamps apply instantly with the ticked set — that is the
+        // rapid-stamping win.
         copyPendingHit = hit
         copyPendingPlan = plan
         copyPlanSummary = copyPlanSummaryText(plan, hit)
-        copyConfirmDialog.open()
+        openCopyFieldPanel(plan)
         return
       }
       applyCopyPlan(hit.layer, hit.feature, plan)
@@ -7036,7 +7125,11 @@ Item {
         }
         if (isEmptyValue(value))
           continue
-        plan.push({ name: pair.to, value: value })
+        // Session field choices from the checkbox panel, keyed by the
+        // SOURCE field so they hold across same- and cross-layer stamps.
+        if (copyExcludedFields[pair.from] === true)
+          continue
+        plan.push({ from: pair.from, name: pair.to, value: value })
       }
       return plan
     } catch (error) {
@@ -7045,15 +7138,75 @@ Item {
   }
 
   function copyPlanSummaryText(plan, hit) {
-    let names = []
-    for (const entry of plan)
-      names.push(entry.name)
-    let listed = names.slice(0, 8).join(', ')
-    if (names.length > 8)
-      listed += qsTr(' and %1 more').arg(names.length - 8)
-    return qsTr('%1 field(s) will be copied from %2 to %3:\n%4')
+    // The checkbox rows list the fields themselves — the summary just
+    // names the direction.
+    return qsTr('%1 field(s) from %2 to %3 — untick anything you do not want copied.')
         .arg(plan.length).arg(copySourceLabel)
-        .arg(copyLayerLabel(hit.layer)).arg(listed)
+        .arg(copyLayerLabel(hit.layer))
+  }
+
+  function copySourceFieldList() {
+    // The armed source's copyable fields (non-empty, non-skipped) —
+    // the panel rows when reopened from the banner, so previously
+    // unticked fields can be re-ticked.
+    let list = []
+    try {
+      const names = attributeNames(copySourceLayer, copySourceFeature)
+      for (const name of names) {
+        if (copyFieldIsSkipped(name))
+          continue
+        let value = null
+        try {
+          value = copySourceFeature.attribute(name)
+        } catch (error) {
+          continue
+        }
+        if (isEmptyValue(value))
+          continue
+        list.push({ from: name, label: name + ' = ' + String(value) })
+      }
+    } catch (error) {}
+    return list
+  }
+
+  function openCopyFieldPanel(plan) {
+    // plan !== null: first-stamp confirm (rows = the pending plan).
+    // plan === null: reopened via the banner's Fields… button.
+    let entries = []
+    if (plan !== null) {
+      for (const entry of plan)
+        entries.push({ from: entry.from,
+                       label: entry.name + ' = ' + String(entry.value) })
+    } else {
+      entries = copySourceFieldList()
+      copyPlanSummary = qsTr('Source: %1 — ticked fields copy on each stamp.')
+          .arg(copySourceLabel)
+    }
+    if (entries.length === 0) {
+      toast(qsTr('No copyable fields on the source'))
+      return
+    }
+    let checks = {}
+    for (const entry of entries)
+      checks[entry.from] = copyExcludedFields[entry.from] !== true
+    copyDialogChecks = checks   // before entries: delegates bind on create
+    copyDialogEntries = entries
+    copyConfirmDialog.open()
+  }
+
+  function foldCopyDialogChecks() {
+    // Merge the panel's checkbox state into the session exclusions —
+    // fields not shown this time keep their previous setting.
+    let excluded = {}
+    for (const name in copyExcludedFields)
+      excluded[name] = true
+    for (const entry of copyDialogEntries) {
+      if (copyDialogChecks[entry.from] === false)
+        excluded[entry.from] = true
+      else
+        delete excluded[entry.from]
+    }
+    copyExcludedFields = excluded
   }
 
   function applyCopyPlan(dstLayer, dstFeature, plan) {
@@ -7232,6 +7385,30 @@ Item {
         spacing: 8
 
         Button {
+          visible: plugin.copyStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Fields…')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: '#66000000'
+            border.color: 'white'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.openCopyFieldPanel(null)
+        }
+
+        Button {
           visible: plugin.copyUndo !== null
           flat: true
           topPadding: 8
@@ -7300,14 +7477,23 @@ Item {
     }
 
     onAccepted: {
-      // Later stamps this session skip the dialog.
+      // Later stamps this session skip the dialog and reuse the
+      // ticked set (reopenable via the banner's Fields… button).
       plugin.copyConfirmedThisSession = true
+      plugin.foldCopyDialogChecks()
       const hit = plugin.copyPendingHit
-      const plan = plugin.copyPendingPlan
+      let plan = plugin.copyPendingPlan
       plugin.copyPendingHit = null
       plugin.copyPendingPlan = []
-      if (hit !== null && plan.length > 0)
-        plugin.applyCopyPlan(hit.layer, hit.feature, plan)
+      if (hit !== null) {
+        plan = plan.filter(function(entry) {
+          return plugin.copyExcludedFields[entry.from] !== true
+        })
+        if (plan.length > 0)
+          plugin.applyCopyPlan(hit.layer, hit.feature, plan)
+        else
+          plugin.toast(qsTr('No fields ticked — nothing copied'))
+      }
     }
 
     onRejected: {
@@ -7322,8 +7508,39 @@ Item {
       Label {
         Layout.fillWidth: true
         wrapMode: Text.WordWrap
-        text: plugin.copyPlanSummary +
-              '\n' + qsTr('Further taps this session copy instantly (Undo covers the last one).')
+        text: plugin.copyPlanSummary
+      }
+
+      Flickable {
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.min(copyFieldColumn.height,
+                                         mainWindow.height * 0.45)
+        contentHeight: copyFieldColumn.height
+        clip: true
+
+        Column {
+          id: copyFieldColumn
+          width: parent.width
+
+          Repeater {
+            model: plugin.copyDialogEntries
+
+            CheckBox {
+              width: copyFieldColumn.width
+              text: modelData.label
+              checked: plugin.copyDialogChecks[modelData.from] === true
+              onToggled: plugin.copyDialogChecks[modelData.from] = checked
+            }
+          }
+        }
+      }
+
+      Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        opacity: 0.7
+        text: qsTr('Ticked fields copy on every stamp this session — reopen with Fields… on the banner. Undo covers the last stamp.')
       }
     }
   }
@@ -7993,5 +8210,58 @@ Item {
         }
       }
     }
+  }
+
+  // ================================================================
+  // RECENTER HOLD (v23)
+  //
+  // QField's freehand digitizing recenters the map whenever a stroke
+  // ends near a screen edge (qgismobileapp.qml freehandHandler
+  // onActiveChanged), yanking the canvas mid-drawing. The trigger
+  // distance is min(width, height) / screenFraction, with
+  // screenFraction read LIVE on every stroke from the hidden settings
+  // key below (stock default 5). Writing a huge sentinel drives the
+  // threshold below one pixel so the recenter never fires; restoring
+  // the stock value brings QField's behaviour back. No QField
+  // patching, effective immediately. The key lives in QSettings, so
+  // the hold persists across QField restarts — initRecenterHold()
+  // re-detects the sentinel to restore the pill state. Unlocking
+  // writes the stock default rather than a saved prior value: the key
+  // is hidden and nobody hand-tunes it.
+  // ================================================================
+
+  property bool recenterHoldAvailable: false
+  property bool recenterHoldActive: false
+  readonly property string recenterHoldKey:
+      '/QField/Digitizing/FreehandRecenterScreenFraction'
+  readonly property real recenterHoldSentinel: 1000000
+  readonly property real recenterHoldStockFraction: 5
+
+  function initRecenterHold() {
+    // `settings` is a root-context property of the QField engine (a
+    // QSettings wrapper) — absent on hosts that don't expose it.
+    if (typeof settings === 'undefined' || !settings)
+      return
+    try {
+      const fraction = Number(settings.value(
+          recenterHoldKey, recenterHoldStockFraction))
+      recenterHoldActive = fraction >= recenterHoldSentinel / 2
+      recenterHoldAvailable = true
+    } catch (error) {
+      // Leave the pill hidden rather than offer a dead toggle.
+    }
+  }
+
+  function setRecenterHold(on) {
+    try {
+      settings.setValue(recenterHoldKey,
+          on ? recenterHoldSentinel : recenterHoldStockFraction)
+    } catch (error) {
+      toast(qsTr('Could not change the recenter setting'))
+      return
+    }
+    recenterHoldActive = on
+    toast(on ? qsTr('Map hold ON — drawing will not recentre the map')
+             : qsTr('Map hold off — QField recentring restored'))
   }
 }

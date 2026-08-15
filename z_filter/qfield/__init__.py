@@ -29,6 +29,7 @@ _FLAG_MARKERS = {
     "reverse": "LGS-EXPORT-FLAG:reverse",
     "copyattrs": "LGS-EXPORT-FLAG:copyattrs",
     "merge": "LGS-EXPORT-FLAG:merge",
+    "recenterhold": "LGS-EXPORT-FLAG:recenterhold",
 }
 
 _DATA_MARKERS = {
@@ -41,6 +42,7 @@ _DATA_MARKERS = {
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                   opacity=True, clipping=True, spline=True, reshape=True,
                   reverse=True, copyattrs=True, merge=True,
+                  recenterhold=True,
                   opacity_layers=None, vector_layers=None,
                   spline_params=None):
     """Write the companion plugin next to the exported project file.
@@ -48,10 +50,11 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
     zfilter / scale / opacity / clipping / spline / reshape / reverse /
-    copyattrs / merge:
+    copyattrs / merge / recenterhold:
         enable the Z filter / scale display / layer opacity / polygon
         clip / spline digitizing / multi-polygon reshape / line
-        direction reverse / attribute copy / polygon merge features
+        direction reverse / attribute copy / polygon merge / freehand
+        recenter-hold features
     opacity_layers: names of the exported raster layers the opacity
         panel should act on (baked into the QML as a JSON array)
     vector_layers: names of the exported spatial vector layers for the
@@ -69,7 +72,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                           ("opacity", opacity), ("clipping", clipping),
                           ("spline", spline), ("reshape", reshape),
                           ("reverse", reverse), ("copyattrs", copyattrs),
-                          ("merge", merge)):
+                          ("merge", merge), ("recenterhold", recenterhold)):
         marker = _FLAG_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property bool \w+: )(?:true|false)( // %s)$"

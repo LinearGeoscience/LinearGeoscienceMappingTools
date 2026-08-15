@@ -64,7 +64,7 @@ class TestWriteSidecar(unittest.TestCase):
                           'opacity': 'true', 'clipping': 'true',
                           'spline': 'true', 'reshape': 'true',
                           'reverse': 'true', 'copyattrs': 'true',
-                          'merge': 'true'})
+                          'merge': 'true', 'recenterhold': 'true'})
         # Data lines ship empty in source; the exporter fills them.
         self.assertEqual(_data_values(source),
                          {'opacitylayers': '[]',
@@ -73,7 +73,7 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_all_flag_combinations(self):
         names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline',
-                 'reshape', 'reverse', 'copyattrs', 'merge')
+                 'reshape', 'reverse', 'copyattrs', 'merge', 'recenterhold')
         for combo in itertools.product((True, False), repeat=len(names)):
             kwargs = dict(zip(names, combo))
             path, text = self._write(**kwargs)
@@ -87,16 +87,17 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_only_flag_lines_differ_from_source(self):
         # opacity_layers/spline_params=None rewrite the data lines to [] —
-        # identical to source — so only the nine flag lines may differ.
+        # identical to source — so only the ten flag lines may differ.
         _path, text = self._write(zfilter=False, scale=False, opacity=False,
                                   clipping=False, spline=False,
                                   reshape=False, reverse=False,
-                                  copyattrs=False, merge=False)
+                                  copyattrs=False, merge=False,
+                                  recenterhold=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 9, diff)
+        self.assertEqual(len(diff), 10, diff)
         self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
 
     def test_opacity_layers_data_line(self):
@@ -209,7 +210,11 @@ class TestWriteSidecar(unittest.TestCase):
                        'mergeCatcher', 'mergeBanner', 'handleMergeTap',
                        'buildMergeUnionWkt', 'mergeCarryValues',
                        'requestMerge', 'executeMerge', 'undoLastMerge',
-                       'lgs_merged_from', 'mergeConfirmDialog'):
+                       'lgs_merged_from', 'mergeConfirmDialog',
+                       # Freehand recenter hold (v23):
+                       'featureRecenterHold', 'holdPill',
+                       'initRecenterHold', 'setRecenterHold',
+                       'FreehandRecenterScreenFraction'):
             self.assertIn(needle, text, needle)
 
 
