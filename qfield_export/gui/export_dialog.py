@@ -510,6 +510,37 @@ class ExportDialog(QDialog):
             self.convert_unsupported_check.styleSheet())
         layout.addWidget(self.include_reverse_check)
 
+        # Attribute copy tool feature of the same companion plugin
+        self.include_copyattrs_check = QCheckBox(
+            "Include attribute copy tool (QField plugin)")
+        self.include_copyattrs_check.setChecked(True)
+        self.include_copyattrs_check.setToolTip(
+            "Adds a Copy button on the QField map: tap a feature to copy "
+            "FROM, then tap features to copy TO — non-empty attributes "
+            "are stamped across, including between layers (e.g. Basemap "
+            "lithology, minerals and modal percents onto Field Notebook "
+            "points). The source stays armed for stamping several "
+            "features; one-tap undo covers the last one."
+        )
+        self.include_copyattrs_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_copyattrs_check)
+
+        # Polygon merge tool feature of the same companion plugin
+        self.include_merge_check = QCheckBox(
+            "Include polygon merge tool (QField plugin)")
+        self.include_merge_check.setChecked(True)
+        self.include_merge_check.setToolTip(
+            "Adds a Merge button on the QField map: tap two or more "
+            "touching polygons on one layer and merge them into one — "
+            "the first polygon you tap keeps its attributes and "
+            "identity, and its empty fields are filled from the others. "
+            "One-tap undo restores the original polygons."
+        )
+        self.include_merge_check.setStyleSheet(
+            self.convert_unsupported_check.styleSheet())
+        layout.addWidget(self.include_merge_check)
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -894,7 +925,9 @@ class ExportDialog(QDialog):
             include_clipping_plugin=self.include_clipping_check.isChecked(),
             include_spline_plugin=self.include_spline_check.isChecked(),
             include_reshape_plugin=self.include_reshape_check.isChecked(),
-            include_reverse_plugin=self.include_reverse_check.isChecked()
+            include_reverse_plugin=self.include_reverse_check.isChecked(),
+            include_copyattrs_plugin=self.include_copyattrs_check.isChecked(),
+            include_merge_plugin=self.include_merge_check.isChecked()
         )
 
         try:
@@ -940,6 +973,8 @@ class ExportDialog(QDialog):
         self.include_spline_check.setEnabled(enabled)
         self.include_reshape_check.setEnabled(enabled)
         self.include_reverse_check.setEnabled(enabled)
+        self.include_copyattrs_check.setEnabled(enabled)
+        self.include_merge_check.setEnabled(enabled)
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

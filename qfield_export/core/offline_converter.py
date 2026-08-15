@@ -61,7 +61,9 @@ class OfflineConverter(QObject):
                  include_clipping_plugin: bool = True,
                  include_spline_plugin: bool = True,
                  include_reshape_plugin: bool = True,
-                 include_reverse_plugin: bool = True):
+                 include_reverse_plugin: bool = True,
+                 include_copyattrs_plugin: bool = True,
+                 include_merge_plugin: bool = True):
         """
         Initialize the offline converter.
 
@@ -85,6 +87,11 @@ class OfflineConverter(QObject):
                 reshape tool feature of the companion sidecar
             include_reverse_plugin: If True, enable the line direction
                 reverse tool feature of the companion sidecar
+            include_copyattrs_plugin: If True, enable the attribute copy
+                tool feature of the companion sidecar (stamp one
+                feature's attributes onto others, cross-layer aware)
+            include_merge_plugin: If True, enable the polygon merge tool
+                feature of the companion sidecar
         """
         super().__init__()
         self.project = project
@@ -98,6 +105,8 @@ class OfflineConverter(QObject):
         self.include_spline_plugin = include_spline_plugin
         self.include_reshape_plugin = include_reshape_plugin
         self.include_reverse_plugin = include_reverse_plugin
+        self.include_copyattrs_plugin = include_copyattrs_plugin
+        self.include_merge_plugin = include_merge_plugin
         self._raster_layer_names = []  # names the opacity panel acts on
         self._vector_layer_names = []  # spatial vectors for the same panel
         self.exported_layers = {}
@@ -202,7 +211,9 @@ class OfflineConverter(QObject):
                     or self.include_clipping_plugin
                     or self.include_spline_plugin
                     or self.include_reshape_plugin
-                    or self.include_reverse_plugin):
+                    or self.include_reverse_plugin
+                    or self.include_copyattrs_plugin
+                    or self.include_merge_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
@@ -213,6 +224,8 @@ class OfflineConverter(QObject):
                         spline=self.include_spline_plugin,
                         reshape=self.include_reshape_plugin,
                         reverse=self.include_reverse_plugin,
+                        copyattrs=self.include_copyattrs_plugin,
+                        merge=self.include_merge_plugin,
                         opacity_layers=self._raster_layer_names,
                         vector_layers=self._vector_layer_names,
                         spline_params=self._read_spline_params())
@@ -224,7 +237,9 @@ class OfflineConverter(QObject):
                          ("polygon clipping", self.include_clipping_plugin),
                          ("spline drawing", self.include_spline_plugin),
                          ("polygon reshape", self.include_reshape_plugin),
-                         ("line reverse", self.include_reverse_plugin))
+                         ("line reverse", self.include_reverse_plugin),
+                         ("attribute copy", self.include_copyattrs_plugin),
+                         ("polygon merge", self.include_merge_plugin))
                         if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "
