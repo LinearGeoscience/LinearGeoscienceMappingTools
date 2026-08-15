@@ -152,6 +152,48 @@
  *    edit session (attributes copied verbatim, UUID preserved — same
  *    identity rules as the reshape undo). Browse mode only, same
  *    gating as Reshape. Requires QField 4.x.
+ *
+ * 9. COPY ATTRIBUTES — "» Copy" pill: stamp one feature's attributes
+ *    onto others, including across layers (e.g. Basemap lithology,
+ *    minerals and modal percents onto Field Notebook points). Tap the
+ *    source, then tap targets — the source stays armed so several
+ *    features can be stamped in a row; the first stamp of a session
+ *    shows a confirm dialog listing the fields, later stamps apply
+ *    instantly. Same-layer copies transfer every content field by
+ *    name; cross-layer copies use a declarative pair map
+ *    (copyFieldMapFor) plus the shared Comments/Confidence whitelist,
+ *    each pair kept only when both ends exist in the live schemas.
+ *    Only NON-EMPTY source values are written — a copy never blanks
+ *    target data — and identity/housekeeping fields never transfer
+ *    (fid, UUID, Date&Time, Geologist, Photo*, Sample*, derived
+ *    label/coordinate fields, Mapped*, lgs_*, data_added_*; Elevation
+ *    stays with the target because its geometry is unchanged). The
+ *    target is recreated with its own geometry and UUID in one edit
+ *    session (add-before-delete — the sidecar's established write
+ *    path), with a one-level undo restoring the last target's
+ *    pre-copy attributes. Browse mode only, same gating as Reshape.
+ *    Requires QField 4.x.
+ *
+ * 10. MERGE — "+ Merge" pill: dissolve two or more polygons on one
+ *    layer into a single polygon (device-side counterpart of QGIS's
+ *    "Merge Selected Features"). Tap polygons to pick/unpick (picks
+ *    lock to the first pick's layer; the iterator honours the layer
+ *    subsetString — merge what you see), then confirm: the union of
+ *    the picks (expression-engine union + make_valid) becomes the new
+ *    geometry. The FIRST pick is the keeper — its attributes and UUID
+ *    survive on the merged polygon; its empty fields are filled with
+ *    the first non-empty value from the other picks in pick order (a
+ *    port of the reconcile carry_attrs semantics —
+ *    script_adddata/reconcile/lineage.py, keep in sync). Disjoint
+ *    picks are refused up front (the union must dissolve into ONE
+ *    polygon — the LGS GeoPackage layers are single-polygon).
+ *    lgs_merged_from is stamped with the consumed parents' UUIDs via
+ *    attempt-and-verify (a no-op until the lineage columns ship to
+ *    devices; desktop reconcile detects merges geometrically anyway).
+ *    Applied add-before-delete in one edit session with a one-level
+ *    undo that restores every parent from its pre-merge WKT (all
+ *    original UUIDs preserved). Browse mode only, same gating as
+ *    Reshape. Requires QField 4.x.
  */
 
 import QtQuick
@@ -173,6 +215,8 @@ Item {
   readonly property bool featureSpline: true // LGS-EXPORT-FLAG:spline
   readonly property bool featureReshape: true // LGS-EXPORT-FLAG:reshape
   readonly property bool featureReverse: true // LGS-EXPORT-FLAG:reverse
+  readonly property bool featureCopyAttrs: true // LGS-EXPORT-FLAG:copyattrs
+  readonly property bool featureMerge: true // LGS-EXPORT-FLAG:merge
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1204,6 +1248,10 @@ Item {
         plugin.initReshape()
       if (plugin.featureReverse)
         plugin.initReverse()
+      if (plugin.featureCopyAttrs)
+        plugin.initCopyAttrs()
+      if (plugin.featureMerge)
+        plugin.initMerge()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1903,6 +1951,7 @@ Item {
       id: clipPill
       visible: plugin.featureClipping && plugin.clipStep === 0 &&
                plugin.reshapeStep === 0 && plugin.reverseStep === 0 &&
+               plugin.copyStep === 0 && plugin.mergeStep === 0 &&
                plugin.clipAvailable
       anchors.verticalCenter: parent.verticalCenter
       width: clipPillText.contentWidth + 24
@@ -1960,6 +2009,7 @@ Item {
       // reshape drawing.
       visible: plugin.featureReshape && plugin.reshapeStep === 0 &&
                plugin.clipStep === 0 && plugin.reverseStep === 0 &&
+               plugin.copyStep === 0 && plugin.mergeStep === 0 &&
                !plugin.reshapeEditingActive
       anchors.verticalCenter: parent.verticalCenter
       width: reshapePillText.contentWidth + 24
@@ -1987,6 +2037,7 @@ Item {
       // digitizing/measure session or another canvas mode is active.
       visible: plugin.featureReverse && plugin.reverseStep === 0 &&
                plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.copyStep === 0 && plugin.mergeStep === 0 &&
                !plugin.reshapeEditingActive && plugin.reverseAvailable
       anchors.verticalCenter: parent.verticalCenter
       width: reversePillText.contentWidth + 24
@@ -2005,6 +2056,63 @@ Item {
 
       TapHandler {
         onTapped: plugin.enterReverseMode()
+      }
+    }
+
+    Rectangle {
+      id: copyPill
+      // Browse mode only — same gating as Reshape: hidden while a
+      // digitizing/measure session or another canvas mode is active.
+      visible: plugin.featureCopyAttrs && plugin.copyStep === 0 &&
+               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.reverseStep === 0 && plugin.mergeStep === 0 &&
+               !plugin.reshapeEditingActive && plugin.copyAttrsAvailable
+      anchors.verticalCenter: parent.verticalCenter
+      width: copyPillText.contentWidth + 24
+      height: copyPillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: copyPillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        // '»' (U+00BB, Latin-1) on purpose — fancier copy glyphs like
+        // '⧉' are not in Android's fonts.
+        text: qsTr('» Copy')
+      }
+
+      TapHandler {
+        onTapped: plugin.enterCopyMode()
+      }
+    }
+
+    Rectangle {
+      id: mergePill
+      // Browse mode only — same gating as Reshape.
+      visible: plugin.featureMerge && plugin.mergeStep === 0 &&
+               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.reverseStep === 0 && plugin.copyStep === 0 &&
+               !plugin.reshapeEditingActive && plugin.mergeAvailable
+      anchors.verticalCenter: parent.verticalCenter
+      width: mergePillText.contentWidth + 24
+      height: mergePillText.contentHeight + 12
+      radius: height / 2
+      color: '#99000000'
+
+      Text {
+        id: mergePillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: 'white'
+        // Plain ASCII on purpose — union glyphs like '∪' are not in
+        // Android's fonts.
+        text: qsTr('+ Merge')
+      }
+
+      TapHandler {
+        onTapped: plugin.enterMergeMode()
       }
     }
   }
@@ -6581,6 +6689,1307 @@ Item {
             radius: 4
           }
           onClicked: plugin.exitReverseMode()
+        }
+      }
+    }
+  }
+
+  // ================================================================
+  // COPY ATTRIBUTES (v21) — stamp one feature's attributes onto
+  // others, cross-layer aware. Tap the source, then tap targets; the
+  // source stays armed for rapid multi-stamping. Only non-empty
+  // source values are written; the target keeps its own geometry,
+  // UUID and housekeeping fields.
+  // ================================================================
+
+  property int copyStep: 0           // 0=off, 1=pick source, 2=stamp targets
+  property var copySourceLayer: null
+  property var copySourceFeature: null
+  property string copySourceLabel: ''
+  property int copyCount: 0          // stamps this session (banner)
+  property var copyUndo: null        // last target's pre-copy snapshot
+  property bool copyAttrsAvailable: false
+  property bool copyConfirmedThisSession: false
+  property var copyPendingHit: null  // target awaiting the confirm dialog
+  property var copyPendingPlan: []
+  property string copyPlanSummary: ''
+
+  // ----------------------------------------------------------------
+  // Pure helpers — no QML identifiers, extracted verbatim into the
+  // Node harness (tests/copy_fieldmap_harness.js). Mirrors of the
+  // desktop skip rules (reconcile snapshot.py HOUSEKEEPING_PREFIXES,
+  // clipper uuid detection) — keep in sync.
+  // ----------------------------------------------------------------
+  function isEmptyValue(value) {
+    // Port of reconcile is_empty: null / '' / literal 'NULL' are empty;
+    // 0 and false are real values.
+    if (value === null || value === undefined)
+      return true
+    const text = String(value).trim()
+    return text === '' || text.toUpperCase() === 'NULL'
+  }
+
+  function copyFieldIsSkipped(name) {
+    // Identity, housekeeping and derived fields never transfer.
+    // Elevation stays with the target (its geometry is unchanged —
+    // the opposite call to the clip tool, which copies Elevation so
+    // new pieces stay visible under an active Z filter). Geologist
+    // stays with the target too: authorship, not content.
+    const lower = String(name).toLowerCase()
+    const exact = ['fid', 'id', 'ogc_fid', 'date&time', 'datetime',
+                   'geologist', 'photo', 'photoid', 'sampleid', 'label',
+                   'legend', 'symbolsuffix', 'easting', 'northing',
+                   'elevation']
+    if (exact.indexOf(lower) !== -1)
+      return true
+    if (lower.indexOf('uuid') !== -1 || lower.indexOf('guid') !== -1)
+      return true
+    const prefixes = ['mapped', 'lgs_', 'data_added_']
+    for (const prefix of prefixes) {
+      if (lower.indexOf(prefix) === 0)
+        return true
+    }
+    return false
+  }
+
+  function copyFieldMapFor(srcLayerName, dstLayerName) {
+    // Declarative cross-layer pair map, keyed 'src>dst'. Pairs are
+    // kept only when both fields exist in the live schemas
+    // (buildCopyPairs), so entries for fields that have not been
+    // injected yet are harmless.
+    const maps = {
+      '4 - Basemap>1 - FieldNotebook': [
+        ['Lithology1', 'Lithology'],
+        ['Lithology2', 'Lithology2'],
+        ['Lith1Mineral1', 'Mineral'],
+        ['Lith1Mineral2', 'Mineral2'],
+        ['Lith1Mineral3', 'Mineral3'],
+        ['Lith1Mineral1Pct', 'MineralPct'],
+        ['Lith1Mineral2Pct', 'Mineral2Pct'],
+        ['Lith1Mineral3Pct', 'Mineral3Pct'],
+        ['Lith1Texture1', 'Texture'],
+        ['Lith1Texture2', 'Texture2']
+      ],
+      // No Lithology->Lithology1: Basemap's Lithology1 is
+      // ValueRelation-filtered by TypeLith1 and the notebook has no
+      // TypeLith source — a copied code could contradict the target's
+      // TypeLith1.
+      '1 - FieldNotebook>4 - Basemap': [
+        ['Mineral', 'Lith1Mineral1'],
+        ['Mineral2', 'Lith1Mineral2'],
+        ['Mineral3', 'Lith1Mineral3'],
+        ['MineralPct', 'Lith1Mineral1Pct'],
+        ['Mineral2Pct', 'Lith1Mineral2Pct'],
+        ['Mineral3Pct', 'Lith1Mineral3Pct'],
+        ['Texture', 'Lith1Texture1'],
+        ['Texture2', 'Lith1Texture2']
+      ],
+      '2 - Overlay>3 - Linework': [
+        ['Mineral1', 'Mineral1'],
+        ['Percent', 'Percent'],
+        ['Weight', 'Weight']
+      ],
+      '3 - Linework>2 - Overlay': [
+        ['Mineral1', 'Mineral1'],
+        ['Percent', 'Percent'],
+        ['Weight', 'Weight']
+      ]
+    }
+    const key = String(srcLayerName) + '>' + String(dstLayerName)
+    return maps[key] !== undefined ? maps[key] : null
+  }
+
+  function buildCopyPairs(srcNames, dstNames, srcLayerName, dstLayerName) {
+    // -> [{from, to}] against the live schemas. Same layer: identity
+    // pairs for every non-skipped shared name. Cross layer: the pair
+    // map plus the shared Comments/Confidence whitelist.
+    let pairs = []
+    let dstSet = {}
+    for (const name of dstNames)
+      dstSet[name] = true
+    if (String(srcLayerName) === String(dstLayerName)) {
+      for (const name of srcNames) {
+        if (copyFieldIsSkipped(name))
+          continue
+        if (dstSet[name] !== true)
+          continue
+        pairs.push({ from: name, to: name })
+      }
+      return pairs
+    }
+    let srcSet = {}
+    for (const name of srcNames)
+      srcSet[name] = true
+    let taken = {}
+    const mapped = copyFieldMapFor(srcLayerName, dstLayerName)
+    if (mapped !== null) {
+      for (const entry of mapped) {
+        if (srcSet[entry[0]] !== true || dstSet[entry[1]] !== true)
+          continue
+        pairs.push({ from: entry[0], to: entry[1] })
+        taken[entry[1]] = true
+      }
+    }
+    for (const name of ['Comments', 'Confidence']) {
+      if (srcSet[name] === true && dstSet[name] === true &&
+          taken[name] !== true)
+        pairs.push({ from: name, to: name })
+    }
+    return pairs
+  }
+
+  // ----------------------------------------------------------------
+  // Availability / layer plumbing
+  // ----------------------------------------------------------------
+  function initCopyAttrs() {
+    try {
+      copyAttrsAvailable = candidateCopyLayers().length > 0
+    } catch (error) {
+      copyAttrsAvailable = false
+    }
+  }
+
+  function candidateCopyLayers() {
+    // Points and lines first — findHitInLayers returns the first layer
+    // with a hit, so polygons would otherwise swallow every tap.
+    let layers = []
+    for (const name of ['1 - FieldNotebook', '3 - Linework',
+                        '2 - Overlay', '4 - Basemap']) {
+      const layer = layerByName(name)
+      if (layer !== null)
+        layers.push(layer)
+    }
+    return layers
+  }
+
+  function copyLayerLabel(layer) {
+    try {
+      return layer ? String(layer.name) : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Mode lifecycle
+  // ----------------------------------------------------------------
+  function enterCopyMode() {
+    try {
+      if (!canvas || canvas.width === undefined) {
+        toast(qsTr('Copy unavailable — no map canvas'))
+        return
+      }
+      updateReshapeEditingActive()
+      if (reshapeEditingActive) {
+        toast(qsTr('Turn digitizing off first'))
+        return
+      }
+      if (candidateCopyLayers().length === 0) {
+        toast(qsTr('Copy unavailable — no LGS layers found'))
+        return
+      }
+      copyCatcher.parent = canvas
+      copyCatcher.anchors.fill = canvas
+      copyBanner.parent = canvas
+      copyBanner.anchors.horizontalCenter = canvas.horizontalCenter
+      copyBanner.anchors.top = canvas.top
+      copyBanner.anchors.topMargin = 60
+      copySourceLayer = null
+      copySourceFeature = null
+      copySourceLabel = ''
+      copyCount = 0
+      copyUndo = null
+      copyConfirmedThisSession = false
+      copyPendingHit = null
+      copyPendingPlan = []
+      copyPlanSummary = ''
+      copyStep = 1
+      toast(qsTr('Tap the feature to copy FROM'))
+    } catch (error) {
+      toast(qsTr('Copy unavailable'))
+    }
+  }
+
+  function exitCopyMode() {
+    try {
+      if (copySourceLayer !== null)
+        copySourceLayer.removeSelection()
+    } catch (error) {}
+    copyStep = 0
+    copySourceLayer = null
+    copySourceFeature = null
+    copySourceLabel = ''
+    copyCount = 0
+    copyUndo = null
+    copyConfirmedThisSession = false
+    copyPendingHit = null
+    copyPendingPlan = []
+    copyPlanSummary = ''
+  }
+
+  // ----------------------------------------------------------------
+  // Tap handling
+  // ----------------------------------------------------------------
+  function copyTapOnUi(pos) {
+    // Same guard as clipTapOnUi / reverseTapOnUi — overlapping
+    // TapHandlers may deliver the same tap to the canvas catcher too.
+    try {
+      const b = copyBanner.mapFromItem(copyCatcher, pos.x, pos.y)
+      if (b.x >= 0 && b.y >= 0 &&
+          b.x <= copyBanner.width && b.y <= copyBanner.height)
+        return true
+    } catch (error) {}
+    try {
+      const o = overlayBar.mapFromItem(copyCatcher, pos.x, pos.y)
+      if (o.x >= 0 && o.y >= 0 &&
+          o.x <= overlayBar.width && o.y <= overlayBar.height)
+        return true
+    } catch (error) {}
+    try {
+      if (zDialog.visible) {
+        const d = mainWindow.contentItem.mapFromItem(
+            copyCatcher, pos.x, pos.y)
+        if (d.x >= zDialog.x && d.y >= zDialog.y &&
+            d.x <= zDialog.x + zDialog.width &&
+            d.y <= zDialog.y + zDialog.height)
+          return true
+      }
+    } catch (error) {}
+    return false
+  }
+
+  function handleCopyTap(pos) {
+    try {
+      if (copyStep !== 1 && copyStep !== 2)
+        return
+      if (copyTapOnUi(pos))
+        return
+      // The iterator honours the layer subsetString, so an active Z
+      // filter means only VISIBLE features are tappable.
+      const hit = findHitInLayers(candidateCopyLayers(), pos)
+      if (hit === null) {
+        toast(qsTr('No feature here'))
+        return
+      }
+      if (copyStep === 1) {
+        copySourceLayer = hit.layer
+        copySourceFeature = hit.feature
+        copySourceLabel = copyLayerLabel(hit.layer)
+        try {
+          LayerUtils.selectFeaturesInLayer(copySourceLayer,
+                                           [hit.feature.id])
+        } catch (error) {
+          try {
+            copySourceLayer.selectByIds([hit.feature.id])
+          } catch (error2) {}
+        }
+        copyStep = 2
+        toast(qsTr('Source armed — now tap a feature to copy TO'))
+        return
+      }
+      let sameFeature = false
+      try {
+        sameFeature = hit.layer === copySourceLayer &&
+                      hit.feature.id === copySourceFeature.id
+      } catch (error) {}
+      if (sameFeature) {
+        toast(qsTr('That is the source feature'))
+        return
+      }
+      const plan = buildCopyPlan(hit.layer, hit.feature)
+      if (plan.length === 0) {
+        toast(qsTr('No compatible fields between %1 and %2')
+              .arg(copySourceLabel).arg(copyLayerLabel(hit.layer)))
+        return
+      }
+      if (!copyConfirmedThisSession) {
+        // First stamp of the session confirms; later stamps apply
+        // instantly — that is the rapid-stamping win.
+        copyPendingHit = hit
+        copyPendingPlan = plan
+        copyPlanSummary = copyPlanSummaryText(plan, hit)
+        copyConfirmDialog.open()
+        return
+      }
+      applyCopyPlan(hit.layer, hit.feature, plan)
+    } catch (error) {}
+  }
+
+  // ----------------------------------------------------------------
+  // Plan building / execution
+  // ----------------------------------------------------------------
+  function buildCopyPlan(dstLayer, dstFeature) {
+    // -> [{name, value}] against the TARGET schema. Source-empty
+    // values are dropped so a copy never blanks target data.
+    try {
+      const srcNames = attributeNames(copySourceLayer, copySourceFeature)
+      const dstNames = attributeNames(dstLayer, dstFeature)
+      const pairs = buildCopyPairs(srcNames, dstNames, copySourceLabel,
+                                   copyLayerLabel(dstLayer))
+      let plan = []
+      for (const pair of pairs) {
+        let value = null
+        try {
+          value = copySourceFeature.attribute(pair.from)
+        } catch (error) {
+          continue
+        }
+        if (isEmptyValue(value))
+          continue
+        plan.push({ name: pair.to, value: value })
+      }
+      return plan
+    } catch (error) {
+      return []
+    }
+  }
+
+  function copyPlanSummaryText(plan, hit) {
+    let names = []
+    for (const entry of plan)
+      names.push(entry.name)
+    let listed = names.slice(0, 8).join(', ')
+    if (names.length > 8)
+      listed += qsTr(' and %1 more').arg(names.length - 8)
+    return qsTr('%1 field(s) will be copied from %2 to %3:\n%4')
+        .arg(plan.length).arg(copySourceLabel)
+        .arg(copyLayerLabel(hit.layer)).arg(listed)
+  }
+
+  function applyCopyPlan(dstLayer, dstFeature, plan) {
+    // The sidecar's established write path: recreate the target with
+    // its own geometry + UUID (add-before-delete, same as Reverse),
+    // then overlay the plan values.
+    try {
+      const wkt = evalExpr(dstLayer, dstFeature, 'geom_to_wkt($geometry)')
+      if (wkt === '') {
+        toast(qsTr('Copy failed — target geometry unreadable'))
+        return
+      }
+      const names = attributeNames(dstLayer, dstFeature)
+      const uuidField = detectUuidField(names)
+      let priorUuid = ''
+      if (uuidField !== null) {
+        try {
+          priorUuid = String(dstFeature.attribute(uuidField))
+        } catch (error) {}
+      }
+      const geometry = GeometryUtils.createGeometryFromWkt(wkt)
+      let created = FeatureUtils.createFeature(dstLayer, geometry)
+      copyClipAttributes(created, dstFeature, names, null, '')
+      for (const entry of plan) {
+        try {
+          created.setAttribute(entry.name, entry.value)
+        } catch (error) {}
+      }
+      if (!applyClipEdits(dstLayer, [created], [dstFeature.id])) {
+        toast(qsTr('Copy failed — no changes made'))
+        return
+      }
+      if (uuidField !== null && priorUuid !== '' && priorUuid !== 'NULL') {
+        const fids = collectFidsByExpression(dstLayer,
+            '"' + uuidField + '" = \'' + priorUuid + '\'')
+        if (fids.length !== 1)
+          toast(qsTr('Warning: copied feature not verified'))
+      }
+      copyUndo = {
+        layer: dstLayer,
+        layerName: copyLayerLabel(dstLayer),
+        names: names,
+        uuidField: uuidField,
+        uuid: priorUuid,
+        wkt: wkt,
+        feature: dstFeature
+      }
+      try {
+        dstLayer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      copyCount++
+      toast(qsTr('Copied %1 field(s) — tap another feature or Done')
+            .arg(plan.length))
+    } catch (error) {
+      toast(qsTr('Copy failed'))
+    }
+  }
+
+  function undoLastCopy() {
+    // One level: restore the LAST target's pre-copy attributes from
+    // the snapshot (delete stamped + recreate, UUID preserved — same
+    // shape as undoLastReshape).
+    try {
+      const undo = copyUndo
+      if (undo === null)
+        return
+      let layer = undo.layer
+      let alive = false
+      try {
+        alive = layer !== null && layer.name !== undefined
+      } catch (error) {}
+      if (!alive)
+        layer = layerByName(undo.layerName)
+      if (layer === null) {
+        toast(qsTr('Undo failed — layer not found'))
+        return
+      }
+      // Locate the stamped feature fresh by UUID (fids survive
+      // commits but a resync could renumber them).
+      let doomed = []
+      if (undo.uuidField !== null && undo.uuid !== '' &&
+          undo.uuid !== 'NULL')
+        doomed = collectFidsByExpression(layer,
+            '"' + undo.uuidField + '" = \'' + undo.uuid + '\'')
+      if (doomed.length === 0) {
+        toast(qsTr('Undo failed — copied feature not found'))
+        return
+      }
+      const geometry = GeometryUtils.createGeometryFromWkt(undo.wkt)
+      let restored = FeatureUtils.createFeature(layer, geometry)
+      copyClipAttributes(restored, undo.feature, undo.names, null, '')
+      if (!applyClipEdits(layer, [restored], doomed)) {
+        toast(qsTr('Undo failed — no changes made'))
+        return
+      }
+      try {
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      copyUndo = null
+      if (copyCount > 0)
+        copyCount--
+      toast(qsTr('Copy undone'))
+    } catch (error) {
+      toast(qsTr('Undo failed'))
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Copy UI: tap catcher + banner + confirm dialog
+  // ----------------------------------------------------------------
+  Item {
+    id: copyCatcher
+    visible: plugin.copyStep > 0
+    z: 1
+
+    TapHandler {
+      // Default DragThreshold gesture policy: passive grab, so pan and
+      // pinch on the canvas underneath keep working.
+      onSingleTapped: function(eventPoint, button) {
+        plugin.handleCopyTap(eventPoint.position)
+      }
+    }
+  }
+
+  Rectangle {
+    id: copyBanner
+    visible: plugin.copyStep > 0
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: copyBannerColumn.height + 24
+
+    Column {
+      id: copyBannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 12
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 24
+      spacing: 8
+
+      Text {
+        width: parent.width
+        font.pixelSize: 15
+        font.bold: true
+        color: 'white'
+        text: qsTr('Copy attributes')
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 14
+        color: 'white'
+        text: plugin.copyStep === 1
+            ? qsTr('Tap the feature to copy FROM')
+            : qsTr('Tap features to copy TO — the source stays armed. Only non-empty source values are written.')
+      }
+
+      Text {
+        visible: plugin.copyStep === 2
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: '#CCFFFFFF'
+        text: plugin.copyCount > 0
+            ? qsTr('%1 copied from %2 — Undo covers the last one')
+                  .arg(plugin.copyCount).arg(plugin.copySourceLabel)
+            : qsTr('Source: %1').arg(plugin.copySourceLabel)
+      }
+
+      Flow {
+        width: parent.width
+        spacing: 8
+
+        Button {
+          visible: plugin.copyUndo !== null
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Undo')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: '#66000000'
+            border.color: 'white'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.undoLastCopy()
+        }
+
+        Button {
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Done')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitCopyMode()
+        }
+      }
+    }
+  }
+
+  Dialog {
+    id: copyConfirmDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Copy attributes')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onOpened: {
+      try {
+        const okButton = copyConfirmDialog.standardButton(Dialog.Ok)
+        if (okButton)
+          okButton.text = qsTr('Copy now')
+      } catch (error) {}
+    }
+
+    onAccepted: {
+      // Later stamps this session skip the dialog.
+      plugin.copyConfirmedThisSession = true
+      const hit = plugin.copyPendingHit
+      const plan = plugin.copyPendingPlan
+      plugin.copyPendingHit = null
+      plugin.copyPendingPlan = []
+      if (hit !== null && plan.length > 0)
+        plugin.applyCopyPlan(hit.layer, hit.feature, plan)
+    }
+
+    onRejected: {
+      plugin.copyPendingHit = null
+      plugin.copyPendingPlan = []
+    }
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 8
+
+      Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        text: plugin.copyPlanSummary +
+              '\n' + qsTr('Further taps this session copy instantly (Undo covers the last one).')
+      }
+    }
+  }
+
+  // ================================================================
+  // MERGE (v22) — dissolve 2+ polygons on one layer into a single
+  // polygon. The FIRST pick keeps its attributes and UUID; its empty
+  // fields are filled from the other picks (carry_attrs semantics).
+  // Disjoint picks are refused — the union must be ONE polygon.
+  // ================================================================
+
+  property int mergeStep: 0          // 0=off, 1=picking, 2=done
+  property var mergeLayer: null      // locked by the first pick
+  property var mergeFeatures: []     // [{id, feature}] in PICK ORDER
+  property var mergeUndo: null
+  property bool mergeAvailable: false
+  property string mergeResultText: ''
+  property string mergePendingWkt: ''
+
+  // ----------------------------------------------------------------
+  // Pure helper — extracted into tests/merge_carry_harness.js.
+  // ----------------------------------------------------------------
+  function mergeCarryValues(keeperValues, parentValuesList, names) {
+    // Port of reconcile carry_attrs (lineage.py): fill the keeper's
+    // EMPTY content fields from the other parents — first non-empty
+    // value in pick order wins; keeper values are never overwritten;
+    // identity/housekeeping fields are never carried.
+    let fills = {}
+    for (const name of names) {
+      if (copyFieldIsSkipped(name))
+        continue
+      if (!isEmptyValue(keeperValues[name]))
+        continue
+      for (const parentValues of parentValuesList) {
+        const value = parentValues[name]
+        if (isEmptyValue(value))
+          continue
+        fills[name] = value
+        break
+      }
+    }
+    return fills
+  }
+
+  // ----------------------------------------------------------------
+  // Availability / layer plumbing
+  // ----------------------------------------------------------------
+  function initMerge() {
+    // Pill availability from the standard polygon layers only — the
+    // active layer is re-probed on entry (the dashboard may not exist
+    // yet at startup).
+    try {
+      mergeAvailable = false
+      for (const name of clipLayerNames) {
+        if (layerByName(name) !== null) {
+          mergeAvailable = true
+          break
+        }
+      }
+    } catch (error) {
+      mergeAvailable = false
+    }
+  }
+
+  function layerIsPolygon(layer) {
+    if (layer === null || layer === undefined)
+      return false
+    return evalExpr(layer, null,
+                    "layer_property(@layer, 'geometry_type')") === 'Polygon'
+  }
+
+  function candidateMergeLayers() {
+    // Active layer first — merge what you're working on — then the
+    // standard LGS polygon layers.
+    let layers = []
+    try {
+      const active = reshapeActiveLayer()
+      if (layerIsPolygon(active))
+        layers.push(active)
+    } catch (error) {}
+    for (const name of clipLayerNames) {
+      const layer = layerByName(name)
+      if (layer === null || !layerIsPolygon(layer))
+        continue
+      let seen = false
+      for (const known of layers) {
+        try {
+          if (known === layer)
+            seen = true
+        } catch (error) {}
+      }
+      if (!seen)
+        layers.push(layer)
+    }
+    return layers
+  }
+
+  function mergeLayerLabel() {
+    try {
+      return mergeLayer ? String(mergeLayer.name) : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Mode lifecycle
+  // ----------------------------------------------------------------
+  function enterMergeMode() {
+    try {
+      if (!canvas || canvas.width === undefined) {
+        toast(qsTr('Merge unavailable — no map canvas'))
+        return
+      }
+      updateReshapeEditingActive()
+      if (reshapeEditingActive) {
+        toast(qsTr('Turn digitizing off first'))
+        return
+      }
+      if (candidateMergeLayers().length === 0) {
+        toast(qsTr('Merge unavailable — no polygon layer found'))
+        return
+      }
+      mergeCatcher.parent = canvas
+      mergeCatcher.anchors.fill = canvas
+      mergeBanner.parent = canvas
+      mergeBanner.anchors.horizontalCenter = canvas.horizontalCenter
+      mergeBanner.anchors.top = canvas.top
+      mergeBanner.anchors.topMargin = 60
+      mergeLayer = null
+      mergeFeatures = []
+      mergeUndo = null
+      mergeResultText = ''
+      mergePendingWkt = ''
+      mergeStep = 1
+      toast(qsTr('Tap 2 or more polygons to merge — the first keeps its attributes'))
+    } catch (error) {
+      toast(qsTr('Merge unavailable'))
+    }
+  }
+
+  function exitMergeMode() {
+    try {
+      if (mergeLayer !== null)
+        mergeLayer.removeSelection()
+    } catch (error) {}
+    mergeStep = 0
+    mergeLayer = null
+    mergeFeatures = []
+    mergeResultText = ''
+    mergePendingWkt = ''
+  }
+
+  function mergeBackToPicks() {
+    // 'Merge more' from the done step — keep the undo armed.
+    mergeLayer = null
+    mergeFeatures = []
+    mergeResultText = ''
+    mergePendingWkt = ''
+    mergeStep = 1
+    toast(qsTr('Tap 2 or more polygons to merge'))
+  }
+
+  // ----------------------------------------------------------------
+  // Tap handling
+  // ----------------------------------------------------------------
+  function mergeTapOnUi(pos) {
+    // Same guard as clipTapOnUi / reverseTapOnUi.
+    try {
+      const b = mergeBanner.mapFromItem(mergeCatcher, pos.x, pos.y)
+      if (b.x >= 0 && b.y >= 0 &&
+          b.x <= mergeBanner.width && b.y <= mergeBanner.height)
+        return true
+    } catch (error) {}
+    try {
+      const o = overlayBar.mapFromItem(mergeCatcher, pos.x, pos.y)
+      if (o.x >= 0 && o.y >= 0 &&
+          o.x <= overlayBar.width && o.y <= overlayBar.height)
+        return true
+    } catch (error) {}
+    try {
+      if (zDialog.visible) {
+        const d = mainWindow.contentItem.mapFromItem(
+            mergeCatcher, pos.x, pos.y)
+        if (d.x >= zDialog.x && d.y >= zDialog.y &&
+            d.x <= zDialog.x + zDialog.width &&
+            d.y <= zDialog.y + zDialog.height)
+          return true
+      }
+    } catch (error) {}
+    return false
+  }
+
+  function handleMergeTap(pos) {
+    try {
+      if (mergeStep !== 1)
+        return
+      if (mergeTapOnUi(pos))
+        return
+      // Picks lock to the first pick's layer — same-layer merges only.
+      // The iterator honours the layer subsetString: merge what you see.
+      const hit = findHitInLayers(
+          mergeLayer !== null ? [mergeLayer] : candidateMergeLayers(), pos)
+      if (hit === null) {
+        toast(mergeLayer !== null
+            ? qsTr('No polygon here on %1').arg(mergeLayerLabel())
+            : qsTr('No polygon here'))
+        return
+      }
+      if (mergeLayer === null) {
+        mergeLayer = hit.layer
+        toast(qsTr('Using layer: %1 — the first pick keeps its attributes')
+              .arg(mergeLayerLabel()))
+      }
+      mergeFeatures = toggleClipPick(mergeFeatures, hit.feature.id,
+                                     hit.feature)
+      if (mergeFeatures.length === 0) {
+        // Everything unpicked — unlock so picking can restart on any
+        // candidate layer.
+        try {
+          mergeLayer.removeSelection()
+        } catch (error) {}
+        mergeLayer = null
+        return
+      }
+      updateMergeSelection()
+    } catch (error) {}
+  }
+
+  function updateMergeSelection() {
+    if (mergeLayer === null)
+      return
+    let fids = []
+    for (const entry of mergeFeatures)
+      fids.push(entry.id)
+    try {
+      if (fids.length === 0) {
+        mergeLayer.removeSelection()
+        return
+      }
+      LayerUtils.selectFeaturesInLayer(mergeLayer, fids)
+    } catch (error) {
+      try {
+        mergeLayer.selectByIds(fids)
+      } catch (error2) {}
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Geometry / execution
+  // ----------------------------------------------------------------
+  function buildMergeUnionWkt() {
+    // QgsGeometry.unaryUnion equivalent: fold union() over the picked
+    // geometries in the expression engine, make_valid the result
+    // (same shape as buildCutterUnionWkt).
+    try {
+      let expr = null
+      for (const entry of mergeFeatures) {
+        const wkt = evalExpr(mergeLayer, entry.feature,
+                             'geom_to_wkt($geometry)')
+        if (wkt === '')
+          continue
+        const geomExpr = "geom_from_wkt('" + wkt + "')"
+        expr = expr === null
+            ? geomExpr : 'union(' + expr + ', ' + geomExpr + ')'
+      }
+      if (expr === null)
+        return ''
+      return evalExpr(mergeLayer, mergeFeatures[0].feature,
+                      'geom_to_wkt(make_valid(' + expr + '))')
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function requestMerge() {
+    // 'Merge ✓' button: union first so the confirm dialog only opens
+    // for a merge that will actually produce ONE polygon.
+    try {
+      if (mergeFeatures.length < 2)
+        return
+      const unionWkt = buildMergeUnionWkt()
+      if (unionWkt === '' ||
+          unionWkt.toUpperCase().indexOf('EMPTY') !== -1) {
+        toast(qsTr('Merge failed — could not combine the polygons'))
+        return
+      }
+      const parts = splitMultiPolygonWkt(unionWkt)
+      if (parts.length !== 1) {
+        // The LGS GeoPackage layers are single-polygon; committing a
+        // MultiPolygon is unproven on-device, and an upfront refusal
+        // beats a silent rollback mid-field.
+        toast(qsTr('Polygons must touch — merging these would leave %1 separate parts')
+              .arg(parts.length === 0 ? 2 : parts.length))
+        return
+      }
+      mergePendingWkt = parts[0]
+      mergeConfirmDialog.open()
+    } catch (error) {
+      toast(qsTr('Merge failed'))
+    }
+  }
+
+  function executeMerge() {
+    try {
+      const layer = mergeLayer
+      if (layer === null || mergeFeatures.length < 2 ||
+          mergePendingWkt === '')
+        return
+      const keeper = mergeFeatures[0]
+      const names = attributeNames(layer, keeper.feature)
+      const uuidField = detectUuidField(names)
+      let keeperUuid = ''
+      if (uuidField !== null) {
+        try {
+          keeperUuid = String(keeper.feature.attribute(uuidField))
+        } catch (error) {}
+      }
+      // Pre-edit snapshots (undo) + attribute maps (carry fills).
+      let parents = []
+      let deleteIds = []
+      let keeperValues = ({})
+      let parentValuesList = []
+      let otherUuids = []
+      for (let i = 0; i < mergeFeatures.length; i++) {
+        const entry = mergeFeatures[i]
+        const wkt = evalExpr(layer, entry.feature,
+                             'geom_to_wkt($geometry)')
+        if (wkt === '') {
+          toast(qsTr('Merge failed — a polygon geometry is unreadable'))
+          return
+        }
+        parents.push({ wkt: wkt, feature: entry.feature })
+        deleteIds.push(entry.id)
+        let values = ({})
+        for (const name of names) {
+          try {
+            values[name] = entry.feature.attribute(name)
+          } catch (error) {}
+        }
+        if (i === 0) {
+          keeperValues = values
+        } else {
+          parentValuesList.push(values)
+          if (uuidField !== null) {
+            try {
+              const parentUuid = String(entry.feature.attribute(uuidField))
+              if (parentUuid !== '' && parentUuid !== 'NULL')
+                otherUuids.push(parentUuid)
+            } catch (error) {}
+          }
+        }
+      }
+      const geometry = GeometryUtils.createGeometryFromWkt(mergePendingWkt)
+      let created = FeatureUtils.createFeature(layer, geometry)
+      // Keeper attributes verbatim, UUID preserved — identity
+      // continuity, same rules as Reverse / the reshape undo.
+      copyClipAttributes(created, keeper.feature, names, null, '')
+      const fills = mergeCarryValues(keeperValues, parentValuesList, names)
+      for (const name in fills) {
+        try {
+          created.setAttribute(name, fills[name])
+        } catch (error) {}
+      }
+      // Reconcile lineage stamp — attempt-and-verify: the column does
+      // not exist on today's device exports so this is a silent no-op;
+      // it activates if the lgs_* lineage columns ever ship. Desktop
+      // reconcile detects the merge geometrically either way (keep in
+      // sync: script_adddata/reconcile/lineage.py).
+      if (otherUuids.length > 0) {
+        try {
+          created.setAttribute('lgs_merged_from', otherUuids.join(','))
+        } catch (error) {}
+      }
+      if (!applyClipEdits(layer, [created], deleteIds)) {
+        toast(qsTr('Merge failed — no changes made'))
+        return
+      }
+      // Read-back verify by the keeper UUID (it survives on the
+      // merged polygon).
+      if (uuidField !== null && keeperUuid !== '' &&
+          keeperUuid !== 'NULL') {
+        const fids = collectFidsByExpression(layer,
+            '"' + uuidField + '" = \'' + keeperUuid + '\'')
+        if (fids.length !== 1)
+          toast(qsTr('Warning: merged polygon not verified'))
+      }
+      mergeUndo = {
+        layer: layer,
+        layerName: mergeLayerLabel(),
+        names: names,
+        uuidField: uuidField,
+        keeperUuid: keeperUuid,
+        parents: parents
+      }
+      try {
+        layer.removeSelection()
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      mergeResultText = qsTr('%1 polygons merged into one')
+          .arg(parents.length)
+      mergeFeatures = []
+      mergePendingWkt = ''
+      mergeStep = 2
+      toast(mergeResultText)
+    } catch (error) {
+      toast(qsTr('Merge failed'))
+    }
+  }
+
+  function undoLastMerge() {
+    // Restore every parent from its pre-merge WKT (all original UUIDs
+    // preserved), delete the merged polygon — one edit session, adds
+    // before deletes.
+    try {
+      const undo = mergeUndo
+      if (undo === null)
+        return
+      let layer = undo.layer
+      let alive = false
+      try {
+        alive = layer !== null && layer.name !== undefined
+      } catch (error) {}
+      if (!alive)
+        layer = layerByName(undo.layerName)
+      if (layer === null) {
+        toast(qsTr('Undo failed — layer not found'))
+        return
+      }
+      let doomed = []
+      if (undo.uuidField !== null && undo.keeperUuid !== '' &&
+          undo.keeperUuid !== 'NULL')
+        doomed = collectFidsByExpression(layer,
+            '"' + undo.uuidField + '" = \'' + undo.keeperUuid + '\'')
+      if (doomed.length === 0) {
+        toast(qsTr('Undo failed — merged polygon not found'))
+        return
+      }
+      let restored = []
+      for (const parent of undo.parents) {
+        const geometry = GeometryUtils.createGeometryFromWkt(parent.wkt)
+        let feature = FeatureUtils.createFeature(layer, geometry)
+        copyClipAttributes(feature, parent.feature, undo.names, null, '')
+        restored.push(feature)
+      }
+      if (!applyClipEdits(layer, restored, doomed)) {
+        toast(qsTr('Undo failed — no changes made'))
+        return
+      }
+      try {
+        layer.triggerRepaint()
+        iface.mapCanvas().refresh()
+      } catch (error) {}
+      mergeUndo = null
+      mergeResultText = ''
+      toast(qsTr('Merge undone'))
+    } catch (error) {
+      toast(qsTr('Undo failed'))
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Merge UI: tap catcher + banner + confirm dialog
+  // ----------------------------------------------------------------
+  Item {
+    id: mergeCatcher
+    visible: plugin.mergeStep === 1
+    z: 1
+
+    TapHandler {
+      // Passive grab — pan and pinch keep working under the catcher.
+      onSingleTapped: function(eventPoint, button) {
+        plugin.handleMergeTap(eventPoint.position)
+      }
+    }
+  }
+
+  Rectangle {
+    id: mergeBanner
+    visible: plugin.mergeStep > 0
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: mergeBannerColumn.height + 24
+
+    Column {
+      id: mergeBannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 12
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 24
+      spacing: 8
+
+      Text {
+        width: parent.width
+        font.pixelSize: 15
+        font.bold: true
+        color: 'white'
+        text: qsTr('Merge polygons')
+      }
+
+      Text {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 14
+        color: 'white'
+        text: plugin.mergeStep === 1
+            ? qsTr('Tap 2 or more polygons on one layer — the FIRST keeps its attributes and identity; its empty fields are filled from the others. Tap a polygon again to unpick it.')
+            : plugin.mergeResultText
+      }
+
+      Text {
+        visible: plugin.mergeStep === 1 && plugin.mergeFeatures.length > 0
+        width: parent.width
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: '#CCFFFFFF'
+        text: qsTr('%1 picked on %2 — first pick is the keeper')
+              .arg(plugin.mergeFeatures.length).arg(plugin.mergeLayerLabel())
+      }
+
+      Flow {
+        width: parent.width
+        spacing: 8
+
+        Button {
+          visible: plugin.mergeStep === 1
+          enabled: plugin.mergeFeatures.length >= 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Merge ✓')
+            color: parent.enabled ? 'white' : '#66FFFFFF'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: parent.enabled ? Theme.mainColor : '#33000000'
+            border.color: parent.enabled ? Theme.mainColor : '#33000000'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.requestMerge()
+        }
+
+        Button {
+          visible: plugin.mergeStep === 2
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Merge more')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: '#66000000'
+            border.color: 'white'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.mergeBackToPicks()
+        }
+
+        Button {
+          visible: plugin.mergeStep === 2 && plugin.mergeUndo !== null
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Undo last merge')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: '#66000000'
+            border.color: 'white'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.undoLastMerge()
+            plugin.exitMergeMode()
+          }
+        }
+
+        Button {
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: plugin.mergeStep === 1 ? qsTr('Cancel') : qsTr('Done')
+            color: 'white'
+            font.pixelSize: 14
+            font.bold: true
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: Theme.mainColor
+            border.color: Theme.mainColor
+            border.width: 1
+            radius: 4
+          }
+          onClicked: plugin.exitMergeMode()
+        }
+      }
+    }
+  }
+
+  Dialog {
+    id: mergeConfirmDialog
+    parent: mainWindow.contentItem
+    modal: true
+    title: qsTr('Merge polygons')
+    x: (mainWindow.width - width) / 2
+    y: (mainWindow.height - height) / 2
+    width: Math.min(mainWindow.width - 40, 420)
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onOpened: {
+      try {
+        const okButton = mergeConfirmDialog.standardButton(Dialog.Ok)
+        if (okButton)
+          okButton.text = qsTr('Merge now')
+      } catch (error) {}
+    }
+
+    onAccepted: plugin.executeMerge()
+
+    onRejected: plugin.mergePendingWkt = ''
+
+    ColumnLayout {
+      anchors.fill: parent
+      spacing: 8
+
+      Label {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        text: {
+          let lines = qsTr('%1 polygons will merge into one on %2.')
+              .arg(plugin.mergeFeatures.length)
+              .arg(plugin.mergeLayerLabel())
+          lines += '\n' + qsTr('The first polygon you tapped keeps its attributes and identity; its empty fields are filled from the others.')
+          lines += '\n' + qsTr('The other %1 polygon(s) are deleted.')
+              .arg(Math.max(plugin.mergeFeatures.length - 1, 0))
+          return lines
         }
       }
     }
