@@ -19,9 +19,10 @@ and makes the whole set consistent (user decisions 2026-08-15):
     family (authored 39 pt, glyph spanning only 420 of the 500 canvas)
     is wrapper-scaled x500/420 about its strike-line centre, so the
     uniform size value reproduces the authored footprints;
-  * one stroke setting: QML outline_width 1.59 MapUnit everywhere
-    (the SVG-native ratio; 0.9 pt at the 1:5000 reference scale) so the
-    weight is zoom- and rotation-invariant relative to the marker;
+  * one stroke setting: QML outline_width 0.9 Point everywhere (the
+    SVG-native 15/500 ratio at 30 pt).  Point units only: the renderer
+    reference scale is a per-project user knob, and Point sizes,
+    widths and label offsets all scale together under it;
   * unique graphics: the 7 duplicate groups (CT/FB/LAY/DYK,
     FO/CLV/SCR/GSN, LNS/L1-L5, STR/SLK/SLF, SZC/MYL/SZBDY, FAP/FAPCR,
     FAC/FACSP) get path-only modifier glyphs; clones shed the parent's
@@ -87,16 +88,13 @@ for _g, _h in GEN_HEX.items():
         EXPECT_ACCENT["FAX" + _g + _s] = _h          # 25 accent codes
 
 SIZE = "30"                       # Point, uniform
-# The renderer reference scale (1:5000) makes the Point-sized markers
-# behave ground-fixed.  Point/MM stroke widths pick up the reference-
-# scale factor inconsistently between the rotated (direct) and
-# unrotated (cached) SVG render paths, which made stroke weight depend
-# on whether a feature had a DipDirection.  MapUnit widths bypass the
-# reference-scale factor entirely, so the stroke is expressed as ground
-# units: 1.59 mu = the SVG-native 15/500 ratio of the 52.9 mu marker
-# (= 0.9 pt at reference scale; user 2026-08-15: uniform, thinner look).
-OUTLINE_W = "1.59"
-OUTLINE_W_UNIT = "MapUnit"
+# Point units for EVERYTHING (user directive 2026-08-15): the renderer
+# reference scale is a per-project knob (users retarget it to 1:200 -
+# 1:500 for UG mapping), and only Point measurements track it together
+# with the 30 pt symbol size.  0.9 pt = the SVG-native 15/500 ratio at
+# 30 pt - the preferred thinner weight.  Never use MapUnit here.
+OUTLINE_W = "0.9"
+OUTLINE_W_UNIT = "Point"
 OUTLINE_W_MUS = "3x:0,0,0,0,0,0"
 MAIN_W_LO, MAIN_W_HI = 10.0, 20.0  # stroke widths that count as "main"
 SNAP_15_LO, SNAP_15_HI = 13.5, 16.5  # near-15 widths snap to 15
