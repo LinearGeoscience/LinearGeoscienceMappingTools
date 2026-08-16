@@ -36,11 +36,126 @@ from qgis.PyQt.QtWidgets import (
 from ..core.offline_converter import OfflineConverter
 from ..utils.qgis_utils import get_project_layers, get_layer_info, get_raster_format_warning
 
+try:
+    from ...recode_workflow.widgets import CollapsibleSection
+except ImportError:
+    from recode_workflow.widgets import CollapsibleSection
+
 # QSettings key for persisting last export directory
 _SETTINGS_LAST_EXPORT_DIR = 'LGS_QField_Exporter/lastExportDir'
 
 # Known cloud-sync folder markers
 _CLOUD_SYNC_MARKERS = ('OneDrive', 'Dropbox', 'Google Drive', 'iCloudDrive', 'pCloud')
+
+# Shared checkbox styling. 'border: none; background: transparent' matters:
+# the QField-plugin checkboxes live inside a CollapsibleSection whose content
+# widget carries an unscoped 'border: 1px solid ...' rule that would otherwise
+# propagate to every child (recode_workflow/widgets.py does the same reset on
+# its own labels). The ::indicator rules below are more specific, so the tick
+# boxes keep their own border.
+_CHECKBOX_QSS = """
+    QCheckBox {
+        color: #475569;
+        font-size: 12px;
+        padding: 4px 0px;
+        border: none;
+        background: transparent;
+    }
+    QCheckBox::indicator {
+        width: 14px;
+        height: 14px;
+        border: 2px solid #cbd5e1;
+        border-radius: 3px;
+        background-color: #ffffff;
+    }
+    QCheckBox::indicator:checked {
+        background-color: #64748b;
+        border-color: #64748b;
+    }
+    QCheckBox::indicator:unchecked:hover {
+        border-color: #64748b;
+    }
+"""
+
+# The QField companion-plugin features, as (attribute, label, tooltip). Each
+# entry becomes a checkbox inside the collapsed "QField Plugin Tools" section;
+# the attribute names are the ones start_export() reads back, and every one
+# must have a matching include_*_plugin kwarg on OfflineConverter.
+# Labels carry no "(QField plugin)" suffix — the section header says it once.
+_PLUGIN_TOOLS = (
+    (
+        "include_zfilter_check",
+        "Include Z-Filter level switcher",
+        "Ships a small QField plugin next to the exported project so the "
+        "mapping layers can be filtered by bench/level elevation on the "
+        "device. The export itself always contains ALL levels.",
+    ),
+    (
+        "include_scale_check",
+        "Include scale display",
+        "Shows the live map scale on the QField map as a tappable pill — "
+        "tap to lock the map at a fixed scale (presets or custom) for "
+        "consistent mapping.",
+    ),
+    (
+        "include_opacity_check",
+        "Include imagery opacity toggle",
+        "Adds a small button on the QField map that dims or hides the "
+        "exported imagery/raster layers while drawing linework "
+        "(100% → 50% → 25% → off).",
+    ),
+    (
+        "include_clipping_check",
+        "Include polygon clip tool",
+        "Adds a Clip button on the QField map: tap the polygon(s) to "
+        "keep, tap the polygon(s) to cut, and the overlap is removed on "
+        "the device — polygons split apart become separate features.",
+    ),
+    (
+        "include_spline_check",
+        "Include spline drawing/reshaping",
+        "Adds a Spline button on the QField map: while armed, the "
+        "points you place are smoothed into a curve live — for new "
+        "features and for reshaping — using the desktop Map Cleaning "
+        "spline settings. Save with QField's normal confirm button.",
+    ),
+    (
+        "include_reshape_check",
+        "Include multi-polygon reshape tool",
+        "Adds a Reshape button on the QField map: tap out a line "
+        "across one or more polygons on the active layer and every "
+        "crossed polygon is reshaped to it — optionally limited to "
+        "polygons you tap first. The line is smoothed while the "
+        "Spline tool is armed.",
+    ),
+    (
+        "include_reverse_check",
+        "Include line direction reverse tool",
+        "Adds a Reverse button on the QField map: tap a line to flip "
+        "its vertex order so asymmetric line symbology (ticks, teeth, "
+        "dip marks) renders on the other side. Tap the line again to "
+        "flip it back.",
+    ),
+    (
+        "include_copyattrs_check",
+        "Include attribute copy tool",
+        "Adds a Copy button on the QField map: tap a feature to copy "
+        "FROM, then tap features to copy TO — non-empty attributes "
+        "are stamped across, including between layers (e.g. Basemap "
+        "lithology, minerals and modal percents onto Field Notebook "
+        "points). The source stays armed for stamping several "
+        "features; one-tap undo covers the last one.",
+    ),
+    (
+        "include_merge_check",
+        "Include polygon merge tool",
+        "Adds a Merge button on the QField map: tap two or more "
+        "touching polygons on one layer and merge them into one — "
+        "the first polygon you tap keeps its attributes and "
+        "identity, and its empty fields are filled from the others. "
+        "One-tap undo restores the original polygons.",
+    ),
+)
 
 
 class ExportDialog(QDialog):
@@ -391,155 +506,30 @@ class ExportDialog(QDialog):
             "When enabled, raster formats not supported by QField (ECW, MrSID, etc.) "
             "will be automatically converted to GeoTIFF with LZW compression during export."
         )
-        self.convert_unsupported_check.setStyleSheet("""
-            QCheckBox {
-                color: #475569;
-                font-size: 12px;
-                padding: 4px 0px;
-            }
-            QCheckBox::indicator {
-                width: 14px;
-                height: 14px;
-                border: 2px solid #cbd5e1;
-                border-radius: 3px;
-                background-color: #ffffff;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #64748b;
-                border-color: #64748b;
-            }
-            QCheckBox::indicator:unchecked:hover {
-                border-color: #64748b;
-            }
-        """)
+        self.convert_unsupported_check.setStyleSheet(_CHECKBOX_QSS)
         self.convert_unsupported_check.setVisible(False)  # Hidden until unsupported layers detected
+        # Deliberately NOT inside the collapsible section below:
+        # _build_tree_structure reveals this one with setVisible(True) when an
+        # unsupported raster turns up, which a collapsed parent would swallow.
         layout.addWidget(self.convert_unsupported_check)
 
-        # Z-filter QField companion plugin checkbox
-        self.include_zfilter_check = QCheckBox(
-            "Include Z-Filter level switcher (QField plugin)")
-        self.include_zfilter_check.setChecked(True)
-        self.include_zfilter_check.setToolTip(
-            "Ships a small QField plugin next to the exported project so the "
-            "mapping layers can be filtered by bench/level elevation on the "
-            "device. The export itself always contains ALL levels."
-        )
-        self.include_zfilter_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_zfilter_check)
-
-        # Scale display / lock feature of the same companion plugin
-        self.include_scale_check = QCheckBox(
-            "Include scale display (QField plugin)")
-        self.include_scale_check.setChecked(True)
-        self.include_scale_check.setToolTip(
-            "Shows the live map scale on the QField map as a tappable pill — "
-            "tap to lock the map at a fixed scale (presets or custom) for "
-            "consistent mapping."
-        )
-        self.include_scale_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_scale_check)
-
-        # Imagery opacity toggle feature of the same companion plugin
-        self.include_opacity_check = QCheckBox(
-            "Include imagery opacity toggle (QField plugin)")
-        self.include_opacity_check.setChecked(True)
-        self.include_opacity_check.setToolTip(
-            "Adds a small button on the QField map that dims or hides the "
-            "exported imagery/raster layers while drawing linework "
-            "(100% → 50% → 25% → off)."
-        )
-        self.include_opacity_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_opacity_check)
-
-        # Polygon clip tool feature of the same companion plugin
-        self.include_clipping_check = QCheckBox(
-            "Include polygon clip tool (QField plugin)")
-        self.include_clipping_check.setChecked(True)
-        self.include_clipping_check.setToolTip(
-            "Adds a Clip button on the QField map: tap the polygon(s) to "
-            "keep, tap the polygon(s) to cut, and the overlap is removed on "
-            "the device — polygons split apart become separate features."
-        )
-        self.include_clipping_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_clipping_check)
-
-        # Spline draw/reshape feature of the same companion plugin
-        self.include_spline_check = QCheckBox(
-            "Include spline drawing/reshaping (QField plugin)")
-        self.include_spline_check.setChecked(True)
-        self.include_spline_check.setToolTip(
-            "Adds a Spline button on the QField map: while armed, the "
-            "points you place are smoothed into a curve live — for new "
-            "features and for reshaping — using the desktop Map Cleaning "
-            "spline settings. Save with QField's normal confirm button."
-        )
-        self.include_spline_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_spline_check)
-
-        # Multi-polygon reshape tool feature of the same companion plugin
-        self.include_reshape_check = QCheckBox(
-            "Include multi-polygon reshape tool (QField plugin)")
-        self.include_reshape_check.setChecked(True)
-        self.include_reshape_check.setToolTip(
-            "Adds a Reshape button on the QField map: tap out a line "
-            "across one or more polygons on the active layer and every "
-            "crossed polygon is reshaped to it — optionally limited to "
-            "polygons you tap first. The line is smoothed while the "
-            "Spline tool is armed."
-        )
-        self.include_reshape_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_reshape_check)
-
-        # Line direction reverse tool feature of the same companion plugin
-        self.include_reverse_check = QCheckBox(
-            "Include line direction reverse tool (QField plugin)")
-        self.include_reverse_check.setChecked(True)
-        self.include_reverse_check.setToolTip(
-            "Adds a Reverse button on the QField map: tap a line to flip "
-            "its vertex order so asymmetric line symbology (ticks, teeth, "
-            "dip marks) renders on the other side. Tap the line again to "
-            "flip it back."
-        )
-        self.include_reverse_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_reverse_check)
-
-        # Attribute copy tool feature of the same companion plugin
-        self.include_copyattrs_check = QCheckBox(
-            "Include attribute copy tool (QField plugin)")
-        self.include_copyattrs_check.setChecked(True)
-        self.include_copyattrs_check.setToolTip(
-            "Adds a Copy button on the QField map: tap a feature to copy "
-            "FROM, then tap features to copy TO — non-empty attributes "
-            "are stamped across, including between layers (e.g. Basemap "
-            "lithology, minerals and modal percents onto Field Notebook "
-            "points). The source stays armed for stamping several "
-            "features; one-tap undo covers the last one."
-        )
-        self.include_copyattrs_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_copyattrs_check)
-
-        # Polygon merge tool feature of the same companion plugin
-        self.include_merge_check = QCheckBox(
-            "Include polygon merge tool (QField plugin)")
-        self.include_merge_check.setChecked(True)
-        self.include_merge_check.setToolTip(
-            "Adds a Merge button on the QField map: tap two or more "
-            "touching polygons on one layer and merge them into one — "
-            "the first polygon you tap keeps its attributes and "
-            "identity, and its empty fields are filled from the others. "
-            "One-tap undo restores the original polygons."
-        )
-        self.include_merge_check.setStyleSheet(
-            self.convert_unsupported_check.styleSheet())
-        layout.addWidget(self.include_merge_check)
+        # QField companion-plugin features. Always-on defaults that are
+        # rarely changed, so they live in a section that starts COLLAPSED —
+        # the nine rows they used to occupy go to the layer tree instead.
+        self._plugin_section = CollapsibleSection(
+            "QField Plugin Tools", expanded=False)
+        self._plugin_checks = []
+        for attr, label, tooltip in _PLUGIN_TOOLS:
+            check = QCheckBox(label)
+            check.setChecked(True)
+            check.setToolTip(tooltip)
+            check.setStyleSheet(_CHECKBOX_QSS)
+            check.toggled.connect(self._update_plugin_badge)
+            setattr(self, attr, check)
+            self._plugin_checks.append(check)
+            self._plugin_section.content_layout().addWidget(check)
+        self._update_plugin_badge()
+        layout.addWidget(self._plugin_section)
 
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
@@ -586,6 +576,16 @@ class ExportDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.setLayout(layout)
+
+    def _update_plugin_badge(self):
+        """Show how many plugin tools are on, so the collapsed header still
+        tells you when this export is not the default."""
+        total = len(self._plugin_checks)
+        on = sum(1 for check in self._plugin_checks if check.isChecked())
+        # 'required' is the neutral grey badge; 'loaded' is green and would
+        # fight this dialog's slate palette.
+        self._plugin_section.set_status(
+            "required", "{} of {} included".format(on, total))
 
     def _on_cancel_clicked(self):
         """Handle cancel button click - cancel export if running, otherwise close."""
@@ -966,15 +966,7 @@ class ExportDialog(QDialog):
         self.select_vector_button.setEnabled(enabled)
         self.select_raster_button.setEnabled(enabled)
         self.convert_unsupported_check.setEnabled(enabled)
-        self.include_zfilter_check.setEnabled(enabled)
-        self.include_scale_check.setEnabled(enabled)
-        self.include_opacity_check.setEnabled(enabled)
-        self.include_clipping_check.setEnabled(enabled)
-        self.include_spline_check.setEnabled(enabled)
-        self.include_reshape_check.setEnabled(enabled)
-        self.include_reverse_check.setEnabled(enabled)
-        self.include_copyattrs_check.setEnabled(enabled)
-        self.include_merge_check.setEnabled(enabled)
+        self._plugin_section.setEnabled(enabled)  # covers all nine checkboxes
         self.layer_tree.setEnabled(enabled)
 
     def _cleanup_export(self):

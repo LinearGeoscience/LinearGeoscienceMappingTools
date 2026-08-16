@@ -90,7 +90,10 @@ MINERAL_RGB = [
 ]
 DEFAULT_RGB = "96,110,125"   # neutral blue-grey (unset / other minerals)
 
-PCT_FACTOR = ("CASE WHEN \"Percent\" IS NULL THEN 1 "
+# 0 counts as UNRECORDED (middle step), not as "0%": coalesce(...) <= 0
+# rather than IS NULL, so a stray 0 cannot render the sparsest stipple tier
+# (same guard as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+PCT_FACTOR = ("CASE WHEN coalesce(\"Percent\", 0) <= 0 THEN 1 "
               "WHEN \"Percent\" < 2 THEN 1.732 "
               "WHEN \"Percent\" < 5 THEN 1.225 "
               "WHEN \"Percent\" < 10 THEN 1 "
@@ -101,8 +104,13 @@ OLD_LABEL_TAIL = " ELSE concat("
 NEW_LABEL_BRANCH = (
     "WHEN \"Type\" = 'Mineralisation' THEN \"SubType1\" || "
     "coalesce(' ' || nullif(\"Mineral1\",''), '') || "
-    "CASE WHEN \"Percent\" IS NOT NULL THEN ' ' || \"Percent\" || '%' "
+    "CASE WHEN coalesce(\"Percent\", 0) > 0 THEN ' ' || \"Percent\" || '%' "
     "ELSE '' END")
+# The same branch before the zero guard - recognised only so a re-run does
+# not inject a duplicate on a template that predates
+# inject_zero_value_guards.py.
+LEGACY_LABEL_BRANCH = NEW_LABEL_BRANCH.replace(
+    "coalesce(\"Percent\", 0) > 0", "\"Percent\" IS NOT NULL")
 
 # field, sql type, kind, alias
 FIELD_SPEC = [
@@ -486,7 +494,11 @@ def main():
     lab = ET.fromstring(m.group(0))
     ts = lab.find(".//text-style")
     label = ts.get("fieldName")
-    if NEW_LABEL_BRANCH in label:
+    if NEW_LABEL_BRANCH in label or LEGACY_LABEL_BRANCH in label:
+        # LEGACY_ = the pre-zero-guard wording.  Matching it too keeps this
+        # script idempotent against a template that has not yet been run
+        # through inject_zero_value_guards.py; without it a re-run would
+        # inject a SECOND Mineralisation branch.
         print("label: Mineralisation branch already present")
     else:
         if label.count(OLD_LABEL_TAIL) != 1:
@@ -639,7 +651,7 @@ def main():
         assert str(FIRST_SYMBOL + i) in sym_names
         assert final_sld.count(f"<ogc:Literal>{escape(code)}</ogc:Literal>") == 1, code
     label = root.find(".//labeling/settings/text-style").get("fieldName")
-    assert NEW_LABEL_BRANCH in label
+    assert NEW_LABEL_BRANCH in label or LEGACY_LABEL_BRANCH in label
     # dd spot-checks: mineral colour + percent density present in new symbols
     for i, (code, kind, _p) in enumerate(NEW_CODES):
         s, e = symbol_block(final_qml, str(FIRST_SYMBOL + i))

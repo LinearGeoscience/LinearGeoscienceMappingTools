@@ -38,8 +38,11 @@ DETAIL_GATE = ("(\"Category\" IN ('Veins','Lithology') "
 WEIGHT_F = ("CASE WHEN \"Weight\" = 'Major' THEN 1.15 "
             "WHEN \"Weight\" = 'Minor' THEN 0.8 ELSE 1 END")
 
+# 0 counts as UNRECORDED, not "0 cm wide" - same guard as
+# inject_weight_scaling.DETAIL_WIDTH_FACTOR, so a stray 0 cannot shrink the
+# label to 0.7x.
 WIDTH_F = (
-    "CASE WHEN " + DETAIL_GATE + " AND \"Width_cm\" IS NOT NULL THEN "
+    "CASE WHEN " + DETAIL_GATE + " AND coalesce(\"Width_cm\", 0) > 0 THEN "
     "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.7 "
     "WHEN \"Width_cm\" <= 2 THEN 0.85 "
     "WHEN \"Width_cm\" <= 5 THEN 1 "

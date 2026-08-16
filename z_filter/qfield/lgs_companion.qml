@@ -239,6 +239,12 @@ Item {
   readonly property var vectorOpacityLayers: [] // LGS-EXPORT-DATA:vectoropacitylayers
   // [tightness, tolerance (map units), max segments] from desktop settings.
   readonly property var splineParams: [] // LGS-EXPORT-DATA:splineparams
+  // Export timestamp + a short hash of this file, stamped by the exporter.
+  // A sidecar only reaches the device through a fresh QField export, so
+  // without this there is no way to tell which build a tablet is running —
+  // and a field report of "still broken" cannot be told apart from "still
+  // on the old build".
+  readonly property var sidecarBuild: [] // LGS-EXPORT-DATA:build
 
   property var mainWindow: iface.mainWindow()
 
@@ -295,6 +301,14 @@ Item {
       if (info)
         info.saveVariable(name, String(value))
     } catch (error) {}
+  }
+
+  function buildLabel() {
+    // sidecarBuild is [exportedISO, shortHash], stamped by write_sidecar.
+    if (!sidecarBuild || sidecarBuild.length < 2)
+      return ''
+    return qsTr('Sidecar build %1 · exported %2')
+        .arg(sidecarBuild[1]).arg(sidecarBuild[0])
   }
 
   function toast(message) {
@@ -1676,6 +1690,18 @@ Item {
           font.pointSize: 10
           opacity: 0.7
         }
+
+        // Which build this device is actually running. A sidecar only
+        // arrives with a fresh QField export, so without this a field
+        // report cannot be told apart from a stale project.
+        Label {
+          Layout.fillWidth: true
+          text: plugin.buildLabel()
+          visible: plugin.sidecarBuild.length > 0
+          wrapMode: Text.WordWrap
+          font.pointSize: 9
+          opacity: 0.5
+        }
       }
     }
   }
@@ -3007,6 +3033,9 @@ Item {
   ExpressionEvaluator {
     id: clipEvaluator
     project: qgisProject
+    // Explicit: QField's own instances always set mode, and the template
+    // variant would return an expression back as literal text.
+    mode: ExpressionEvaluator.ExpressionMode
   }
 
   // Evaluate a QGIS expression against a layer (+ optional feature).
@@ -3015,8 +3044,17 @@ Item {
   function evalExpr(layer, feature, expr) {
     try {
       clipEvaluator.layer = layer
-      if (feature !== null && feature !== undefined)
+      // The evaluator holds onto its feature, so a layer-only call would
+      // otherwise evaluate against whichever feature was set last. Clearing
+      // it is best-effort: its own try/catch keeps a rejected null
+      // assignment from failing the evaluation itself.
+      if (feature !== null && feature !== undefined) {
         clipEvaluator.feature = feature
+      } else {
+        try {
+          clipEvaluator.feature = null
+        } catch (error) {}
+      }
       clipEvaluator.expressionText = expr
       const raw = clipEvaluator.evaluate()
       if (raw === undefined || raw === null)
@@ -3342,11 +3380,77 @@ Item {
         })
   }
 
-  function copyClipAttributes(target, source, names, uuidField, freshUuid) {
+  // Last featureNulls() run: how many fields looked ambiguous and how many
+  // turned out to be genuinely NULL. Surfaced in the Reverse toast.
+  property int lastProbedFields: 0
+  property int lastBlankFields: 0
+
+  function valueIsAmbiguous(value) {
+    // Could this JS value be a NULL that lost its identity crossing the
+    // QML bridge?
+    //
+    // QGIS stores an unset attribute as a TYPED null variant —
+    // QVariant(double) on a REAL field — and the bridge converts that to
+    // the JS number 0 (false on a boolean). A NULL string arrives as ''
+    // and isEmptyValue already catches it, so only these collapse into
+    // something that looks like real data. Everything else IS real data
+    // and must be copied verbatim: on FieldNotebook, Dip = 0 is
+    // horizontal and Strike_RHR = 0 is north.
+    if (typeof value === 'number')
+      return value === 0 || isNaN(value)
+    return value === false
+  }
+
+  function featureNulls(layer, feature, names) {
+    // -> {fieldName: true} for the attributes that are genuinely NULL.
+    //
+    // Asked of the EXPRESSION ENGINE one field at a time, because nothing
+    // else can be trusted. feature.attribute() cannot distinguish a NULL
+    // REAL from 0 (see valueIsAmbiguous), and to_json(attributes()) is no
+    // better: it serialises a typed null through the same coercion, so a
+    // NULL Width_cm comes back as 0 while NULL text fields come back as
+    // null — the JSON looks healthy and is silently wrong exactly where
+    // it matters. QGIS expression IS NULL uses the engine's own null
+    // test, which sees the typed null for what it is.
+    //
+    // Cost is bounded: only ambiguous fields are probed, and layers carry
+    // a handful of numeric columns (Linework 6, Overlay 4).
+    let nulls = ({})
+    let probed = 0
+    try {
+      const fields = (names !== undefined && names !== null)
+          ? names : attributeNames(layer, feature)
+      for (const name of fields) {
+        let value = null
+        try {
+          value = feature.attribute(name)
+        } catch (error) {
+          continue
+        }
+        if (!valueIsAmbiguous(value))
+          continue
+        probed++
+        // Stringified result: 'true' on any sane build, '1' if a bool
+        // ever arrives as an int.
+        const verdict = evalExpr(layer, feature, '"' + name + '" IS NULL')
+        if (verdict === 'true' || verdict === '1')
+          nulls[name] = true
+      }
+    } catch (error) {}
+    // Reported by the Reverse toast so the guard is visible on device —
+    // otherwise every failure mode here is silent.
+    lastProbedFields = probed
+    lastBlankFields = Object.keys(nulls).length
+    return nulls
+  }
+
+  function copyClipAttributes(target, source, names, uuidField, freshUuid,
+                              layer) {
     // fid/id/ogc_fid stay null so the provider assigns them (GeoPackage
     // UNIQUE PK). Everything else is copied — including Elevation, which
     // deliberately overwrites the auto-stamp default so new pieces keep
     // the source level and stay visible under an active Z filter.
+    const nulls = featureNulls(layer, source, names)
     for (const name of names) {
       const lower = String(name).toLowerCase()
       if (lower === 'fid' || lower === 'id' || lower === 'ogc_fid')
@@ -3359,7 +3463,11 @@ Item {
           // pushed through the QML bridge lands as 0 on numeric fields
           // (0 width, 0 modal % — false data on every recreate/undo),
           // while an untouched attribute on the fresh feature stays
-          // NULL (or keeps its default-value stamp).
+          // NULL (or keeps its default-value stamp). featureNulls is
+          // the authority — isEmptyValue cannot see a NULL number,
+          // which reaches JS already coerced to 0.
+          if (nulls[name] === true)
+            continue
           const value = source.attribute(name)
           if (!isEmptyValue(value))
             target.setAttribute(name, value)
@@ -3657,7 +3765,8 @@ Item {
           const geometry = GeometryUtils.createGeometryFromWkt(part)
           let created = FeatureUtils.createFeature(layer, geometry)
           const freshUuid = makeClipUuid(layer)
-          copyClipAttributes(created, feature, names, uuidField, freshUuid)
+          copyClipAttributes(created, feature, names, uuidField,
+                             freshUuid, layer)
           newFeatures.push(created)
           newUuids.push(freshUuid)
           pieceCount++
@@ -3791,7 +3900,8 @@ Item {
           const geometry = GeometryUtils.createGeometryFromWkt(part)
           let created = FeatureUtils.createFeature(layer, geometry)
           const freshUuid = makeClipUuid(layer)
-          copyClipAttributes(created, feature, names, uuidField, freshUuid)
+          copyClipAttributes(created, feature, names, uuidField,
+                             freshUuid, layer)
           newFeatures.push(created)
           newUuids.push(freshUuid)
           pieceCount++
@@ -3952,9 +4062,10 @@ Item {
           if (splitApart) {
             stampedUuid = makeClipUuid(layer)
             copyClipAttributes(created, item.feature, names, uuidField,
-                               stampedUuid)
+                               stampedUuid, layer)
           } else {
-            copyClipAttributes(created, item.feature, names, null, '')
+            copyClipAttributes(created, item.feature, names, null, '',
+                               layer)
             if (uuidField !== null) {
               try {
                 const original = item.feature.attribute(uuidField)
@@ -4018,7 +4129,8 @@ Item {
       for (const gone of undo.deleted) {
         const geometry = GeometryUtils.createGeometryFromWkt(gone.wkt)
         let created = FeatureUtils.createFeature(layer, geometry)
-        copyClipAttributes(created, gone.feature, undo.names, null, '')
+        copyClipAttributes(created, gone.feature, undo.names, null, '',
+                           layer)
         restored.push(created)
       }
       if (!applyClipEdits(layer, restored, doomed)) {
@@ -6041,7 +6153,8 @@ Item {
         // copied verbatim — including the UUID (identity restored).
         const geometry = GeometryUtils.createGeometryFromWkt(entry.wkt)
         let created = FeatureUtils.createFeature(layer, geometry)
-        copyClipAttributes(created, entry.feature, undo.names, null, '')
+        copyClipAttributes(created, entry.feature, undo.names, null, '',
+                           layer)
         restored.push(created)
       }
       if (!applyClipEdits(layer, restored, doomed)) {
@@ -6663,7 +6776,7 @@ Item {
       const names = attributeNames(layer, feature)
       const geometry = GeometryUtils.createGeometryFromWkt(reversed)
       let created = FeatureUtils.createFeature(layer, geometry)
-      copyClipAttributes(created, feature, names, null, '')
+      copyClipAttributes(created, feature, names, null, '', layer)
       if (!applyClipEdits(layer, [created], [feature.id])) {
         toast(qsTr('Reverse failed — no changes made'))
         return
@@ -6673,7 +6786,16 @@ Item {
         iface.mapCanvas().refresh()
       } catch (error) {}
       reverseCount++
-      toast(qsTr('Direction reversed — tap the line again to flip back'))
+      // Naming the preserved blanks makes the NULL guard visible on the
+      // device — every failure path inside featureNulls is otherwise
+      // silent, so a width that turns into 0 would look identical to a
+      // guard that never ran.
+      if (lastBlankFields > 0) {
+        toast(qsTr('Direction reversed — %1 blank field(s) preserved')
+              .arg(lastBlankFields))
+      } else {
+        toast(qsTr('Direction reversed — tap the line again to flip back'))
+      }
     } catch (error) {
       toast(qsTr('Reverse failed'))
     }
@@ -7115,8 +7237,15 @@ Item {
       const dstNames = attributeNames(dstLayer, dstFeature)
       const pairs = buildCopyPairs(srcNames, dstNames, copySourceLabel,
                                    copyLayerLabel(dstLayer))
+      // A NULL number reaches JS as 0 (see featureNulls) — without this
+      // the plan would offer, and stamp, 'Width_cm = 0' from a source
+      // whose width was never recorded.
+      const srcNulls = featureNulls(copySourceLayer, copySourceFeature,
+                                    srcNames)
       let plan = []
       for (const pair of pairs) {
+        if (srcNulls[pair.from] === true)
+          continue
         let value = null
         try {
           value = copySourceFeature.attribute(pair.from)
@@ -7152,8 +7281,11 @@ Item {
     let list = []
     try {
       const names = attributeNames(copySourceLayer, copySourceFeature)
+      const srcNulls = featureNulls(copySourceLayer, copySourceFeature, names)
       for (const name of names) {
         if (copyFieldIsSkipped(name))
+          continue
+        if (srcNulls[name] === true)
           continue
         let value = null
         try {
@@ -7229,7 +7361,7 @@ Item {
       }
       const geometry = GeometryUtils.createGeometryFromWkt(wkt)
       let created = FeatureUtils.createFeature(dstLayer, geometry)
-      copyClipAttributes(created, dstFeature, names, null, '')
+      copyClipAttributes(created, dstFeature, names, null, '', dstLayer)
       for (const entry of plan) {
         try {
           created.setAttribute(entry.name, entry.value)
@@ -7298,7 +7430,8 @@ Item {
       }
       const geometry = GeometryUtils.createGeometryFromWkt(undo.wkt)
       let restored = FeatureUtils.createFeature(layer, geometry)
-      copyClipAttributes(restored, undo.feature, undo.names, null, '')
+      copyClipAttributes(restored, undo.feature, undo.names, null, '',
+                         layer)
       if (!applyClipEdits(layer, [restored], doomed)) {
         toast(qsTr('Undo failed — no changes made'))
         return
@@ -7875,10 +8008,16 @@ Item {
         }
         parents.push({ wkt: wkt, feature: entry.feature })
         deleteIds.push(entry.id)
+        // NULL is written into the map explicitly: read straight off
+        // the feature a NULL number arrives as 0 (see featureNulls),
+        // and mergeCarryValues would then treat it as a real value —
+        // filling the keeper with 0 or refusing to be filled itself.
+        const parentNulls = featureNulls(layer, entry.feature, names)
         let values = ({})
         for (const name of names) {
           try {
-            values[name] = entry.feature.attribute(name)
+            values[name] = parentNulls[name] === true
+                ? null : entry.feature.attribute(name)
           } catch (error) {}
         }
         if (i === 0) {
@@ -7898,7 +8037,7 @@ Item {
       let created = FeatureUtils.createFeature(layer, geometry)
       // Keeper attributes verbatim, UUID preserved — identity
       // continuity, same rules as Reverse / the reshape undo.
-      copyClipAttributes(created, keeper.feature, names, null, '')
+      copyClipAttributes(created, keeper.feature, names, null, '', layer)
       const fills = mergeCarryValues(keeperValues, parentValuesList, names)
       for (const name in fills) {
         try {
@@ -7984,7 +8123,8 @@ Item {
       for (const parent of undo.parents) {
         const geometry = GeometryUtils.createGeometryFromWkt(parent.wkt)
         let feature = FeatureUtils.createFeature(layer, geometry)
-        copyClipAttributes(feature, parent.feature, undo.names, null, '')
+        copyClipAttributes(feature, parent.feature, undo.names, null, '',
+                           layer)
         restored.push(feature)
       }
       if (!applyClipEdits(layer, restored, doomed)) {

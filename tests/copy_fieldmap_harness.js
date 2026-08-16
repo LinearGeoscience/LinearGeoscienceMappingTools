@@ -20,13 +20,14 @@ function extractFunction(name) {
          qml.slice(bodyStart, i + 1)
 }
 
-const code = ['isEmptyValue', 'copyFieldIsSkipped', 'copyFieldMapFor',
-              'buildCopyPairs']
+const code = ['isEmptyValue', 'valueIsAmbiguous', 'copyFieldIsSkipped',
+              'copyFieldMapFor', 'buildCopyPairs']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
 (0, eval)(code)
 const isEmptyValue = globalThis.isEmptyValue
+const valueIsAmbiguous = globalThis.valueIsAmbiguous
 const copyFieldIsSkipped = globalThis.copyFieldIsSkipped
 const buildCopyPairs = globalThis.buildCopyPairs
 
@@ -55,6 +56,31 @@ check('zero is NOT empty', isEmptyValue(0) === false)
 check("string '0' is NOT empty", isEmptyValue('0') === false)
 check('false is NOT empty', isEmptyValue(false) === false)
 check('text is NOT empty', isEmptyValue('Qz') === false)
+
+// --- valueIsAmbiguous: which values need an IS NULL probe --------------
+// isEmptyValue deliberately treats 0 as real, but a NULL REAL reaches JS
+// as 0 through the QML bridge, so 0 alone cannot be trusted either way.
+// valueIsAmbiguous picks out exactly the values that could be a disguised
+// NULL; featureNulls then settles each one with a '"F" IS NULL'
+// evaluation. Getting this list wrong is what let a blank Width_cm be
+// copied as 0 and drawn at the 0.55x hairline tier
+// (scripts/inject_weight_scaling.py DETAIL_WIDTH_FACTOR).
+check('0 is ambiguous', valueIsAmbiguous(0) === true)
+check('-0 is ambiguous', valueIsAmbiguous(-0) === true)
+check('NaN is ambiguous', valueIsAmbiguous(NaN) === true)
+check('false is ambiguous', valueIsAmbiguous(false) === true)
+// Everything below is unmistakably real data and must be copied verbatim.
+check('a nonzero number is real', valueIsAmbiguous(7) === false)
+check('a small width is real', valueIsAmbiguous(0.5) === false)
+check('a negative number is real', valueIsAmbiguous(-3) === false)
+check('true is real', valueIsAmbiguous(true) === false)
+check('text is real', valueIsAmbiguous('Qz') === false)
+// A NULL string arrives as '' and isEmptyValue already drops it, so it
+// must not burn an expression evaluation here.
+check("'' is not ambiguous", valueIsAmbiguous('') === false)
+check("the string '0' is not ambiguous", valueIsAmbiguous('0') === false)
+check('null is not ambiguous', valueIsAmbiguous(null) === false)
+check('undefined is not ambiguous', valueIsAmbiguous(undefined) === false)
 
 // --- skip list ---------------------------------------------------------
 for (const name of ['fid', 'FID', 'id', 'ogc_fid', 'UUID', 'feature_uuid',

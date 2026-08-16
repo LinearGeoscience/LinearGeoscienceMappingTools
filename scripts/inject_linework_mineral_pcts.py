@@ -60,9 +60,12 @@ OLD_PERCENT_TEXT = ("CASE WHEN \"Percent\" IS NULL THEN '' "
 
 
 def mineral_piece(n):
+    # coalesce(...) > 0 rather than IS NOT NULL: a percentage of zero is not
+    # a reading, and 'ga0%' on the map is worse than plain 'ga' (same guard
+    # as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
     return ("coalesce(\"Mineral{n}\",'') || "
             "CASE WHEN coalesce(\"Mineral{n}\",'') != '' "
-            "AND \"Mineral{n}Pct\" IS NOT NULL "
+            "AND coalesce(\"Mineral{n}Pct\", 0) > 0 "
             "THEN \"Mineral{n}Pct\" || '%' ELSE '' END").format(n=n)
 
 

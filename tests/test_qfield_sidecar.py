@@ -69,7 +69,8 @@ class TestWriteSidecar(unittest.TestCase):
         self.assertEqual(_data_values(source),
                          {'opacitylayers': '[]',
                           'vectoropacitylayers': '[]',
-                          'splineparams': '[]'})
+                          'splineparams': '[]',
+                          'build': '[]'})
 
     def test_all_flag_combinations(self):
         names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline',
@@ -85,9 +86,10 @@ class TestWriteSidecar(unittest.TestCase):
         path, _text = self._write()
         self.assertEqual(os.path.basename(path), "proj.qml")
 
-    def test_only_flag_lines_differ_from_source(self):
-        # opacity_layers/spline_params=None rewrite the data lines to [] —
-        # identical to source — so only the ten flag lines may differ.
+    def test_only_flag_and_build_lines_differ_from_source(self):
+        # opacity_layers/spline_params=None rewrite those data lines to [] —
+        # identical to source — so only the ten flag lines and the build
+        # stamp (always filled, that is its whole point) may differ.
         _path, text = self._write(zfilter=False, scale=False, opacity=False,
                                   clipping=False, spline=False,
                                   reshape=False, reverse=False,
@@ -97,8 +99,33 @@ class TestWriteSidecar(unittest.TestCase):
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 10, diff)
-        self.assertTrue(all('LGS-EXPORT-FLAG' in a for a, _b in diff), diff)
+        self.assertEqual(len(diff), 11, diff)
+        self.assertTrue(
+            all('LGS-EXPORT-FLAG' in a or 'LGS-EXPORT-DATA:build' in a
+                for a, _b in diff), diff)
+
+    def test_build_stamp_identifies_the_source(self):
+        # The stamp is [date, short hash of the UNMODIFIED source], so two
+        # exports with different feature picks report the same build and any
+        # edit to lgs_companion.qml reports a different one. Without this
+        # there is no way to tell which sidecar a tablet is running.
+        _p1, all_on = self._write()
+        _p2, all_off = self._write(zfilter=False, scale=False, opacity=False,
+                                   clipping=False, spline=False,
+                                   reshape=False, reverse=False,
+                                   copyattrs=False, merge=False,
+                                   recenterhold=False)
+        stamp_on = json.loads(_data_values(all_on)['build'])
+        stamp_off = json.loads(_data_values(all_off)['build'])
+        self.assertEqual(stamp_on, stamp_off)
+        self.assertEqual(len(stamp_on), 2, stamp_on)
+        self.assertRegex(stamp_on[0], r'^\d{4}-\d{2}-\d{2}$')
+        self.assertRegex(stamp_on[1], r'^[0-9a-f]{8}$')
+        with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertNotEqual(
+            z_qfield.sidecar_build_stamp(source)[1],
+            z_qfield.sidecar_build_stamp(source + '\n')[1])
 
     def test_opacity_layers_data_line(self):
         names = ['Ortho 2024', 'Say "hi"']

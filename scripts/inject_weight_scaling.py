@@ -53,11 +53,17 @@ FACTORS = {"Major": "1.5", "Minor": "0.5"}  # Moderate/NULL -> 1 (ELSE branch)
 # step with inject_linework_detail_scope.DETAIL_VIS) so the same
 # renderer-wide expression is a no-op elsewhere.  NULL width renders at the
 # authored thickness (factor 1, mid-ramp): explicit thin widths sit BELOW it.
+#
+# 0 counts as UNRECORDED, not as "0 cm wide": coalesce(...) > 0 rather than
+# IS NOT NULL.  A width of zero is meaningless on a mapped line, and a stray
+# 0 (a QField spinbox, an attribute copy that lost a NULL) would otherwise
+# drop the feature to the 0.55x hairline tier - see the same guard in
+# inject_label_size_scaling.WIDTH_F and inject_linework_vein_fields.WIDTH_TEXT.
 DETAIL_WIDTH_FACTOR = (
     "CASE WHEN (\"Category\" IN ('Veins','Lithology') "
     "OR \"Type\" LIKE 'Fault%' OR \"Type\" LIKE 'Shear%' "
     "OR \"Type\" IN ('Shear Zone Boundary','Detachment')) "
-    "AND \"Width_cm\" IS NOT NULL THEN "
+    "AND coalesce(\"Width_cm\", 0) > 0 THEN "
     "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.55 "
     "WHEN \"Width_cm\" <= 2 THEN 0.75 "
     "WHEN \"Width_cm\" <= 5 THEN 1.15 "

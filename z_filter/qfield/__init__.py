@@ -13,6 +13,8 @@ LGS-EXPORT-DATA lines to bake in export-time data (raster layer names).
 Pure python (no qgis imports) so tests can load this file directly.
 """
 
+import datetime
+import hashlib
 import json
 import os
 import re
@@ -36,7 +38,23 @@ _DATA_MARKERS = {
     "opacitylayers": "LGS-EXPORT-DATA:opacitylayers",
     "vectoropacitylayers": "LGS-EXPORT-DATA:vectoropacitylayers",
     "splineparams": "LGS-EXPORT-DATA:splineparams",
+    "build": "LGS-EXPORT-DATA:build",
 }
+
+
+def sidecar_build_stamp(source_text, exported_at=None):
+    """[date, short-hash] identifying the sidecar shipped to a device.
+
+    The hash is of the UNSTAMPED source, so it identifies the code and not
+    the export: two exports of the same sidecar share a hash, and any edit
+    to lgs_companion.qml changes it.  Shown in the plugin's Z panel, which
+    is the only way to tell which build a tablet is actually running - the
+    sidecar reaches the device by file copy, so a stale project looks
+    exactly like a fix that did not work.
+    """
+    digest = hashlib.sha1(source_text.encode("utf-8")).hexdigest()[:8]
+    stamped = exported_at or datetime.date.today().isoformat()
+    return [stamped, digest]
 
 
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
@@ -68,6 +86,9 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
     """
     with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
         text = fh.read()
+    # Stamped from the UNMODIFIED source, so the hash tracks the sidecar
+    # code rather than this particular export's feature picks.
+    build = sidecar_build_stamp(text)
     for name, enabled in (("zfilter", zfilter), ("scale", scale),
                           ("opacity", opacity), ("clipping", clipping),
                           ("spline", spline), ("reshape", reshape),
@@ -85,7 +106,8 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                 f"(expected exactly 1) in {SIDECAR_SOURCE}")
     for name, value in (("opacitylayers", opacity_layers),
                         ("vectoropacitylayers", vector_layers),
-                        ("splineparams", spline_params)):
+                        ("splineparams", spline_params),
+                        ("build", build)):
         marker = _DATA_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property var \w+: )\[.*\]( // %s)$"

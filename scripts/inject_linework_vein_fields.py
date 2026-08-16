@@ -53,8 +53,11 @@ SPEC = [
     ("Percent", "MEDIUMINT", "percent", "Mineral %", VEINS_VIS),
 ]
 
+# 0 renders as no width at all rather than '0mm' - a width of zero is
+# meaningless on a mapped line, so it reads as unrecorded (same guard as
+# inject_weight_scaling.DETAIL_WIDTH_FACTOR).
 WIDTH_TEXT = (
-    "CASE WHEN \"Width_cm\" IS NULL THEN '' "
+    "CASE WHEN coalesce(\"Width_cm\", 0) <= 0 THEN '' "
     "WHEN \"Width_cm\" >= 100 THEN round(\"Width_cm\"/100.0, 2) || 'm' "
     "WHEN \"Width_cm\" < 1 THEN round(\"Width_cm\"*10, 1) || 'mm' "
     "ELSE round(\"Width_cm\", 1) || 'cm' END"
