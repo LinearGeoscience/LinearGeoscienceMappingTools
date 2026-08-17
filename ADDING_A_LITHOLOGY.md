@@ -13,13 +13,25 @@ Two ways to do it. Use the scripted path unless you are making a throwaway one-o
 | Thing | Lives in |
 |---|---|
 | The code itself | `BasemapCodes` table in the gpkg |
-| Which colour it draws | one `<rule>` per code in the `4 - Basemap` renderer |
+| Which colour it draws | **the LIVE template** — see "Colour belongs in the live template" below |
 | Which texture, what ink, how heavy | three data-defined expressions on **one** shared symbol layer |
 | Code → texture assignment | `Template/patterns/lith_textures.tsv` |
-| The texture artwork | `Template/patterns/*.svg` |
-| Stroke width per texture | `Template/patterns/stroke_widths.tsv` |
+| The texture artwork (generated) | `Template/patterns/*.svg` |
+| Texture artwork we authored ourselves | `Template/patterns_authored/*.svg` |
+| Stroke width + measured ink coverage per texture | `Template/patterns/stroke_widths.tsv` |
 | Mineral ink colours | `Template/patterns/mineral_inks.tsv` |
 | Resolved fill + ink per code (output, for review) | `Template/patterns/lith_fills.tsv` |
+
+### Colour belongs in the live template
+
+`LGS_MappingTemplate.gpkg` is the source of truth for fill colour.
+`inject_basemap_lith_patterns.py` re-copies it wholesale on every run and
+`lith_palette.read_code_anchors()` reads each code's colour out of it, so:
+**change a colour there, re-run the injector, and both templates agree.**
+Editing the patterns copy directly is wiped by the next run.
+
+`scripts/inject_basemap_h_recolour.py` is the worked example — it rewrites the
+QML *and* the SLD in lockstep and refuses to touch the patterns copy.
 
 ---
 
@@ -161,6 +173,39 @@ colour rules to sit on top of them.
 1:4000, then collapses to nothing by 1:8000 as the stroke goes sub-pixel. If you are zoomed out
 and see no texture, that is the scale cutoff on the texture rule, not a fault.
 
+**A tile must be a torus, not a picture in a box.** QGIS rasterises one tile and repeats it, so
+its right edge butts its own left edge and its bottom butts its own top. Three things break
+that, and at 1:200–1:500 the 12 pt tile is drawn 120–300 pt wide, so each reads as a stripe
+across the polygon rather than as texture grain:
+
+- a stroke lying **along** an edge — the two halves antialias independently into the brush, so
+  the seam line never matches interior line weight;
+- a motif **crossing** an edge with nothing completing it on the far side;
+- a rhythm that does not **divide** the tile — rows every 4 units in a 24-unit box leaves an
+  8-unit blank band once per repeat.
+
+`prepare_lith_patterns.py` repairs the first two automatically (phase shift, then wrap
+counterparts); `scripts/lith_tile_seams.py` audits all three and the test enforces it. The third
+is a named table (`RELATTICE`, `RESIZE`) because it cannot be detected reliably — four metrics
+were built and measured and all four misfire, including on the two tiles that were already
+correct. That reasoning is in the module docstring; please read it before building a fifth.
+`basalt.svg` and `evaporite.svg` are the hand-authored reference for what seamless looks like,
+and the test asserts they keep passing.
+
+**New artwork goes in `Template/patterns_authored/`, never in `Template/patterns/`.** The latter
+is generated: `prepare_lith_patterns.py` overwrites it from the OneDrive library and deletes
+anything not in `CURATION`, so a hand edit there survives exactly until the next run. A file in
+`patterns_authored/` overrides the library source of the same name — that is how `calcrete` got
+in, there being no source for it. The OneDrive library itself is never written.
+
+**Texture strength is per texture, not one number.** The contrast target scales inversely with
+each tile's measured ink coverage (column 3 of `stroke_widths.tsv`), so a heavy tile is softened
+more than a sparse one and both read as the same weight on the page. `INK_BASE` is the dial;
+override it for a comparison sweep with the `LGS_INK_BASE` environment variable, not an argv
+flag — `calibrate_lith_strokes.py` and the test both import the module and would never see argv.
+Which *direction* the ink moves is decided against a separate fixed reference, so turning the
+dial down cannot silently flip the dark fills to unreadable dark-on-dark.
+
 **Styles do not propagate to existing projects.** The plugin copies the template per project and
 `.qgz` files embed their styles. After changing the template, restart QGIS and create a new
 project. To fix an existing project, update its `layer_styles` row from the template.
@@ -180,5 +225,8 @@ guide describes.
 | `rows name codes that are not in BasemapCodes` | the TSV has a code the table does not; remove it or add the row |
 | `textures with no tile in Template/patterns/` | the `texture` column names a file that is not there |
 | `no calibrated stroke width for: …` | re-run `calibrate_lith_strokes.py` |
-| `pairs of different rocks render identically` | give one a different texture, or declare them a shared `variety` |
-| `code … has an ink that cannot separate from its fill` | pick a different ink, or `auto` |
+| `pairs of different rocks render identically` | give one a different texture, or declare them a shared `variety`. This check is **global**, not per family: a chemistry hue or a shared anchor collides across families, never inside one |
+| `code … has an ink that cannot separate from its fill` | pick a different ink, or `auto`. The bar scales with that tile's own contrast target, so this means genuinely invisible, not merely soft |
+| `no measured ink coverage for: …` | `stroke_widths.tsv` predates the per-texture contrast target; re-run `calibrate_lith_strokes.py` |
+| `seam repair could not handle the artwork` | the tile uses a relative path command (lowercase `m`/`l`/`q`); rewrite it with absolute commands |
+| a tile still fails the seam audit after `prepare` | add a `PHASE` / `RELATTICE` / `RESIZE` entry for it in `prepare_lith_patterns.py`, or a reasoned entry in `SEAM_ACCEPTED` |

@@ -61,7 +61,8 @@ PATTERN_DIR = _inj.PATTERN_DIR
 LAYER = _inj.LAYER
 BLANK = _inj.BLANK
 PATTERN_MAX_SCALE = _inj.PATTERN_MAX_SCALE
-TARGET_CONTRAST = _inj.TARGET_CONTRAST
+seams = importlib.import_module("lith_tile_seams")
+_prep = importlib.import_module("prepare_lith_patterns")
 
 _passed = 0
 _failed = 0
@@ -214,18 +215,107 @@ def main():
         col = c.symbol().color()
         fill_of[str(v)] = (col.red(), col.green(), col.blue())
     print("colour:")
-    worst, worst_fill, lighter = 99.0, None, 0
-    for fill in set(fill_of.values()):
-        rgb, ratio, direction = _inj.tint(fill)
+    # The contrast target is PER TEXTURE now, scaled by that tile's measured
+    # ink coverage, so there is no single number every tint must reach. What
+    # must hold is that each code clears its OWN target's floor - and that the
+    # heavy tiles really are aimed softer than the sparse ones, which is the
+    # whole point of the change.
+    tile_ink = _inj.load_tile_ink(tiles)
+    worst_gap, worst_code, lighter, below = 0.0, None, 0, []
+    for code, (texture, _n, ink_name, _v) in tex_map.items():
+        fill = fill_of.get(code)
+        if fill is None or ink_name != "auto":
+            continue
+        target = _inj.target_for_ink_pct(tile_ink[texture])
+        _rgb, ratio, direction = _inj.tint(fill, target)
         if direction == "lighter":
             lighter += 1
-        if ratio < worst:
-            worst, worst_fill = ratio, fill
-    check(worst >= TARGET_CONTRAST - 0.01,
-          "every tint meets the %.1f contrast target (worst %.2f on rgb%s)"
-          % (TARGET_CONTRAST, worst, worst_fill))
-    print("  %d fills, worst contrast %.2f, %d inverted to a light texture"
-          % (len(set(fill_of.values())), worst, lighter))
+        floor = max(_inj.WEAK_INK_FLOOR, target * _inj.WEAK_INK_MARGIN)
+        if ratio < floor:
+            below.append((code, ratio, floor))
+        if target - ratio > worst_gap:
+            worst_gap, worst_code = target - ratio, code
+    check(not below,
+          "every auto tint clears its own target's floor (%d below: %s)"
+          % (len(below), below[:4]))
+    heavy = max(tile_ink, key=lambda t: tile_ink[t])
+    light = min(tile_ink, key=lambda t: tile_ink[t])
+    check(_inj.target_for_ink_pct(tile_ink[heavy])
+          < _inj.target_for_ink_pct(tile_ink[light]) - 0.5,
+          "the heaviest tile (%s %.0f%%) is aimed softer than the lightest "
+          "(%s %.0f%%)" % (heavy, tile_ink[heavy], light, tile_ink[light]))
+    check(lighter > 0,
+          "dark fills still invert to a light texture (%d do) - a softer "
+          "target must not silently make dark-on-dark reachable" % lighter)
+    print("  %d fills, %d inverted to a light texture, %s"
+          % (len(set(fill_of.values())), lighter,
+             "every tint reaches its target exactly" if worst_code is None
+             else "largest shortfall %.2f on %s" % (worst_gap, worst_code)))
+
+    # ---- 5a. every tile tiles seamlessly ------------------------------
+    # The defect this catches renders as a full-width stripe across the
+    # polygon, because at referencescale 5000 and 1:200-1:500 the 12 pt tile
+    # is drawn 120-300 pt wide. See scripts/lith_tile_seams.py for why the
+    # check is geometric and not a rendered ink metric.
+    print("seams:")
+    widths = _inj.load_stroke_widths(tiles)
+    unsound = {}
+    for texture in sorted(tiles):
+        if texture == BLANK:
+            continue
+        path = os.path.join(PATTERN_DIR, texture + ".svg")
+        with open(path, encoding="utf-8") as fh:
+            issues = seams.audit(fh.read(), widths[texture])
+        if issues:
+            unsound[texture] = issues[0][1]
+    check(not unsound,
+          "every tile is toroidally sound (%d not: %s)"
+          % (len(unsound), sorted(unsound)[:4]))
+    for texture, msg in sorted(unsound.items()):
+        print("  %-16s %s" % (texture, msg))
+
+    # The reference implementations must keep passing: they carry their wrap
+    # counterparts by hand, and a checker that flags them is wrong about what
+    # seamless means.
+    for texture in ("basalt", "evaporite", "schist", "mylonite"):
+        path = os.path.join(PATTERN_DIR, texture + ".svg")
+        with open(path, encoding="utf-8") as fh:
+            check(not seams.audit(fh.read(), widths[texture]),
+                  "%s - a hand-authored seamless tile - still passes"
+                  % texture)
+
+    # Blank-band regression pin. These are the tiles whose rhythm did not
+    # divide their own period; the ratio is max motif-row gap over the median,
+    # including the wrap. Pinned per tile rather than globally because a global
+    # metric fires on tiles nobody intends to change - a quincunx legitimately
+    # scores 2.0. See the rejected-metrics note in lith_tile_seams.
+    for texture in sorted(_prep.RELATTICE) + sorted(_prep.RESIZE):
+        path = os.path.join(PATTERN_DIR, texture + ".svg")
+        with open(path, encoding="utf-8") as fh:
+            svg = fh.read()
+        W, H, els = seams.parse(svg)
+        axis = _prep.RELATTICE.get(texture, "y")
+        P, idx = (H, 1) if axis == "y" else (W, 0)
+        vals = sorted({round(sum(p[idx] for p in seams.coords_of(el))
+                             / len(seams.coords_of(el)), 3) for el in els})
+        rows, cur = [], [vals[0]]
+        for v in vals[1:]:
+            if v - cur[-1] <= 1.0:
+                cur.append(v)
+            else:
+                rows.append(cur)
+                cur = [v]          # a fresh list: cur.clear() would empty the
+        rows.append(cur)           # one just appended, they are the same object
+        centres = [sum(r) / len(r) for r in rows]
+        if len(centres) < 3:
+            continue
+        gaps = sorted([centres[i + 1] - centres[i]
+                       for i in range(len(centres) - 1)]
+                      + [centres[0] + P - centres[-1]])
+        ratio = max(gaps) / max(gaps[len(gaps) // 2], 0.01)
+        check(ratio <= 1.35,
+              "%s has no blank band left (row-gap ratio %.2f)"
+              % (texture, ratio))
 
     # ---- 5b. codes that could be mapped adjacent must not be identical
     # Round 3 checked that TEXTURES were distinct and reported that as
@@ -323,8 +413,13 @@ def main():
 
     # felsic vs metamorphic: the complaint that opened this round
     fel = [c for c in fills if c.startswith("F")]
-    met = [c for c in fills
-           if c.startswith("H") and lith_palette.PROTOLITH.get(c) != "F"]
+    # No exclusion any more. This used to skip the H codes whose PROTOLITH was
+    # "F", because those were deliberately coloured AS felsic - which turned
+    # out to be the bug: F's modal colour is the intrusive pink, so felsic
+    # gneiss, felsic granulite and charnockite resolved to granitoid pink. They
+    # now carry the terracotta gneiss colours instead, so every H code belongs
+    # in this comparison and the check is strictly stronger than it was.
+    met = [c for c in fills if c.startswith("H")]
     if fel and met:
         # Same rule the injector uses: a pair separates on colour OR on
         # texture. Judging colour alone here would be stricter than what the
