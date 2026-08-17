@@ -92,6 +92,26 @@ class TestOrdinalTolerance(unittest.TestCase):
             self.assertEqual(lgs_layers.base_name(name), name)
             self.assertFalse(lgs_layers.is_canonical(name))
 
+    def test_unnumbered_user_layers_are_not_ours(self):
+        """A bare "Basemap"/"Overlay" belongs to the user, not the template.
+
+        is_canonical decides what the z filter excludes from its extra-layer
+        list and what run_add_elevation_field injects a field into, so treating
+        an unnumbered lookalike as canonical would silently hide or mutate the
+        user's own layer. Tolerance is for "same layer, different number".
+        """
+        for name in ("Basemap", "Overlay", "Linework", "FieldNotebook",
+                     "basemap", "Google Basemap"):
+            self.assertFalse(lgs_layers.is_canonical(name),
+                             f"{name!r} is a user layer, not a mapping layer")
+            self.assertFalse(lgs_layers.has_ordinal(name))
+
+    def test_any_ordinal_spelling_is_recognised(self):
+        for name in ("1 - FieldNotebook", "2 - Linework", "3 - Overlay",
+                     "4 - Basemap", "2 - Overlay", "3 - Linework",
+                     "1_Basemap", "2 Overlay"):
+            self.assertTrue(lgs_layers.is_canonical(name), name)
+
     def test_sidecar_declares_the_legacy_aliases(self):
         # QML cannot enumerate project layers, so it carries an explicit map.
         text = open(SIDECAR, encoding="utf-8").read()

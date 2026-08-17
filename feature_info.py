@@ -94,7 +94,7 @@ under <i>'4 - Basemap'</i> in the sidecar's Layer Opacity popup.</li>
 INFO_GEOREFERENCE_PHOTOS = """
 <h1>Georeference Field Photos</h1>
 <h2>Field Procedure</h2>
-<p>While mapping, record your field photos using the <b>PhotoID</b> field in <i>'1 - FieldNoteBook'</i> as per the following instructions:</p>
+<p>While mapping, record your field photos using the <b>PhotoID</b> field in <i>'1 - FieldNotebook'</i> as per the following instructions:</p>
 <ul>
    <li>Record the <b>last four digits</b> of each photo in the <b>PhotoID</b> field.<br>
    <i>Example:</i> DSC2345.jpg would be recorded as <b>'2345'</b>.</li>

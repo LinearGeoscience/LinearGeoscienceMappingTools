@@ -58,6 +58,12 @@ def base_name(name):
     return text
 
 
+def has_ordinal(name):
+    """True when `name` carries an "N - " style ordinal prefix."""
+    text = (name or "").strip()
+    return any(re.match(pattern, text) for pattern in _PREFIX_PATTERNS)
+
+
 def same_layer(a, b):
     """True when two layer names denote the same layer, ignoring the ordinal."""
     return base_name(a).casefold() == base_name(b).casefold()
@@ -68,22 +74,31 @@ CANONICAL_BASE_NAMES = frozenset(base_name(n).casefold() for n in CANONICAL_LAYE
 
 
 def is_canonical(name):
-    """True when `name` is one of the four mapping layers, any numbering."""
-    return base_name(name).casefold() in CANONICAL_BASE_NAMES
+    """True when `name` is one of the four mapping layers under ANY numbering.
+
+    The ordinal prefix is REQUIRED. Tolerance here is meant to cover "same
+    layer, different number" (pre- vs post-Aug-2026), not "no number at all":
+    users routinely add their own layer plainly called "Basemap" or "Overlay",
+    and those are theirs. Callers use this to decide what to exclude from the
+    z-filter's extra-layer list and what to inject an Elevation field into, so
+    a false positive silently hides or mutates a user's layer.
+    """
+    return has_ordinal(name) and base_name(name).casefold() in CANONICAL_BASE_NAMES
 
 
 def find_layer(project, canonical):
     """Resolve one canonical layer in `project`, tolerating old numbering.
 
-    Exact name first (the common case), then an ordinal-insensitive sweep so a
-    project built from a pre-swap template still resolves. Returns None when the
-    layer is absent.
+    Exact name first (the common case), then a sweep over differently-numbered
+    spellings so a project built from a pre-swap template still resolves. The
+    sweep requires an ordinal, so a user's own layer plainly named "Basemap" is
+    never mistaken for ours. Returns None when the layer is absent.
     """
     matches = project.mapLayersByName(canonical)
     if matches:
         return matches[0]
     for layer in project.mapLayers().values():
-        if same_layer(layer.name(), canonical):
+        if has_ordinal(layer.name()) and same_layer(layer.name(), canonical):
             return layer
     return None
 
@@ -129,7 +144,7 @@ def gpkg_layer_name(gpkg_path, canonical):
     if canonical in names:
         return canonical
     for name in names:
-        if same_layer(name, canonical):
+        if has_ordinal(name) and same_layer(name, canonical):
             return name
     return None
 
