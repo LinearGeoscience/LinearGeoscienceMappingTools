@@ -240,10 +240,23 @@ def main():
           % (len(below), below[:4]))
     heavy = max(tile_ink, key=lambda t: tile_ink[t])
     light = min(tile_ink, key=lambda t: tile_ink[t])
+    t_heavy = _inj.target_for_ink_pct(tile_ink[heavy])
+    t_light = _inj.target_for_ink_pct(tile_ink[light])
+    if _inj.INK_FLOOR_RATIO >= 1.0:
+        # Load scaling deliberately off: the calibrator already equalises ink
+        # coverage, so scaling contrast by it penalised a second time the few
+        # tiles it could not get down to 8%. Assert it really is flat rather
+        # than silently sagging.
+        check(abs(t_heavy - t_light) < 0.01
+              and abs(t_light - _inj.INK_BASE) < 0.01,
+              "every texture aims at INK_BASE %.2f (heaviest %s %.2f, "
+              "lightest %s %.2f)"
+              % (_inj.INK_BASE, heavy, t_heavy, light, t_light))
     # Proportional, not an absolute margin. The whole band scales with the
     # dial, so at a soft setting it is only ~0.26 wide and any fixed gap fails
     # while the mechanism is working perfectly well.
-    check(_inj.target_for_ink_pct(tile_ink[heavy])
+    check(_inj.INK_FLOOR_RATIO >= 1.0
+          or _inj.target_for_ink_pct(tile_ink[heavy])
           < _inj.target_for_ink_pct(tile_ink[light]) * 0.92,
           "the heaviest tile (%s %.0f%% -> %.2f) is aimed softer than the "
           "lightest (%s %.0f%% -> %.2f)"

@@ -115,20 +115,30 @@ BLANK = "blank"
 # for a sweep with the LGS_INK_BASE environment variable rather than an argv
 # flag - calibrate_lith_strokes.py and the test both import this module and
 # would never see argv.
-INK_BASE = float(os.environ.get("LGS_INK_BASE", "1.3"))
+INK_BASE = float(os.environ.get("LGS_INK_BASE", "1.55"))
 REF_INK_PCT = 8.0
 
-# The floor MOVES WITH THE DIAL, and it has to. With a fixed 2.0 floor most of
-# the heavy tiles sat on it already, so turning INK_BASE down softened only the
-# sparse tiles and the dial appeared to stop working - which is exactly what it
-# looked like on the first review sheet.
+# ...EXCEPT THAT THE LOAD SCALING IS NOW OFF, and the reason is worth keeping.
 #
-# The hard end is 1.04, which is nearly nothing - a ratio of 1.0 would be the
-# fill itself. It sits this low because a higher stop pins the dense tiles and
-# the dial stops working for them, which is the failure this whole arrangement
-# exists to avoid. Whether a given setting is USEFUL is a judgement to make off
-# a rendered sheet, not something to legislate here.
-INK_TARGET_MIN = max(1.04, INK_BASE * 0.55)
+# calibrate_lith_strokes.py ALREADY equalises ink coverage: it binary-searches
+# each tile's stroke width to land on TARGET_INK = 8%. So coverage is not a
+# free variable at this point - 52 of 56 textures sit between 8.1% and 8.6%,
+# and scaling contrast by coverage moved them by less than 0.1. It only bit on
+# the handful the calibrator could NOT get down to 8% because they are already
+# solid at its minimum stroke width, which it reports as "TOO DENSE": crosshatch
+# 20.9%, limestone 13.7%, felsic_fine 13.4%, marl 13.1%, then iron_formation,
+# slate, shale, syenite and diorite at ~11.4%.
+#
+# Those are exactly the tiles that were then softened FURTHEST - iron formation
+# landed at 1.09 against a 1.55 base, near invisible - so the rule was
+# penalising a second time for something already compensated for. Harry called
+# it on the rendered sheet: bump iron formation and the others back up.
+#
+# The mechanism is kept, not deleted, because the reasoning behind it only
+# fails while the calibrator is doing its job. If TARGET_INK ever stops being
+# enforced, set this back below 1.0 and the scaling returns.
+INK_FLOOR_RATIO = 1.0          # 1.0 = flat: every texture aims at INK_BASE
+INK_TARGET_MIN = max(1.04, INK_BASE * INK_FLOOR_RATIO)
 INK_TARGET_MAX = INK_BASE
 
 # Which WAY to move is decided against this fixed reference, NOT against the
