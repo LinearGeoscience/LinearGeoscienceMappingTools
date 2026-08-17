@@ -323,16 +323,96 @@ class ModernLayerConfigDialog(QDialog):
         QgsMessageLog.logMessage("Configuration completed successfully!", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
+# One family for every label the plugin builds. MUST STAY IN STEP with the
+# family baked into the template by scripts/inject_label_cartography.py -
+# Set Mapping Scale rebuilds this layer's labeling from the code below.
+LABEL_FONT = "Leelawadee UI Semilight"
+
+# Structural label offsets, quoted as POINT distances on the 30 pt marker
+# (whose canvas spans 52.9 design units) and converted to ground distances
+# at build time. Linear codes carry plunge arrows and need clearance past
+# the arrowhead; planar codes hug the dip tick.
+#
+# Why the conversion rather than Point units on the label: QGIS multiplies
+# paper-unit SYMBOL sizes by referenceScale/mapScale, so a 30 pt marker
+# keeps a constant GROUND footprint as you zoom. Label offsets get no such
+# treatment - measured, a 21.5 pt offset stays ~28 px while its symbol goes
+# 40 -> 400 px between 1:5000 and 1:500, i.e. the label slides right across
+# the symbol. Ground-fixed symbols need ground-fixed offsets;
+# tests/test_label_offset_invariance_qgis.py holds the line.
+#
+# MUST STAY IN STEP with scripts/inject_fieldnotebook_dip_label_offsets.py,
+# which bakes these same values into the template. Set Mapping Scale
+# regenerates the whole labeling block from the code below, so a drift here
+# silently reverts the template on the next run.
+LINEAR_STRUCTURE_CODES = (
+    "BAX", "FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z",
+    "FAX2", "FAX2M", "FAX2S", "FAX2Z", "FAX3", "FAX3M", "FAX3S",
+    "FAX3Z", "FAX4", "FAX4M", "FAX4S", "FAX4Z", "FAX5", "FAX5M",
+    "FAX5S", "FAX5Z", "FAXCR", "FAXK", "FAXSZ", "LME", "LNI",
+    "LNI1", "LNI2", "LNI3", "LNI4", "LNI5", "LNISC", "LNS",
+    "SLF", "SLK", "STR")
+DIP_OFFSET_LINEAR_PT = 21.5
+DIP_OFFSET_PLANAR_PT = 9.6
+DIP_OFFSET_FALLBACK_PT = 2.3
+SUFFIX_OFFSET_PT = 17.0
+SUFFIX_OFFSET_FALLBACK_PT = 8.5
+
+# Regolith Notes sit beside their point with no leader (user decision
+# 2026-08-17). Point units again, so the note holds its distance from the
+# symbol at any reference scale.
+REGOLITH_RING = 3.0
+
+
+POINTS_PER_INCH = 72.0
+METRES_PER_INCH = 0.0254
+
+
+def pt_to_map_units(points, scale):
+    """A paper distance at 1:scale, expressed as ground distance.
+
+    Rounded to 2 dp so the expression text the builder emits is identical
+    to what the injector bakes - the code/template consistency test compares
+    those strings, and unbounded float tails would fail it on formatting
+    alone. At 1:5000 this gives 37.92 / 16.93 / 29.99 - which is exactly the
+    38 / 17 / 30 map units the template carried before commit 55eaeed
+    converted them to paper units.
+    """
+    return round(points * METRES_PER_INCH / POINTS_PER_INCH * scale, 2)
+
+
+def _mu(points, scale):
+    return "%g" % pt_to_map_units(points, scale)
+
+
+def dip_offset_expression(scale):
+    """Family-aware OffsetXY for the Dip rule, in map units."""
+    codes = ",".join("'%s'" % c for c in LINEAR_STRUCTURE_CODES)
+    fallback = _mu(DIP_OFFSET_FALLBACK_PT, scale)
+    return (
+        f'CASE WHEN "Type" = \'Structure\' THEN with_variable(\'lgs_d\', '
+        f'CASE WHEN "Subtype1" IN ({codes}) '
+        f'THEN {_mu(DIP_OFFSET_LINEAR_PT, scale)} '
+        f'ELSE {_mu(DIP_OFFSET_PLANAR_PT, scale)} END, '
+        f'to_string((@lgs_d * cos(radians("DipDirection" - 90)))) || \',\' || '
+        f'to_string((@lgs_d * sin(radians("DipDirection" - 90))))) '
+        f'ELSE \'{fallback},-{fallback}\' END')
+
+
+def suffix_offset_expression(scale):
+    """OffsetXY for the SymbolSuffix rule (dip direction + 135), map units."""
+    dist = _mu(SUFFIX_OFFSET_PT, scale)
+    fallback = _mu(SUFFIX_OFFSET_FALLBACK_PT, scale)
+    return (
+        f'CASE WHEN "Type" = \'Structure\' THEN '
+        f'to_string(({dist} * cos(radians("DipDirection" - 90 + 135)))) '
+        f'|| \',\' || '
+        f'to_string(({dist} * sin(radians("DipDirection" - 90 + 135)))) '
+        f'ELSE \'{fallback},{fallback}\' END')
+
+
 class LayerConfigurator:
     """Class to handle all layer configuration operations"""
-
-    # Scale to offset mapping for labeling
-    SCALE_TO_OFFSET = {
-        50: 0.3, 100: 0.6, 200: 1.2, 250: 1.5, 500: 3.0,
-        1000: 6.0, 2000: 12.0, 2500: 15.0, 5000: 30.0,
-        10000: 60.0, 20000: 120.0, 25000: 150.0,
-        50000: 300.0, 100000: 600.0, 250000: 1500.0
-    }
 
     def __init__(self):
         self.project = QgsProject.instance()
@@ -432,8 +512,7 @@ class LayerConfigurator:
     def create_standard_text_format(self):
         """Create standard text format for Dip labels"""
         text_format = QgsTextFormat()
-        font = QFont("Arial", 8)
-        font.setStyleName("Narrow")
+        font = QFont(LABEL_FONT, 8)
         text_format.setFont(font)
         text_format.setSize(8)
         return text_format
@@ -441,30 +520,32 @@ class LayerConfigurator:
     def create_suffix_text_format(self):
         """Create smaller, italicized text format for SymbolSuffix"""
         text_format = QgsTextFormat()
-        font = QFont("Arial", 6)  # Smaller size
+        font = QFont(LABEL_FONT, 6)  # Smaller size
         font.setItalic(True)  # Italicized
-        font.setStyleName("Narrow")
         text_format.setFont(font)
         text_format.setSize(6)  # Smaller size
         return text_format
 
     def create_fallback_text_format(self):
-        """Create text format for fallback labels (same as original)"""
+        """Create text format for the Comments/Labels fallback rule.
+
+        Annotation, not measurement: smaller and italic, like every other
+        free-text label on the sheet."""
         text_format = QgsTextFormat()
-        font = QFont("Arial", 8)
-        font.setStyleName("Narrow")
+        font = QFont(LABEL_FONT, 6)
+        font.setItalic(True)
         text_format.setFont(font)
-        text_format.setSize(8)
+        text_format.setSize(6)
         return text_format
 
     def create_regolith_note_text_format(self):
         """Create text format for Regolith Note labels (Arial, Italic, 4.0pt, gray)"""
         text_format = QgsTextFormat()
-        font = QFont("Arial", 4)
+        font = QFont(LABEL_FONT, 4)
         font.setItalic(True)
         text_format.setFont(font)
         text_format.setSize(4)
-        text_format.setColor(QColor(128, 128, 128))  # Medium gray #808080
+        text_format.setColor(QColor(144, 144, 144))  # Mid grey, as authored
         return text_format
 
     def set_overlap_handling(self, settings, handling):
@@ -493,25 +574,36 @@ class LayerConfigurator:
         callout.setMinimumLength(1)  # MM; no stub when label sits at its ring
         return callout
 
-    def apply_dynamic_comment_placement(self, settings, x_value):
-        """Engine-arranged placement for comment labels: 8 candidate
-        orientations around the point, pushed further out (up to 5x the
-        nominal ring) only when closer spots are taken, drawn even when
-        overlap is truly unavoidable - so comments never silently vanish.
-        Callout length/direction follows wherever the label lands."""
+    def apply_around_point_placement(self, settings, dist, units,
+                                     max_dist=None):
+        """Engine-arranged placement: 8 candidate orientations around the
+        point, drawn even when overlap is truly unavoidable - so a comment
+        never silently vanishes. max_dist defaults to dist, i.e. the label
+        stays on its nominal ring instead of being pushed further out."""
         settings.placement = Qgis.LabelPlacement.OrderedPositionsAroundPoint
         settings.offsetType = Qgis.LabelOffsetType.FromSymbolBounds
-        settings.dist = x_value
-        settings.distUnits = Qgis.RenderUnit.MapUnits
+        settings.dist = dist
+        settings.distUnits = units
+        settings.offsetUnits = units
         point_settings = settings.pointSettings()
-        point_settings.setMaximumDistance(5 * x_value)
-        point_settings.setMaximumDistanceUnit(Qgis.RenderUnit.MapUnits)
+        point_settings.setMaximumDistance(
+            dist if max_dist is None else max_dist)
+        point_settings.setMaximumDistanceUnit(units)
         settings.setPointSettings(point_settings)
         self.set_overlap_handling(
             settings, Qgis.LabelOverlapHandling.AllowOverlapIfRequired)
+
+    def apply_dynamic_comment_placement(self, settings, x_value):
+        """Placement for the Fallback comment labels: around the point,
+        pushed further out (up to 5x the nominal ring) only when closer
+        spots are taken, with a leader that follows wherever the label
+        lands. Regolith Notes deliberately do NOT get this - see
+        create_regolith_note_rule."""
+        self.apply_around_point_placement(
+            settings, x_value, Qgis.RenderUnit.MapUnits, 5 * x_value)
         settings.setCallout(self.create_comment_callout())
 
-    def create_dip_rule(self, x_value):
+    def create_dip_rule(self, scale_value):
         """Create rule for Dip field labels (above symbol, no callouts)"""
         settings = QgsPalLayerSettings()
         # Queried structures label as e.g. '75?' (Confidence system - keep in
@@ -531,21 +623,17 @@ class LayerConfigurator:
         settings.offsetUnits = Qgis.RenderUnit.MapUnits
         settings.autoWrapLength = 35
 
+        # Dip readings outrank the annotation around them for placement
+        settings.priority = 10
+
         # Allow overlaps without penalty
         self.set_overlap_handling(
             settings, Qgis.LabelOverlapHandling.AllowOverlapAtNoCost)
 
-        # Data-defined placement (original expression)
-        placement_expression = (
-            f'CASE WHEN "Type" = \'Structure\' THEN '
-            f'to_string(({x_value} * cos(radians("DipDirection" - 90)))) || \',\' || '
-            f'to_string(({x_value} * sin(radians("DipDirection" - 90)))) '
-            f'ELSE \'4,-4\' END'
-        )
-
         props = QgsPropertyCollection()
-        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
-                          QgsProperty.fromExpression(placement_expression))
+        props.setProperty(
+            QgsPalLayerSettings.Property.OffsetXY,
+            QgsProperty.fromExpression(dip_offset_expression(scale_value)))
         settings.setDataDefinedProperties(props)
 
         # Create rule
@@ -556,11 +644,12 @@ class LayerConfigurator:
 
         return rule
 
-    def create_suffix_rule(self, x_value):
+    def create_suffix_rule(self, scale_value):
         """Create rule for SymbolSuffix field labels (bottom-right, small, italic, no callouts)"""
         settings = QgsPalLayerSettings()
-        settings.fieldName = '"SymbolSuffix"'
-        settings.isExpression = True
+        # A bare field, not an expression - matches what the template holds
+        settings.fieldName = "SymbolSuffix"
+        settings.isExpression = False
         settings.enabled = True
 
         # Smaller, italicized text formatting - NO callouts
@@ -580,14 +669,9 @@ class LayerConfigurator:
         props = QgsPropertyCollection()
 
         # Bottom-right placement with rotation
-        placement_expression = (
-            f'CASE WHEN "Type" = \'Structure\' THEN '
-            f'to_string(({x_value} * cos(radians("DipDirection" - 90 + 135)))) || \',\' || '
-            f'to_string(({x_value} * sin(radians("DipDirection" - 90 + 135)))) '
-            f'ELSE \'15,15\' END'
-        )
-        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
-                          QgsProperty.fromExpression(placement_expression))
+        props.setProperty(
+            QgsPalLayerSettings.Property.OffsetXY,
+            QgsProperty.fromExpression(suffix_offset_expression(scale_value)))
 
         # Text rotation to match symbol orientation
         rotation_expression = (
@@ -606,11 +690,19 @@ class LayerConfigurator:
 
         return rule
 
-    def create_regolith_note_rule(self, x_value):
-        """Create rule for Regolith Note labels (dynamic placement + callout)"""
+    def create_regolith_note_rule(self):
+        """Create rule for Regolith Note labels (beside the point, no leader).
+
+        A regolith note annotates the ground at the point, not a feature you
+        need to trace a line back to, so it gets no callout and no push-out
+        (user decision 2026-08-17; the leader arrived as collateral when both
+        comment rules were routed through one placement helper). The label
+        still declutters around the point and is drawn even when overlap is
+        unavoidable, so a note never silently vanishes."""
         settings = QgsPalLayerSettings()
-        settings.fieldName = '"Comments"'
-        settings.isExpression = True
+        # A bare field, not an expression - matches what the template holds
+        settings.fieldName = "Comments"
+        settings.isExpression = False
         settings.enabled = True
 
         # Regolith Note text formatting
@@ -619,8 +711,8 @@ class LayerConfigurator:
         # Prioritize closer labels (cartographic placement setting)
         settings.priority = 5  # Medium-high priority
 
-        # Dynamic engine-arranged placement with callout
-        self.apply_dynamic_comment_placement(settings, x_value)
+        self.apply_around_point_placement(
+            settings, REGOLITH_RING, Qgis.RenderUnit.Points)
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -679,7 +771,7 @@ class LayerConfigurator:
 
             QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
-            QgsMessageLog.logMessage(f"[Label] Comment rules use dynamic callouts (engine-arranged, always visible)", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"[Label] Regolith Notes sit beside their point; only the Fallback rule draws a leader", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
@@ -692,21 +784,11 @@ class LayerConfigurator:
                 QgsMessageLog.logMessage(f"[Label] {overlay.name()} labeling is not the LGS Overlay style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
-def offset_for_scale(scale_value):
-    """Map-unit label offset distance for a mapping scale.
-
-    Every SCALE_TO_OFFSET entry is exactly 0.006 * scale, so unlisted
-    scales fall back to the same linear fit. Drives the Dip/SymbolSuffix
-    data-defined offsets; the callout comment rings use
-    callout_dist_for_scale instead.
-    """
-    return LayerConfigurator.SCALE_TO_OFFSET.get(scale_value, scale_value * 0.006)
-
-
-# Nominal ring distance for callout-bearing labels (FieldNotebook comment
-# rules + Overlay outside-polygon labels), deliberately a touch wider than
-# the structural offset unit so leader lines read clearly. Mirrored by the
-# baked template values in scripts/inject_dynamic_callouts.py and
+# Nominal ring distance for the callout-bearing labels that are left -
+# the FieldNotebook Fallback rule and the Overlay outside-polygon labels.
+# The structural and Regolith offsets are Point units and no longer depend
+# on the mapping scale at all. Mirrored by the baked template values in
+# scripts/inject_dynamic_callouts.py and
 # scripts/inject_overlay_label_placement.py (U = 5000 * this).
 CALLOUT_DIST_FACTOR = 0.0075
 
@@ -752,24 +834,27 @@ def rescale_overlay_label_distance(layer, scale_value):
 
 
 def build_structural_labeling(scale_value):
-    """Return the canonical LGS rule-based structural labeling with label
-    offsets baked for scale_value.
+    """Return the canonical LGS rule-based structural labeling.
 
-    Shared by Set Mapping Scale and the static mapping export, so exported
-    layers can get offsets regenerated to match their export scale.
+    Shared by Set Mapping Scale and the static mapping export. The dip,
+    suffix and callout distances are all ground distances derived from
+    scale_value - the same value set_reference_scale() gives the renderer
+    moments earlier, which is what keeps the labels welded to symbols whose
+    footprint that reference scale fixes. Only the Regolith ring is a paper
+    distance, because its point symbol is invisible and there is nothing
+    for it to stay welded to.
     """
     configurator = LayerConfigurator()
-    x_value = offset_for_scale(scale_value)
     callout_x = callout_dist_for_scale(scale_value)
 
     # Root rule (overlap handling is set on each individual rule)
     root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
     # Rule 1: Dip field (no callouts)
-    root.appendChild(configurator.create_dip_rule(x_value))
+    root.appendChild(configurator.create_dip_rule(scale_value))
     # Rule 2: SymbolSuffix field (small, italic, no callouts)
-    root.appendChild(configurator.create_suffix_rule(x_value))
-    # Rule 3: Regolith Note (dynamic placement, callout — wider ring unit)
-    root.appendChild(configurator.create_regolith_note_rule(callout_x))
+    root.appendChild(configurator.create_suffix_rule(scale_value))
+    # Rule 3: Regolith Note (beside the point, no leader)
+    root.appendChild(configurator.create_regolith_note_rule())
     # Rule 4: Fallback rule (dynamic placement, callout — wider ring unit)
     root.appendChild(configurator.create_fallback_rule(callout_x))
     return QgsRuleBasedLabeling(root)

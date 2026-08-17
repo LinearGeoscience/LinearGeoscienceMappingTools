@@ -1,25 +1,39 @@
-"""Inject dynamic callouts into the FieldNotebook comment label rules.
+"""Set the placement and leader policy on the FieldNotebook comment rules.
 
-Rewrites the "Regolith Note" and "Fallback Labels (Comments/Labels)" rules
-in the template's "1 - FieldNotebook" labeling so comment labels are
-engine-arranged instead of pinned at a fixed offset:
+Two rules label free text on "1 - FieldNotebook", and they are deliberately
+NOT treated the same:
 
+  "Fallback Labels (Comments/Labels)" - engine-arranged with a leader.
     - OrderedPositionsAroundPoint placement: 8 candidate orientations.
     - dist=37.5 / maximumDistance=187.5 map units (1x / 5x the
       scale-5000 callout ring unit, callout_dist_for_scale): labels
       pushed further out only when closer spots are taken -> variable
       callout length, PreferCloser.
-    - overlapHandling=AllowOverlapIfRequired: a label that truly cannot
-      fit is drawn anyway instead of hidden - comments never vanish.
-    - Callout enabled on both rules (grey dashed leader), minLength 1 MM
-      so no stub is drawn when the label sits at its nominal ring.
-    - The Fallback rule's fixed data-defined OffsetXY ('120,-60') is
-      removed (inert under around-point placement).
+    - Callout enabled (grey dashed leader), minLength 1 MM so no stub is
+      drawn when the label sits at its nominal ring.
+    - Its fixed data-defined OffsetXY ('120,-60') is removed (inert under
+      around-point placement).
+
+  "Regolith Note" - engine-arranged, NO leader (user decision 2026-08-17).
+    A regolith note annotates the ground under the point, not a feature you
+    need to trace a line back to. It keeps the 8 candidate positions so
+    notes declutter, but sits on a short 3 pt ring with no push-out, so it
+    never wanders far enough to need a leader. The leader it used to draw
+    was collateral: the 2026-08-14 refactor routed both rules through one
+    placement helper and switched the callout on for both.
+
+Both rules keep overlapHandling=AllowOverlapIfRequired: a label that truly
+cannot fit is drawn anyway instead of hidden - comments never vanish.
+
+Point units on the Regolith ring, not map units, for the same reason as
+the dip-label offsets (scripts/inject_fieldnotebook_dip_label_offsets.py):
+the renderer reference scale is a per-project knob and only paper
+measurements track the 30 pt markers under it.
 
 Must stay in step with script_setmapping.build_structural_labeling(),
 which regenerates this block when Set Mapping Scale runs; the values
-here mirror apply_dynamic_comment_placement() at scale 5000 (the
-template's symbologyReferenceScale).
+here mirror LayerConfigurator at scale 5000 (the template's
+symbologyReferenceScale).
 
 Idempotent and re-runnable. The labeling block is parsed and edited with
 ElementTree (this region of the QML jams tags onto shared lines, so
@@ -37,23 +51,43 @@ import sys
 import xml.etree.ElementTree as ET
 
 LAYER = "1 - FieldNotebook"
-RULES = ("Regolith Note", "Fallback Labels (Comments/Labels)")
+FALLBACK = "Fallback Labels (Comments/Labels)"
+REGOLITH = "Regolith Note"
+RULES = (REGOLITH, FALLBACK)
 
 U = 37.5  # callout_dist_for_scale(5000) = 0.0075 * 5000 map units
-PLACEMENT_ATTRS = {
+R = 3     # script_setmapping.REGOLITH_RING, in Point units
+
+AROUND_POINT = {
     "placement": "6",              # OrderedPositionsAroundPoint
     "offsetType": "1",             # FromSymbolBounds
-    "dist": "37.5",                # 1 x U
-    "distUnits": "MapUnit",
-    "maximumDistance": "187.5",    # 5 x U
-    "maximumDistanceUnit": "MapUnit",
     "overlapHandling": "AllowOverlapIfRequired",
 }
+PLACEMENT_ATTRS = {
+    FALLBACK: dict(AROUND_POINT, **{
+        "dist": "37.5",                # 1 x U
+        "distUnits": "MapUnit",
+        "maximumDistance": "187.5",    # 5 x U
+        "maximumDistanceUnit": "MapUnit",
+    }),
+    REGOLITH: dict(AROUND_POINT, **{
+        "dist": "3",                   # R, a short ring beside the point
+        "distUnits": "Point",
+        "maximumDistance": "3",        # == dist: no push-out, so no leader
+        "maximumDistanceUnit": "Point",
+        "offsetUnits": "Point",        # inert here, but consistent
+    }),
+}
 CALLOUT_OPTS = {
-    "enabled": "1",
-    "minLength": "1",
-    "offsetFromAnchor": "0.5",
-    "offsetFromLabel": "1",
+    FALLBACK: {
+        "enabled": "1",
+        "minLength": "1",
+        "offsetFromAnchor": "0.5",
+        "offsetFromLabel": "1",
+    },
+    REGOLITH: {
+        "enabled": "0",
+    },
 }
 
 
@@ -91,19 +125,19 @@ def main():
     for desc in RULES:
         settings = rules[desc].find("settings")
         placement = settings.find("placement")
-        for k, v in PLACEMENT_ATTRS.items():
+        for k, v in PLACEMENT_ATTRS[desc].items():
             if placement.get(k) != v:
                 placement.set(k, v)
                 print(f"{desc}: placement {k} -> {v}")
 
         callout = settings.find("callout")
         opts = {o.get("name"): o for o in callout.iter("Option") if o.get("name")}
-        for k, v in CALLOUT_OPTS.items():
+        for k, v in CALLOUT_OPTS[desc].items():
             if opts[k].get("value") != v:
                 opts[k].set("value", v)
                 print(f"{desc}: callout {k} -> {v}")
 
-        if desc == "Fallback Labels (Comments/Labels)":
+        if desc == FALLBACK:
             fallback_callout = callout
             dd = settings.find("dd_properties")
             props = next((o for o in dd.iter("Option")
@@ -115,15 +149,20 @@ def main():
                 props.remove(offset_xy)
                 print(f"{desc}: dd OffsetXY removed")
 
-    # Regolith's dormant callout still carries the old solid line symbol -
-    # adopt the Fallback callout wholesale (same dashed grey leader).
-    regolith_settings = rules["Regolith Note"].find("settings")
+    # Regolith's callout is switched off, not deleted - QGIS always writes
+    # one. Keep it byte-identical to the Fallback leader apart from
+    # enabled, so a dormant symbol can never drift into something else.
+    regolith_settings = rules[REGOLITH].find("settings")
     regolith_callout = regolith_settings.find("callout")
-    if ET.tostring(regolith_callout) != ET.tostring(fallback_callout):
+    dormant = copy.deepcopy(fallback_callout)
+    for opt in dormant.iter("Option"):
+        if opt.get("name") == "enabled":
+            opt.set("value", "0")
+    if ET.tostring(regolith_callout) != ET.tostring(dormant):
         idx = list(regolith_settings).index(regolith_callout)
         regolith_settings.remove(regolith_callout)
-        regolith_settings.insert(idx, copy.deepcopy(fallback_callout))
-        print("Regolith Note: callout symbol adopted from Fallback")
+        regolith_settings.insert(idx, dormant)
+        print(f"{REGOLITH}: callout symbol matched to Fallback, left disabled")
 
     new_block = ET.tostring(lab, encoding="unicode")
     new_qml = qml[:m.start()] + new_block + qml[m.end():]
@@ -152,25 +191,32 @@ def main():
 
     checked = 0
     for rule in root.iter("rule"):
-        if rule.get("description") not in RULES:
+        desc = rule.get("description")
+        if desc not in RULES:
             continue
         settings = rule.find("settings")
         placement = settings.find("placement")
-        for k, v in PLACEMENT_ATTRS.items():
+        for k, v in PLACEMENT_ATTRS[desc].items():
             assert placement.get(k) == v, \
-                f"{rule.get('description')}: {k}={placement.get(k)!r}, want {v!r}"
+                f"{desc}: {k}={placement.get(k)!r}, want {v!r}"
         opts = {o.get("name"): o.get("value")
                 for o in settings.find("callout").iter("Option") if o.get("name")}
-        for k, v in CALLOUT_OPTS.items():
-            assert opts[k] == v, f"callout {k}={opts[k]!r}, want {v!r}"
-        assert "OffsetXY" not in ET.tostring(settings.find("dd_properties"),
-                                             encoding="unicode")
+        for k, v in CALLOUT_OPTS[desc].items():
+            assert opts[k] == v, f"{desc}: callout {k}={opts[k]!r}, want {v!r}"
         checked += 1
     assert checked == 2, f"expected 2 rules verified, got {checked}"
+
+    # The Fallback rule alone carries a leader.
+    enabled = [r.get("description") for r in root.iter("rule")
+               if any(o.get("name") == "enabled" and o.get("value") == "1"
+                      for o in r.find("settings").find("callout").iter("Option"))]
+    assert enabled == [FALLBACK], f"rules drawing a leader: {enabled}"
+
     # Untouched rules keep their config.
     descs = {r.get("description") for r in root.iter("rule")}
     assert {"Dip Labels", "SymbolSuffix Labels"} <= descs
-    print("round-trip ok: placement, callout, dd removal on both comment rules")
+    print("round-trip ok: Fallback keeps its leader, Regolith Note sits "
+          "beside its point with none")
     con.close()
 
 

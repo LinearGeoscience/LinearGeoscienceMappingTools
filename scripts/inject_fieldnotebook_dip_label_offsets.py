@@ -1,27 +1,47 @@
-"""Point-unit, family-aware dip-label offsets for 1 - FieldNotebook.
+"""Ground-fixed, family-aware dip-label offsets for 1 - FieldNotebook.
 
-Point units for everything (user directive 2026-08-15): the renderer
-reference scale is a per-project knob (users retarget it to 1:200 -
-1:500 for UG mapping), and only Point measurements track the 30 pt
-markers under it.  The authored offsets were MapUnits sized against
-the 1:5000 design footprint - at a 1:200 reference scale those ground
-distances swamp the symbol.
+The offsets are QUOTED in Point on the 30 pt marker and BAKED as the ground
+distances those points span at the template's 1:5000 reference scale.
 
-Distances are the symbol-ratio equivalents on the 30 pt marker (whose
-canvas spans 52.9 design units), family-aware because a flat distance
-is too far for planar strike symbols and lands inside the plunge
-arrows:
+Why not simply store them in Point, as this file did between 2026-08-15 and
+2026-08-17: QGIS multiplies paper-unit SYMBOL sizes by
+referenceScale/mapScale, so a 30 pt marker under a 1:5000 reference scale
+keeps a constant GROUND footprint - it spans 52.9 m at every zoom. Label
+offsets get no such treatment. Measured
+(tests/test_label_offset_invariance_qgis.py): a 21.5 pt offset holds ~28 px
+while its symbol grows 40 -> 400 px between 1:5000 and 1:500, so the label
+slides right across the symbol as you zoom in. Ground-fixed symbols need
+ground-fixed offsets.
 
-    Dip Labels     linear (plunge arrows)  21.5 pt (clears the arrowhead)
-                   planar (strike symbols)  9.6 pt (hugs the dip tick)
-                   non-structure fallback  '2.3,-2.3'
-    SymbolSuffix   17 pt at dip direction +135; fallback '8.5,8.5'
+Commit 55eaeed moved these to Point along with the symbol's stroke width.
+That was right for the stroke - it lives INSIDE the symbol and must share
+its units, or it drifts against the artwork - and wrong for the offset,
+which does not. The concern that drove it is still handled: the reference
+scale is a per-project knob (UG mapping retargets it to 1:200 - 1:500), and
+Set Mapping Scale re-derives these offsets from the very same scale_value it
+hands the renderer, so the ratio survives a retarget.
 
-offsetUnits become Point on the two structural rules only.  The linear
+Distances are the symbol-ratio equivalents on the 30 pt marker (whose canvas
+spans 52.9 design units - which is 52.9 m at 1:5000, the same units these
+offsets are in), family-aware because a flat distance is too far for planar
+strike symbols and lands inside the plunge arrows:
+
+    Dip Labels     linear (plunge arrows)  21.5 pt -> 37.92
+                   planar (strike symbols)  9.6 pt -> 16.93
+                   non-structure fallback   2.3 pt -> '4.06,-4.06'
+    SymbolSuffix   17 pt -> 29.99 at dip direction +135; fallback 14.99
+
+offsetUnits become MapUnit on the two structural rules only. The linear
 code list mirrors stereonet/data.py structure_classification ('L'/'l'
-entries).  Upgrades cleanly from the flat-30 MapUnit original, the
-family-aware MapUnit interim (38/17), or the MM interim (7.2/3.2).
-Type='Structure' gating is kept as-is.
+entries). Upgrades cleanly from the flat-30 MapUnit original, the
+family-aware MapUnit interim (38/17), the MM interim (7.2/3.2), or the
+Point form (21.5/9.6). Type='Structure' gating is kept as-is.
+
+MUST STAY IN STEP with script_setmapping.py, which regenerates this whole
+labeling block whenever Set Mapping Scale runs -
+tests/test_label_code_template_qgis.py is the enforcement. This script runs
+on plain Python and cannot import that module (it imports qgis), hence the
+duplicated constants.
 
 Idempotent and re-runnable; QML parse-validated BEFORE writing.
 
@@ -35,6 +55,19 @@ import xml.etree.ElementTree as ET
 
 LAYER = "1 - FieldNotebook"
 
+# The template is authored at this reference scale; Set Mapping Scale
+# re-derives everything below at whatever scale the user picks.
+REFERENCE_SCALE = 5000
+POINTS_PER_INCH = 72.0
+METRES_PER_INCH = 0.0254
+
+
+def pt_to_map_units(points, scale=REFERENCE_SCALE):
+    """Mirror of script_setmapping.pt_to_map_units - same 2 dp rounding, so
+    the two produce byte-identical expression text."""
+    return "%g" % round(points * METRES_PER_INCH / POINTS_PER_INCH * scale, 2)
+
+
 # stereonet/data.py structure_classification codes marked 'L' or 'l'
 LINEAR = ("BAX", "FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z",
           "FAX2", "FAX2M", "FAX2S", "FAX2Z", "FAX3", "FAX3M", "FAX3S",
@@ -42,8 +75,11 @@ LINEAR = ("BAX", "FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z",
           "FAX5S", "FAX5Z", "FAXCR", "FAXK", "FAXSZ", "LME", "LNI",
           "LNI1", "LNI2", "LNI3", "LNI4", "LNI5", "LNISC", "LNS",
           "SLF", "SLK", "STR")
-D_LINEAR = "21.5"
-D_PLANAR = "9.6"
+D_LINEAR = pt_to_map_units(21.5)          # 37.92
+D_PLANAR = pt_to_map_units(9.6)           # 16.93
+D_FALLBACK = pt_to_map_units(2.3)         # 4.06
+D_SUFFIX = pt_to_map_units(17.0)          # 29.99
+D_SUFFIX_FALLBACK = pt_to_map_units(8.5)  # 14.99
 
 _in = ",".join("'%s'" % c for c in LINEAR)
 
@@ -57,6 +93,14 @@ def dip_expr(dist_linear, dist_planar, fallback):
             "ELSE '%s' END" % (_in, dist_linear, dist_planar, fallback))
 
 
+def suffix_expr(dist, fallback):
+    return ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
+            "to_string((%s * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+            "|| ',' || "
+            "to_string((%s * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
+            "ELSE '%s' END" % (dist, dist, fallback))
+
+
 # Prior states of the Dip Labels OffsetXY expression
 OLD_FLAT30 = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
               "to_string((30.0 * cos(radians(&quot;DipDirection&quot; - 90)))) "
@@ -65,24 +109,15 @@ OLD_FLAT30 = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
               "ELSE '4,-4' END")
 OLD_MM = dip_expr("7.2", "3.2", "0.8,-0.8")
 OLD_MU = dip_expr("38.0", "17.0", "4,-4")
-NEW = dip_expr(D_LINEAR, D_PLANAR, "2.3,-2.3")
+OLD_POINT = dip_expr("21.5", "9.6", "2.3,-2.3")
+NEW = dip_expr(D_LINEAR, D_PLANAR, "%s,-%s" % (D_FALLBACK, D_FALLBACK))
 
-# SymbolSuffix rule: authored MapUnit / interim MM forms -> Point
-SUF_OLD = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
-           "to_string((30.0 * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "|| ',' || "
-           "to_string((30.0 * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "ELSE '15,15' END")
-SUF_MM = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
-           "to_string((5.7 * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "|| ',' || "
-           "to_string((5.7 * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "ELSE '2.8,2.8' END")
-SUF_NEW = ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
-           "to_string((17.0 * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "|| ',' || "
-           "to_string((17.0 * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-           "ELSE '8.5,8.5' END")
+# SymbolSuffix rule: every prior form -> ground distances
+SUF_OLD = suffix_expr("30.0", "15,15")
+SUF_MM = suffix_expr("5.7", "2.8,2.8")
+SUF_POINT = suffix_expr("17.0", "8.5,8.5")
+SUF_NEW = suffix_expr(D_SUFFIX, "%s,%s" % (D_SUFFIX_FALLBACK,
+                                           D_SUFFIX_FALLBACK))
 
 
 def bail(msg):
@@ -103,7 +138,10 @@ def main():
 
     # 1. Dip Labels expression (from any known prior state)
     if NEW in qml:
-        print("dip expression already family-aware Point")
+        print("dip expression already family-aware ground distances")
+    elif OLD_POINT in qml:
+        qml = qml.replace(OLD_POINT, NEW)
+        print("dip expression converted from Point (21.5/9.6)")
     elif OLD_MU in qml:
         qml = qml.replace(OLD_MU, NEW)
         print("dip expression converted from family-aware MapUnit (38/17)")
@@ -116,9 +154,12 @@ def main():
     else:
         bail("Dip Labels OffsetXY expression not in any known state")
 
-    # 2. SymbolSuffix expression -> Point distances
+    # 2. SymbolSuffix expression -> ground distances
     if SUF_NEW in qml:
-        print("suffix expression already Point")
+        print("suffix expression already ground distances")
+    elif SUF_POINT in qml:
+        qml = qml.replace(SUF_POINT, SUF_NEW)
+        print("suffix expression converted from Point (17.0)")
     elif SUF_OLD in qml:
         qml = qml.replace(SUF_OLD, SUF_NEW)
         print("suffix expression converted from authored MapUnit form")
@@ -128,7 +169,7 @@ def main():
     else:
         bail("SymbolSuffix OffsetXY expression not in any known state")
 
-    # 3. offsetUnits -> Point on the two structural rules only; other
+    # 3. offsetUnits -> MapUnit on the two structural rules only; other
     #    rules (comment/callout labels) keep their own tuned units
     for desc in ("Dip Labels", "SymbolSuffix Labels"):
         m = re.search(r'<rule\b[^>]*description="%s">.*?</rule>' % desc,
@@ -136,10 +177,10 @@ def main():
         if not m:
             bail(f"rule {desc!r} not found")
         block = m.group(0)
-        for wrong in ('offsetUnits="MapUnit"', 'offsetUnits="MM"'):
+        for wrong in ('offsetUnits="Point"', 'offsetUnits="MM"'):
             if wrong in block:
-                block = block.replace(wrong, 'offsetUnits="Point"')
-                print(f"{desc}: {wrong} -> Point")
+                block = block.replace(wrong, 'offsetUnits="MapUnit"')
+                print(f"{desc}: {wrong} -> MapUnit")
         qml = qml[:m.start()] + block + qml[m.end():]
 
     if qml != original:
@@ -163,13 +204,20 @@ def main():
     for desc in ("Dip Labels", "SymbolSuffix Labels"):
         block = re.search(r'<rule\b[^>]*description="%s">.*?</rule>' % desc,
                           q, re.S).group(0)
-        assert 'offsetUnits="Point"' in block, desc
-        assert 'offsetUnits="MapUnit"' not in block, desc
+        assert 'offsetUnits="MapUnit"' in block, desc
+        assert 'offsetUnits="Point"' not in block, desc
         assert 'offsetUnits="MM"' not in block, desc
     assert OLD_FLAT30 not in q and OLD_MU not in q and OLD_MM not in q
-    assert SUF_OLD not in q and SUF_MM not in q
-    print(f"round-trip ok: {LAYER} dip labels family-aware Point "
-          f"(linear {D_LINEAR} / planar {D_PLANAR} pt, suffix 17 pt)")
+    assert OLD_POINT not in q
+    assert SUF_OLD not in q and SUF_MM not in q and SUF_POINT not in q
+    # The Regolith ring is a paper distance BY DESIGN and must survive.
+    regolith = re.search(r'<rule\b[^>]*description="Regolith Note">.*?</rule>',
+                         q, re.S).group(0)
+    assert 'distUnits="Point"' in regolith, \
+        "the Regolith ring should still be a paper distance"
+    print(f"round-trip ok: {LAYER} dip labels family-aware ground distances "
+          f"(linear {D_LINEAR} / planar {D_PLANAR}, suffix {D_SUFFIX} "
+          f"at 1:{REFERENCE_SCALE})")
     con.close()
 
 
