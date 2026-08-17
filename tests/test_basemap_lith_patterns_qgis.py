@@ -240,10 +240,15 @@ def main():
           % (len(below), below[:4]))
     heavy = max(tile_ink, key=lambda t: tile_ink[t])
     light = min(tile_ink, key=lambda t: tile_ink[t])
+    # Proportional, not an absolute margin. The whole band scales with the
+    # dial, so at a soft setting it is only ~0.26 wide and any fixed gap fails
+    # while the mechanism is working perfectly well.
     check(_inj.target_for_ink_pct(tile_ink[heavy])
-          < _inj.target_for_ink_pct(tile_ink[light]) - 0.5,
-          "the heaviest tile (%s %.0f%%) is aimed softer than the lightest "
-          "(%s %.0f%%)" % (heavy, tile_ink[heavy], light, tile_ink[light]))
+          < _inj.target_for_ink_pct(tile_ink[light]) * 0.92,
+          "the heaviest tile (%s %.0f%% -> %.2f) is aimed softer than the "
+          "lightest (%s %.0f%% -> %.2f)"
+          % (heavy, tile_ink[heavy], _inj.target_for_ink_pct(tile_ink[heavy]),
+             light, tile_ink[light], _inj.target_for_ink_pct(tile_ink[light])))
     check(lighter > 0,
           "dark fills still invert to a light texture (%d do) - a softer "
           "target must not silently make dark-on-dark reachable" % lighter)

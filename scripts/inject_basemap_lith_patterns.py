@@ -115,7 +115,7 @@ BLANK = "blank"
 # for a sweep with the LGS_INK_BASE environment variable rather than an argv
 # flag - calibrate_lith_strokes.py and the test both import this module and
 # would never see argv.
-INK_BASE = float(os.environ.get("LGS_INK_BASE", "2.2"))
+INK_BASE = float(os.environ.get("LGS_INK_BASE", "1.3"))
 REF_INK_PCT = 8.0
 
 # The floor MOVES WITH THE DIAL, and it has to. With a fixed 2.0 floor most of
@@ -123,9 +123,12 @@ REF_INK_PCT = 8.0
 # sparse tiles and the dial appeared to stop working - which is exactly what it
 # looked like on the first review sheet.
 #
-# 1.35 is the hard end: below that a texture stops being faint and starts being
-# absent, and the dense tiles are the ones that get there first.
-INK_TARGET_MIN = max(1.35, INK_BASE * 0.55)
+# The hard end is 1.04, which is nearly nothing - a ratio of 1.0 would be the
+# fill itself. It sits this low because a higher stop pins the dense tiles and
+# the dial stops working for them, which is the failure this whole arrangement
+# exists to avoid. Whether a given setting is USEFUL is a judgement to make off
+# a rendered sheet, not something to legislate here.
+INK_TARGET_MIN = max(1.04, INK_BASE * 0.55)
 INK_TARGET_MAX = INK_BASE
 
 # Which WAY to move is decided against this fixed reference, NOT against the
@@ -148,7 +151,7 @@ DIRECTION_REFERENCE = 4.5
 # bars exist because the target is now variable: the margin scales the check
 # with the target, the floor keeps it meaningful if the target goes very low.
 WEAK_INK_MARGIN = 0.85
-WEAK_INK_FLOOR = 1.15
+WEAK_INK_FLOOR = 1.02
 
 # How much of the fill's chroma the texture ink is allowed to carry. Keeps a
 # near-white fill from spawning a saturated ink - see tint().
@@ -173,7 +176,7 @@ PALE_INKS = ("plagioclase", "talc")
 # multiplier is set so the value is EXACTLY 3.2 at INK_BASE 3.6, which is where
 # that number was chosen; the 2.4 floor keeps a mineral ink the strongest mark
 # on the page, because it is the one carrying diagnostic mineralogy.
-MINERAL_CONTRAST = max(2.4, INK_BASE * 0.889)
+MINERAL_CONTRAST = max(1.45, INK_BASE * 0.889)
 
 # If the fill's hue is already within this of the mineral ink's, the fill is
 # ALREADY saying what the ink would say - iron formation drawn in iron-oxide
@@ -355,6 +358,38 @@ def fit_fill_to_ink(fill, ink):
             if r >= MINERAL_CONTRAST:
                 return cand
     return best
+
+
+def soften_mineral(fill, ink, target):
+    """Pull a mineral ink back toward its fill until it is only as strong as
+    it needs to be.
+
+    MINERAL_CONTRAST is a MINIMUM, and the mineral inks are absolute authored
+    colours, so nothing was capping the ones that land far above it: with the
+    dial soft, RCC's carbonate ink sat at 5.9:1 while the auto tints around it
+    were at 1.3:1. That is 93 codes ignoring the softness setting.
+
+    Blends toward the fill and never past it, which is what makes this safe.
+    An earlier round destroyed these signals by sliding an ink's lightness to
+    CHASE contrast - anorthosite's white plagioclase came out near-black.
+    Interpolating toward the fill cannot do that: a pale ink stays paler than
+    its fill and a dark ink stays darker, because the direction is preserved by
+    construction. Only the amount changes.
+    """
+    if contrast(fill, ink) <= target:
+        return ink
+
+    def blend(t):
+        return tuple(round(ink[i] + (fill[i] - ink[i]) * t) for i in range(3))
+
+    lo, hi = 0.0, 1.0
+    for _ in range(24):
+        mid = (lo + hi) / 2.0
+        if contrast(fill, blend(mid)) > target:
+            lo = mid
+        else:
+            hi = mid
+    return blend(hi)
 
 
 def hexof(rgb):
@@ -591,7 +626,14 @@ def main():
                 if contrast(fitted, mineral) >= MINERAL_CONTRAST:
                     fill = fitted
                     fill_of[code] = fill
-                    ink = mineral
+                    # fit_fill_to_ink RAISES a pair that is too weak; this
+                    # LOWERS one that is far stronger than the tile needs, so
+                    # a mineral code tracks the softness dial like everything
+                    # else. It keeps a slightly higher bar - the mineral inks
+                    # carry diagnostic mineralogy, so they should read as the
+                    # strongest mark on the page, just not four times over.
+                    ink = soften_mineral(
+                        fill, mineral, max(MINERAL_CONTRAST, target))
                     n_mineral += 1
                 else:
                     # The fill cannot move far enough inside the muted band to
