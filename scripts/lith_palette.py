@@ -87,6 +87,21 @@ ANCHOR_OVERRIDE = {
 
 # Textures whose chemistry, not their family, should set the hue.
 # (hue degrees, lightness, saturation) - absolute, muted, hand-picked.
+#
+# SCOPED TO `Lithology` ONLY - see CHEMICAL_TYPES. This rule earns its keep on
+# the sedimentary codes, where 32 of them share one blue `#78a7d3` and
+# chemistry is the only thing available to separate limestone from chert from
+# iron formation. It was actively harmful on Regolith and Transported Cover:
+# those codes already carry a deliberate cream-and-buff palette in the
+# template, and overriding it
+#   * made RCC Calcrete render as SLI Limestone - same fill, same ink, same
+#     brick tile, which is what a calcrete is not,
+#   * did the same to RIST/SJP, RGO/SIF, RFC/TDLP, SEV/TGYP and TLTP/RDL*,
+#     nine pixel-identical cross-family pairs in all, and
+#   * flattened the regolith profile that the transported-cover toggle and
+#     every regolith map depends on being able to read.
+# A regolith unit is named for its weathering habit; its chemistry is already
+# in its name. Only the Lithology codes needed chemistry to separate them.
 CHEMICAL_HUE = {
     "limestone":      (196, 0.72, 0.26),
     "chert":          (205, 0.78, 0.12),
@@ -94,6 +109,7 @@ CHEMICAL_HUE = {
     "laterite":       (28,  0.62, 0.34),
     "evaporite":      (48,  0.86, 0.22),
 }
+CHEMICAL_TYPES = frozenset(["Lithology"])
 CHEMICAL_EXEMPT = {("H", "limestone"), ("H", "marble")}   # marble stays H
 
 # Rocks coloured by WHAT THEY WERE. The texture already says schist / gneiss.
@@ -118,7 +134,6 @@ _proto([
 ], SHEARED)
 
 _proto([
-    ("F", "HFG HGF HGG HGGA HCK"),
     ("I", "HIG HGI"),
     ("M", "HMG HGM HAMP HPA HPC HPK HPMA HEC HBL HGS"),
     ("U", "HGU"),
@@ -127,11 +142,47 @@ _proto([
 
 # NOT re-based, deliberately: the migmatites keep the template's graded ramp,
 # and hornfels / marble / skarn / the fault rocks have no single protolith.
+#
+# HFG HGF HGG HGGA HCK were re-based onto F and had to be REMOVED. The
+# protolith target is a family MODAL colour, and F's modal is the intrusive
+# pink (it beats the extrusive yellow 17-13), so "colour it like what it was
+# made from" resolved felsic gneiss / granulite / charnockite to exactly the
+# granitoid pink they most need to be told apart from - and it discarded the
+# terracotta the user had deliberately set on HGG and HGGA to do it. They now
+# carry their own colours from the template, as a terracotta gneiss family.
+# Protolith colouring is still right for the mafic, intermediate, ultramafic
+# and sedimentary metamorphics above: those families have one unambiguous
+# colour each, so re-basing tells the reader something true.
 
 # Sheared: deeper and PALER. Metamorphic: deeper and RICHER. Inverted on
 # purpose so basalt, mafic gneiss and basalt schist all separate.
 SHEAR_LIGHTNESS, SHEAR_SATURATION = -0.05, 0.72
 META_LIGHTNESS, META_SATURATION = -0.09, 1.18
+
+# "Richer" only means something where there is room to be richer. The
+# intermediate family's own template colour #7bf4d4 is already at saturation
+# 0.85, and multiplying that by META_SATURATION drove HGI Intermediate
+# Granulite and HIG Intermediate Gneiss to #48faca - a fluorescent mint, on a
+# geological map. Above this ceiling the fill is already as saturated as the
+# palette goes, so the lightness shift alone carries the metamorphic signal.
+# Deliberately NOT a blanket clamp in _mute(): 93 fills sit above 0.60,
+# including the granitoid pink, the felsic yellow, the vein reds and the
+# intermediate cyan, and every one of those is a colour the template chose.
+# Flattening them is the exact mistake this module was rewritten to undo.
+META_SATURATION_CEIL = 0.62
+
+# Per-code lightness nudges, applied after the slot offset.
+#
+# The slot mechanism cannot express "make this one paler": which slot a code
+# gets is an accident of alphabetical order over the variety keys, so asking
+# for the pale end of a subgroup lands wherever sorting puts it. FGRL
+# Leucogranite is defined by being pale, and it was previously forced DARK
+# (#ab3f56) because a pale plagioclase ink needs a deep ground - which put a
+# leucogranite in the same dark pink as the migmatites. Its ink is now `auto`,
+# so instead of a dark ground it gets the pale fill the rock actually has.
+LIGHTNESS_NUDGE = {
+    "FGRL": +0.05,
+}
 
 
 def _clamp(v, lo, hi):
@@ -188,7 +239,7 @@ def family_bases(anchors):
 
 
 def read_texture_map():
-    """{code: (texture, variety)} from lith_textures.tsv."""
+    """{code: (texture, variety, type)} from lith_textures.tsv."""
     out = {}
     with open(TEXTURE_MAP, encoding="utf-8") as fh:
         for line in fh:
@@ -199,8 +250,22 @@ def read_texture_map():
             if parts[0] == "code" or len(parts) < 2:
                 continue
             variety = parts[6] if len(parts) > 6 and parts[6] != "-" else ""
-            out[parts[0]] = (parts[1], variety)
+            type_ = parts[2] if len(parts) > 2 else ""
+            out[parts[0]] = (parts[1], variety, type_)
     return out
+
+
+def is_chemically_hued(code, texture, type_):
+    """Does this code take its hue from its chemistry rather than its family?
+
+    Shared with the injector, which needs the same answer for its
+    hue-tautology check: an iron-oxide ink on a chemically iron-oxide fill
+    says nothing twice, but that reasoning only holds where the fill's hue
+    really was set by chemistry.
+    """
+    return (texture in CHEMICAL_HUE
+            and type_ in CHEMICAL_TYPES
+            and (code[0].upper(), texture) not in CHEMICAL_EXEMPT)
 
 
 def _family_of(code):
@@ -211,7 +276,7 @@ def _family_of(code):
 def _slots(tex_of):
     """{code: (lightness offset, hue offset)} within its subgroup."""
     groups = {}
-    for code, (tex, _var) in tex_of.items():
+    for code, (tex, _var, _type) in tex_of.items():
         groups.setdefault((_family_of(code), tex), []).append(code)
     slot_of = {}
     for codes in groups.values():
@@ -266,32 +331,33 @@ def build(deepen=()):
         counts[rgb] = counts.get(rgb, 0) + 1
 
     out = {}
-    for code, (tex, _var) in tex_of.items():
+    for code, (tex, _var, type_) in tex_of.items():
         anchor = anchors.get(code)
         if anchor is None:
             continue
         moved = False
 
-        fam = code[0].upper()
-        chem = CHEMICAL_HUE.get(tex)
         if code in PROTOLITH:
             anchor = bases.get(PROTOLITH[code], anchor)
             moved = True
-        elif chem and (fam, tex) not in CHEMICAL_EXEMPT:
-            hue, lig, sat = chem
+        elif is_chemically_hued(code, tex, type_):
+            hue, lig, sat = CHEMICAL_HUE[tex]
             anchor = tuple(round(c * 255)
                            for c in colorsys.hls_to_rgb(hue / 360.0, lig, sat))
             moved = True
 
         h, l, s = colorsys.rgb_to_hls(*[c / 255.0 for c in anchor])
         l_ref = l
+        touched = moved
 
         if code in SHEARED:
             l += SHEAR_LIGHTNESS
             s *= SHEAR_SATURATION
+            touched = True
         elif code in METAMORPHIC:
             l += META_LIGHTNESS
-            s = min(1.0, s * META_SATURATION)
+            s = min(s * META_SATURATION, max(s, META_SATURATION_CEIL))
+            touched = True
 
         # Separate only where the colour was already shared, or where the code
         # has been moved onto a shared base. A unique original colour is left
@@ -300,10 +366,27 @@ def build(deepen=()):
             dl, dh = slot_of.get(code, (0.0, 0.0))
             l += dl
             h += dh / 360.0
-        h += CLAST_TINT.get(code, 0.0) / 360.0
+            touched = touched or bool(dl) or bool(dh)
+        if code in CLAST_TINT:
+            h += CLAST_TINT[code] / 360.0
+            touched = True
+        if code in LIGHTNESS_NUDGE:
+            l += LIGHTNESS_NUDGE[code]
+            touched = True
 
         if code in deepen:
             l = min(l, 0.46)
+            touched = True
+
+        if not touched:
+            # Nothing moved this colour, so hand back the template's own value
+            # byte for byte. Sending it through the muted clamps anyway
+            # desaturates any mid-lightness saturated colour - it turned the
+            # user's HGG Granite Gneiss terracotta #d96a4e into #c57662 - which
+            # silently breaks the rule this module exists to enforce: a colour
+            # the template already decided is kept EXACTLY.
+            out[code] = tuple(anchor)
+            continue
 
         h, l, s = _mute(h, l, s, l_ref)
         out[code] = tuple(round(c * 255) for c in colorsys.hls_to_rgb(h, l, s))

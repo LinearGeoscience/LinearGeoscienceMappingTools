@@ -7,7 +7,7 @@ ANS	syenite	Lithology	Nepheline Syenite	nepheline syenite: intrusive, not volcan
 APH	rhyolite	Lithology	Phonolite	felsic-alkaline volcanic, flow banded	auto	-
 ATR	rhyolite	Lithology	Trachyte	felsic-alkaline volcanic, flow banded	auto	-
 F	granite	Lithology	Felsic Undifferentiated	granitoid, coarse	auto	granite
-FAB	felsic_fine	Lithology	Albitite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	plagioclase	felsic_fine
+FAB	felsic_fine	Lithology	Albitite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
 FAPL	felsic_fine	Lithology	Aplite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
 FD	dacite	Lithology	Dacite	felsic lava	auto	-
 FGAP	felsic_fine	Lithology	Aplogranite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
@@ -17,7 +17,7 @@ FGR	granite	Lithology	Granite	granitoid, coarse	auto	granite
 FGR2M	granite	Lithology	Two-Mica Granite	granitoid, coarse	mica	granite
 FGRA	granite	Lithology	Alkali-Feldspar Granite	granitoid, coarse	kfeldspar	granite
 FGRB	granite	Lithology	Biotite Granite	granitoid, coarse	mica	granite
-FGRL	granite	Lithology	Leucogranite	granitoid, coarse	plagioclase	granite
+FGRL	granite	Lithology	Leucogranite	granitoid, coarse; pale fill not a pale ink - see LIGHTNESS_NUDGE	auto	granite
 FGY	felsic_fine	Lithology	Granophyre	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
 FI	granite	Lithology	Felsic Intrusive	granitoid, coarse	auto	granite
 FIG	ignimbrite	Lithology	Ignimbrite	pyroclastic / volcaniclastic	auto	-

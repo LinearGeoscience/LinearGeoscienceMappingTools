@@ -98,19 +98,61 @@ BLANK = "blank"
 # Texture colour is derived from each lithology's OWN fill colour rather than
 # being one ink, so it always belongs with the polygon it sits on. Keep the
 # hue, damp the saturation, then move lightness until the texture separates
-# from the fill by TARGET_CONTRAST (WCAG-style luminance ratio).
+# from the fill by a target (WCAG-style luminance ratio).
 #
-# Prefer moving DARKER. Five of the 48 fills - the ultramafic purple among
-# them - are already too dark for that to reach the target, and those invert
-# to a LIGHT texture instead. That inversion is intentional: dark-on-dark
-# genuinely fails to read. Drop this to ~3.2 if you would rather every
-# texture stayed dark at the cost of separation on the darkest fills.
-TARGET_CONTRAST = 4.5
+# THE TARGET IS PER TEXTURE, NOT ONE NUMBER.
+# It used to be a flat 4.5 for every tile, which is a *text* legibility bar
+# applied to a background texture - the user's report was simply "too strong",
+# and 4.5 is why. It also ignored how much ink a tile lays down: measured
+# coverage runs from 8.0% (amphibolite, dacite, migmatite) to 20.9%
+# (crosshatch), so at one ratio the heavy tiles shout while the sparse ones
+# merely show. Scale the target down as coverage goes up and both land in the
+# same perceptual place:
+#
+#     target = clamp(INK_BASE * REF_INK_PCT / tile_ink_pct, MIN, MAX)
+#
+# INK_BASE is the dial the user picks by eye off a contact sheet. Override it
+# for a sweep with the LGS_INK_BASE environment variable rather than an argv
+# flag - calibrate_lith_strokes.py and the test both import this module and
+# would never see argv.
+INK_BASE = float(os.environ.get("LGS_INK_BASE", "3.6"))
+REF_INK_PCT = 8.0
+INK_TARGET_MIN, INK_TARGET_MAX = 2.0, 3.6
+
+# Which WAY to move is decided against this fixed reference, NOT against the
+# per-texture target, and that separation is the whole point.
+#
+# Prefer moving DARKER. A handful of fills - the ultramafic purple among them -
+# are already too dark for that to reach the reference, and those invert to a
+# LIGHT texture instead. That inversion is intentional: dark-on-dark genuinely
+# fails to read, because the contrast ratio is compressive at the dark end and
+# a "passing" ratio there can still be an invisible absolute difference.
+#
+# Deciding direction against the per-texture target instead would silently
+# undo it: a softer target IS reachable by darkening a near-black fill, so 17
+# to 22 codes would flip from their deliberate light ink to dark-on-dark and
+# the paragraph above would stop being true of the code. Direction is a
+# property of the FILL; magnitude is a property of the TILE.
+DIRECTION_REFERENCE = 4.5
+
+# An ink this far below its own target is not "soft", it is not there. Both
+# bars exist because the target is now variable: the margin scales the check
+# with the target, the floor keeps it meaningful if the target goes very low.
+WEAK_INK_MARGIN = 0.85
+WEAK_INK_FLOOR = 1.6
+
+# How much of the fill's chroma the texture ink is allowed to carry. Keeps a
+# near-white fill from spawning a saturated ink - see tint().
+INK_CHROMA_GAIN = 2.0
 
 # Inks pale enough that the fill beneath them has to be deep for the texture
 # to read at all - anorthosite's white plagioclase dots being the case this
 # exists for. lith_palette pushes these codes down their family ramp.
-PALE_INKS = ("plagioclase", "talc", "lithium")
+#
+# `lithium` was here while it was a pale lilac. It is now a deep violet,
+# because forcing FPGS's fill dark to host a pale ink put a spodumene
+# pegmatite in the same dark pink as the migmatites.
+PALE_INKS = ("plagioclase", "talc")
 
 # A texture only needs to be legible, not to pass text-contrast rules, so
 # mineral pairs are held to a gentler bar than the auto tint. Pushing every
@@ -144,21 +186,58 @@ def contrast(a, b):
     return (hi + 0.05) / (lo + 0.05)
 
 
-def tint(fill):
-    """Texture colour for a polygon fill: (rgb, contrast, direction)."""
+def target_for_ink_pct(ink_pct):
+    """The contrast target a tile laying down `ink_pct` percent ink should use.
+
+    Inverse in coverage, so a heavy tile is softened more than a sparse one and
+    both read as the same weight of texture on the page.
+    """
+    if ink_pct <= 0:
+        return INK_TARGET_MAX
+    return max(INK_TARGET_MIN,
+               min(INK_TARGET_MAX, INK_BASE * REF_INK_PCT / ink_pct))
+
+
+def _scan(fill, h, s, l0, end, target):
+    """Walk lightness from l0 toward `end`; return (rgb, contrast, reached)."""
+    best, best_r = fill, 0.0
+    for i in range(101):
+        L = l0 + (end - l0) * i / 100.0
+        cand = tuple(round(c * 255) for c in colorsys.hls_to_rgb(h, L, s))
+        r = contrast(fill, cand)
+        if r > best_r:
+            best, best_r = cand, r
+        if r >= target:
+            return cand, r, True
+    return best, best_r, False
+
+
+def tint(fill, target=DIRECTION_REFERENCE):
+    """Texture colour for a polygon fill: (rgb, contrast, direction).
+
+    Two-stage on purpose. DIRECTION is chosen by asking whether darkening can
+    reach DIRECTION_REFERENCE - a fixed bar, so which fills invert to a light
+    texture never changes when the softness dial moves. Only then is the ink
+    placed at `target` in that direction.
+    """
     h, l0, s0 = colorsys.rgb_to_hls(*[c / 255.0 for c in fill])
-    s = min(0.85, s0 * 0.85 + 0.10)
-    best = (fill, 0.0, "none")
-    for lo, hi, label in ((l0, 0.03, "darker"), (l0, 0.97, "lighter")):
-        for i in range(101):
-            L = lo + (hi - lo) * i / 100.0
-            cand = tuple(round(c * 255) for c in colorsys.hls_to_rgb(h, L, s))
-            r = contrast(fill, cand)
-            if r > best[1]:
-                best = (cand, r, label)
-            if r >= TARGET_CONTRAST:
-                return cand, r, label
-    return best  # palette too flat to hit the target; take the best available
+    # HLS saturation is not perceptual near white: a cream like #ffeed6 reports
+    # s0 = 1.0 despite having almost no colour in it, so damping s0 still left a
+    # vivid hue once lightness dropped and the restored cream regolith fills
+    # came out with poster-paint amber textures (#cb7e10 on RDLX). Clamp by the
+    # fill's actual chroma instead - it only bites on the near-white and
+    # near-black fills, where it is exactly the correction needed.
+    chroma = (max(fill) - min(fill)) / 255.0
+    s = min(0.85, s0 * 0.85 + 0.10, chroma * INK_CHROMA_GAIN + 0.12)
+    _c, _r, darker_ok = _scan(fill, h, s, l0, 0.03, DIRECTION_REFERENCE)
+    end, label = (0.03, "darker") if darker_ok else (0.97, "lighter")
+    cand, r, reached = _scan(fill, h, s, l0, end, target)
+    if reached or darker_ok:
+        return cand, r, label
+    # Too dark to darken AND too pale to lighten: take the better of the two
+    # rather than silently keeping a direction that cannot separate at all.
+    alt, alt_r, _ = _scan(fill, h, s, l0, 0.03, target)
+    return (cand, r, label) if r >= alt_r else (alt, alt_r, "darker")
 
 
 def _lab(rgb):
@@ -206,6 +285,12 @@ LOOKALIKE_TILES = frozenset([
 IDENTICAL_DE = 1.5
 MIN_FILL_DE = 7.0
 MIN_INK_DE = 30.0
+
+# Flipped to True once the cross-family scan came back clean, so the check is
+# enforced rather than advisory. A module constant rather than a --report flag
+# on purpose: a flag can be left off and the gate silently never enforced,
+# whereas flipping this is visible in the diff and cannot be half-done.
+IDENTICAL_ABORTS = True
 
 
 def _hue_gap(a, b):
@@ -307,6 +392,35 @@ def load_stroke_widths(tiles):
     return out
 
 
+def load_tile_ink(tiles):
+    """{texture: ink_pct} - column 3 of stroke_widths.tsv.
+
+    The measured ink coverage each tile achieves at its calibrated width. This
+    is what makes the contrast target per-texture; see INK_BASE. Kept separate
+    from load_stroke_widths() so that function's return shape stays a plain
+    {texture: width} for its existing callers.
+    """
+    out = {}
+    with open(STROKE_WIDTHS, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if parts[0] == "texture" or len(parts) < 3:
+                continue
+            try:
+                out[parts[0]] = float(parts[2])
+            except ValueError:
+                bail("bad ink_pct in %s: %r" % (STROKE_WIDTHS, line))
+    missing = sorted({t for t in tiles if t != BLANK} - set(out))
+    if missing:
+        bail("no measured ink coverage for: %s - stroke_widths.tsv predates "
+             "the per-texture contrast target; re-run "
+             "scripts/calibrate_lith_strokes.py" % ", ".join(missing))
+    return out
+
+
 def load_mineral_inks():
     """{ink_name: (r,g,b)} from mineral_inks.tsv."""
     if not os.path.exists(MINERAL_INKS):
@@ -398,6 +512,7 @@ def main():
 
     tiles = load_tiles()
     widths = load_stroke_widths(tiles)
+    tile_ink = load_tile_ink(tiles)
     inks = load_mineral_inks()
 
     con = sqlite3.connect("file:%s?mode=ro" % ORIGINAL.replace("\\", "/"),
@@ -420,11 +535,15 @@ def main():
     if missing_fill:
         bail("no fill colour for: %s" % ", ".join(missing_fill[:15]))
 
+    type_of = {c: t for c, (_tex, _var, t)
+               in lith_palette.read_texture_map().items()}
     by_texture, by_colour, by_width = {}, {}, {}
     ink_of, weak, tautology, unfittable, n_mineral = {}, [], [], [], 0
+    short = []
     for code, (texture, _note, ink_name, _var) in tex_map.items():
         by_texture.setdefault(texture, []).append(code)
         by_width.setdefault("%.3f" % widths[texture], []).append(code)
+        target = target_for_ink_pct(tile_ink[texture])
         fill = fill_of[code]
         if ink_name and ink_name != "auto":
             if ink_name not in inks:
@@ -436,10 +555,15 @@ def main():
             # "quartz-bearing" are different statements, and treating that as
             # a tautology silently dropped the quartz signal from MDQ Quartz
             # Dolerite - one of the two cases this feature was asked for.
-            chem_fill = texture in lith_palette.CHEMICAL_HUE
+            # ...and CHEMICAL_HUE only applies to Lithology codes now, so a
+            # regolith code on a chert or laterite tile keeps its own cream
+            # fill and is NOT chemically hued. Asking the same question the
+            # palette asked keeps the two from disagreeing.
+            chem_fill = lith_palette.is_chemically_hued(
+                code, texture, type_of.get(code, ""))
             if chem_fill and _hue_gap(fill, mineral) <= HUE_TAUTOLOGY_DEG:
                 # the fill already carries this chemistry - don't say it twice
-                ink = tint(fill)[0]
+                ink = tint(fill, target)[0]
                 tautology.append(code)
             else:
                 # NB do NOT re-add the slot offset here. The fill arriving
@@ -457,19 +581,32 @@ def main():
                     # The fill cannot move far enough inside the muted band to
                     # host this ink. Legibility wins over the mineral signal:
                     # an invisible texture says nothing at all.
-                    ink = tint(fill)[0]
+                    ink = tint(fill, target)[0]
                     unfittable.append((code, ink_name))
         else:
-            ink = tint(fill)[0]
+            ink = tint(fill, target)[0]
         ink_of[code] = ink
         r = contrast(fill, ink)
-        if r < 3.0:
+        # Scaled to the code's OWN target, not a flat 3.0. A flat floor made
+        # sense while every texture aimed at 4.5; against a 2.15 target it
+        # would abort on 55-123 perfectly good codes for the crime of hitting
+        # the softness they were asked for. The absolute floor stops a very
+        # small target from disabling the check altogether.
+        floor = max(WEAK_INK_FLOOR, target * WEAK_INK_MARGIN)
+        if r < floor:
             weak.append((code, ink_name, r))
+        elif r < target - 0.01:
+            short.append((code, texture, r, target))
         by_colour.setdefault(hexof(ink), []).append(code)
     if weak:
         worst = sorted(weak, key=lambda t: t[2])[:8]
         bail("%d code(s) have an ink that cannot separate from their fill: %s"
              % (len(weak), ", ".join("%s/%s %.2f" % w for w in worst)))
+    if short:
+        print("     %d code(s) fall short of their own target (palette too "
+              "flat to reach it, still above the floor): %s"
+              % (len(short), ", ".join("%s %.2f<%.2f" % (c, r, t)
+                                       for c, _x, r, t in sorted(short)[:6])))
 
     # ---- separation: codes that could sit side by side must differ -------
     # Round 3 verified that TEXTURES were distinct and reported that as
@@ -484,6 +621,10 @@ def main():
             return True
         return delta_e(ink_of[a], ink_of[b]) >= MIN_INK_DE
 
+    def acceptable_lookalikes(a, b):
+        va, vb = tex_map[a][3], tex_map[b][3]
+        return bool(va) and va == vb
+
     by_family = {}
     for code in tex_map:
         by_family.setdefault(lith_palette._family_of(code), []).append(code)
@@ -492,28 +633,52 @@ def main():
         members.sort()
         for i, a in enumerate(members):
             for b in members[i + 1:]:
-                va, vb = tex_map[a][3], tex_map[b][3]
-                if va and va == vb:
+                if acceptable_lookalikes(a, b):
                     continue          # declared acceptable look-alikes
                 if not distinct(a, b):
                     clashes.append((delta_e(fill_of[a], fill_of[b]), a, b,
                                     tex_map[a][0]))
-    identical = [c for c in clashes
-                 if c[0] < IDENTICAL_DE
-                 and delta_e(ink_of[c[1]], ink_of[c[2]]) < IDENTICAL_DE]
+
+    # The IDENTICAL bar is GLOBAL; the "too close" warning above stays
+    # within-family. Two different rocks rendering as the same pixels is
+    # indefensible wherever they sit in the code list, and scoping this check
+    # by family made it blind to exactly the cases that occur: a chemistry hue
+    # or a shared cream anchor collides ACROSS families, never inside one.
+    # It was missing nine pairs - RCC Calcrete drawn as SLI Limestone, Gossan
+    # as Iron Formation, Ironstone as Jaspilite, Ferricrete as TDLP, Evaporite
+    # as Gypsum, and all four lateritic duricrusts as TLTP.
+    # Within-family stays a warning because pushing every varietal pair to a
+    # comfortable delta would drag the palette out of the muted band.
+    all_codes = sorted(tex_map)
+    identical = []
+    for i, a in enumerate(all_codes):
+        for b in all_codes[i + 1:]:
+            if acceptable_lookalikes(a, b):
+                continue
+            if distinct(a, b):
+                continue
+            if (delta_e(fill_of[a], fill_of[b]) < IDENTICAL_DE
+                    and delta_e(ink_of[a], ink_of[b]) < IDENTICAL_DE):
+                identical.append((delta_e(fill_of[a], fill_of[b]), a, b,
+                                  tex_map[a][0]))
     print("separation: %d within-family pairs closer than dE %.0f, "
-          "%d effectively identical"
-          % (len(clashes), MIN_FILL_DE, len(identical)))
+          "%d effectively identical (checked across ALL %d codes)"
+          % (len(clashes), MIN_FILL_DE, len(identical), len(all_codes)))
     for de, a, b, t in sorted(clashes)[:8]:
         print("     %-8s / %-8s  tile %-14s fill dE %.1f"
               % (a, b, t, de))
     if identical:
         for de, a, b, t in sorted(identical)[:12]:
-            print("   IDENTICAL %-8s / %-8s  tile %s" % (a, b, t))
-        bail("%d pairs of different rocks render identically - give them "
-             "different textures, or declare them a `variety` group in "
-             "lith_textures.tsv if that is genuinely acceptable"
-             % len(identical))
+            print("   IDENTICAL %-8s / %-8s  tile %-14s (%s / %s)"
+                  % (a, b, t, lith_palette._family_of(a),
+                     lith_palette._family_of(b)))
+        if not IDENTICAL_ABORTS:
+            print("   ^ report-only: set IDENTICAL_ABORTS = True to enforce")
+        else:
+            bail("%d pairs of different rocks render identically - give them "
+                 "different textures, or declare them a `variety` group in "
+                 "lith_textures.tsv if that is genuinely acceptable"
+                 % len(identical))
 
     svg_expr = case_expr(by_texture, lambda t: b64(tiles[t]), b64(tiles[BLANK]))
     col_expr = case_expr(by_colour, lambda h: h, hexof((0x13, 0x13, 0x13)))
