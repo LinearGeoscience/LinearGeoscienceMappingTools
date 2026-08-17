@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: diorite
+     source: Lit_Diorite.svg
+     no dot repair needed -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- + symbols at medium density -->
+  <line x1="6" y1="3" x2="6" y2="9" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="3" y1="6" x2="9" y2="6" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="18" y1="3" x2="18" y2="9" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="15" y1="6" x2="21" y2="6" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="6" y1="15" x2="6" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="3" y1="18" x2="9" y2="18" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="18" y1="15" x2="18" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="15" y1="18" x2="21" y2="18" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

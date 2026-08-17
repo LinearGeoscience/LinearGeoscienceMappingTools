@@ -1,0 +1,61 @@
+# Stroke width per texture, Point units, calibrated to ~8% ink.
+# Regenerate with scripts/calibrate_lith_strokes.py.
+# One shared width does NOT work: dot tiles are invisible below
+# ~1.0 pt (a dot's size IS its stroke) while dense line tiles are
+# already solid at 0.3 pt.
+texture	width_pt	ink_pct
+alluvium	0.667	11.1
+amphibolite	0.347	8.0
+arkose	0.667	11.4
+augen_gneiss	0.270	8.1
+basalt	0.561	8.3
+breccia	0.266	8.2
+cataclasite	0.251	8.5
+chalk	0.469	11.3
+chert	0.266	8.8
+claystone	0.433	8.8
+colluvium	0.269	8.3
+conglomerate	0.310	8.1
+crosshatch	0.245	20.9
+dacite	0.360	8.0
+diorite	0.326	11.5
+dolerite	0.368	8.0
+dolomite	0.310	8.3
+dunite	0.904	9.5
+eclogite	0.667	10.0
+evaporite	0.324	8.8
+felsic_fine	2.487	13.4
+gabbro	0.597	8.3
+gneiss	0.277	8.5
+granite	0.490	9.0
+granodiorite	0.490	8.8
+granulite	0.324	8.3
+gravel	0.667	8.1
+greywacke	0.654	8.5
+hornfels	0.792	8.3
+ignimbrite	0.235	9.1
+iron_formation	0.237	11.4
+laterite	0.290	10.2
+limestone	0.469	11.3
+marble	0.373	8.6
+marl	0.280	8.8
+migmatite	0.270	8.0
+mudstone	0.485	14.8
+mylonite	0.240	9.8
+pegmatite	0.641	8.0
+peridotite	1.899	10.2
+phyllite	0.257	9.5
+porphyry	0.490	9.0
+pyroxenite	0.490	8.7
+quartzite	0.667	9.4
+rhyolite	0.318	8.9
+sandstone	1.032	8.2
+schist	0.280	8.1
+serpentinite	0.303	8.3
+shale	0.435	11.4
+siltstone	0.758	8.3
+skarn	0.279	8.2
+slate	0.271	11.4
+stromatolite	0.310	8.3
+syenite	0.326	11.4
+tuff	0.370	8.1

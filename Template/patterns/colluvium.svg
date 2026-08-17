@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: colluvium
+     source: Lit_Colluvium.svg
+     4 zero-length dot(s) repaired to x2=x1+0.001 (Qt paints nothing for a zero-length subpath) -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- Angular fragments of varying sizes, loosely arranged -->
+  <polygon points="2,1 6,0 7,3 3,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="14,2 18,1 17,5 13,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="8,7 12,6 13,10 9,11" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="20,8 23,7 23,11 19,10" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="1,13 4,12 5,15 2,16" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="15,14 19,13 18,17 14,16" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="7,19 11,18 12,22 8,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="20,20 23,19 23,23 19,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Scattered fine dots (matrix) -->
+  <line x1="10" y1="2" x2="10.001" y2="2" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="22" y1="4" x2="22.001" y2="4" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="4" y1="9" x2="4.001" y2="9" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="16" y1="10" x2="16.001" y2="10" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+</svg>

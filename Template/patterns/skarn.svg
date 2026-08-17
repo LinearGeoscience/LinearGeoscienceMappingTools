@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: skarn
+     source: Lit_Skarn.svg
+     no dot repair needed -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- Contact metamorphic: scattered angular crystal shapes -->
+  <!-- Small diamond (garnet) -->
+  <polygon points="6,2 10,6 6,10 2,6" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Small tilted rectangle (pyroxene) -->
+  <polygon points="16,1 20,3 18,7 14,5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Angular shape (wollastonite) -->
+  <polygon points="13,11 17,10 19,14 15,15" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Small diamond -->
+  <polygon points="4,16 8,14 10,18 6,20" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Short crystal-face lines -->
+  <line x1="1" y1="12" x2="4" y2="13" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="20" y1="19" x2="23" y2="17" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="15" y1="22" x2="19" y2="23" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

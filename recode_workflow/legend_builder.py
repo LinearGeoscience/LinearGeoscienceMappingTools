@@ -21,6 +21,11 @@ from qgis.core import (
 )
 
 try:
+    from .. import renderer_compat
+except ImportError:
+    import renderer_compat
+
+try:
     from .legend_config import (
         is_valid_value as _is_valid_value,
         normalize_section, strip_table_suffix, group_fields_into_families,
@@ -124,13 +129,14 @@ def build_grouped_renderer(layer, field_groups, existing_renderer,
     Returns:
         QgsRuleBasedRenderer with nested group structure.
     """
-    # Extract value -> symbol map from existing categorized renderer
+    # Extract value -> symbol map from the existing renderer. Handles both
+    # categorized and rule-based: the patterns template ships '4 - Basemap'
+    # rule-based, and its filter-less SVG texture rule is skipped here so it
+    # never becomes a legend entry.
     symbol_map = {}
-    if isinstance(existing_renderer, QgsCategorizedSymbolRenderer):
-        for cat in existing_renderer.categories():
-            val = cat.value()
-            if val is not None and str(val).strip():
-                symbol_map[str(val)] = cat.symbol().clone()
+    for val, symbol in renderer_compat.renderer_classes(existing_renderer):
+        if val is not None and str(val).strip() and symbol is not None:
+            symbol_map[str(val)] = symbol.clone()
 
     default_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
 

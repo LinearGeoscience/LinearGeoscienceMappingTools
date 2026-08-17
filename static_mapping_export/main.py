@@ -28,6 +28,7 @@ import sqlite3
 import traceback
 
 from ..recode_workflow.remove_unused import remove_unused_categories
+from .. import renderer_compat
 from ..script_setmapping import (
     build_structural_labeling, is_lgs_structural_labeling,
     is_lgs_overlay_labeling, rescale_overlay_label_distance,
@@ -299,8 +300,11 @@ class LayerExporter:
             return
 
         if remove_unused and has_renderer:
-            if not isinstance(target_layer.renderer(), QgsCategorizedSymbolRenderer):
-                self.log(f"  Category pruning skipped - renderer is not categorized", "INFO")
+            # Rule-based counts too: the patterns template ships
+            # '4 - Basemap' rule-based so its SVG texture fill can sit on a
+            # single symbol layer. Its texture rule is never pruned.
+            if not renderer_compat.is_supported(target_layer.renderer()):
+                self.log(f"  Category pruning skipped - renderer is not classified", "INFO")
             else:
                 removed, remaining = remove_unused_categories(
                     target_layer, log=lambda m: self.log(m, "INFO"))

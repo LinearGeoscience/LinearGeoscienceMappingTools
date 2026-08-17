@@ -25,6 +25,11 @@ except ImportError:
     from lgs_tasks import ChunkRunner, run_in_task
 
 try:
+    from . import renderer_compat
+except ImportError:
+    import renderer_compat
+
+try:
     from .recode_workflow.widgets import LayerCheckList, FieldGroupManager
 except ImportError:
     from recode_workflow.widgets import LayerCheckList, FieldGroupManager
@@ -703,6 +708,13 @@ class LegendFieldConfigDialog(QDialog):
                 self._renderer_label.setText(
                     f"Renderer: categorized on '{renderer.classAttribute()}' "
                     f"({len(renderer.categories())} categories)")
+            elif renderer_compat.is_supported(renderer):
+                # rule-based, e.g. the patterns template's '4 - Basemap'
+                attr = renderer_compat.class_attribute(renderer)
+                n = len(renderer_compat.renderer_classes(renderer))
+                self._renderer_label.setText(
+                    f"Renderer: rule-based on '{attr}' ({n} classes)"
+                    if attr else f"Renderer: rule-based ({n} classes)")
             else:
                 self._renderer_label.setText(
                     f"Renderer: {type(renderer).__name__}")

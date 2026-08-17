@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: evaporite
+     source: Lit_Evaporite.svg
+     no dot repair needed -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- Clean diamond crystal shapes -->
+  <!-- Diamond row 1 -->
+  <polygon points="6,1 11,6 6,11 1,6" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="18,1 23,6 18,11 13,6" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Diamond row 2 (offset) -->
+  <polygon points="12,13 17,18 12,23 7,18" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- Partial diamonds at edges for seamless tiling -->
+  <polygon points="0,13 5,18 0,23 -5,18" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="24,13 29,18 24,23 19,18" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

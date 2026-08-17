@@ -19,6 +19,11 @@ from qgis.core import (
 from .widgets import CollapsibleSection, LayerCheckList
 
 try:
+    from .. import renderer_compat
+except ImportError:
+    import renderer_compat
+
+try:
     from ..ui_scaling import get_scale_manager
 except ImportError:
     from ui_scaling import get_scale_manager
@@ -85,10 +90,14 @@ def remove_unused_categories(layer, log=None, dry_run=False):
         is not categorized or the class attribute can't be evaluated
     """
     renderer = layer.renderer()
-    if not isinstance(renderer, QgsCategorizedSymbolRenderer):
+    # Categorized OR rule-based: the patterns template ships '4 - Basemap'
+    # rule-based so its SVG texture can live on a single symbol layer.
+    if not renderer_compat.is_supported(renderer):
         return 0, 0
 
-    class_attr = renderer.classAttribute()
+    class_attr = renderer_compat.class_attribute(renderer)
+    if not class_attr:
+        return 0, 0
     existing_values = get_existing_values(layer, class_attr, log=log)
     if existing_values is None:
         return 0, 0
@@ -97,25 +106,20 @@ def remove_unused_categories(layer, log=None, dry_run=False):
     # numeric, so match on both native and stringified forms
     existing_strs = {str(v) for v in existing_values if v is not None}
 
-    kept = []
-    removed = 0
-    for cat in renderer.categories():
-        val = cat.value()
-        # Keep the catch-all (empty value) and categories with matching data
-        if val == '' or val in existing_values or str(val) in existing_strs:
-            kept.append(cat)
-        else:
-            removed += 1
+    def keep(val):
+        # Keep the catch-all (empty value) and classes with matching data
+        return (val == '' or val in existing_values
+                or str(val) in existing_strs)
 
-    if removed > 0 and not dry_run:
-        new_renderer = QgsCategorizedSymbolRenderer(class_attr, kept)
-        # Carry over the reference scale - building a fresh renderer would
-        # otherwise silently drop it
-        new_renderer.setReferenceScale(renderer.referenceScale())
+    removed, kept, new_renderer = renderer_compat.prune_classes(renderer, keep)
+
+    if removed > 0 and not dry_run and new_renderer is not None:
+        # prune_classes carries the reference scale and order-by across;
+        # building a fresh renderer would otherwise silently drop them
         layer.setRenderer(new_renderer)
         layer.triggerRepaint()
 
-    return removed, len(kept)
+    return removed, kept
 
 
 # ── RemoveUnusedPage ─────────────────────────────────────────────
@@ -216,12 +220,12 @@ class RemoveUnusedPage(QWidget):
         self._refresh_layers()
 
     def _refresh_layers(self):
-        """Scan project for categorized vector layers."""
+        """Scan project for classified vector layers (categorized or rule-based)."""
         project = QgsProject.instance()
         categorized = []
         for layer_id, layer in project.mapLayers().items():
             if hasattr(layer, 'renderer') and layer.renderer():
-                if isinstance(layer.renderer(), QgsCategorizedSymbolRenderer):
+                if renderer_compat.is_supported(layer.renderer()):
                     categorized.append(layer)
         categorized.sort(key=lambda l: l.name())
         # Default to nothing selected so layers are only processed when the
@@ -244,8 +248,8 @@ class RemoveUnusedPage(QWidget):
             layer = project.mapLayer(lid)
             if not layer:
                 continue
-            if not isinstance(layer.renderer(), QgsCategorizedSymbolRenderer):
-                lines.append(f"<b>{layer.name()}</b>: not categorized, skipping")
+            if not renderer_compat.is_supported(layer.renderer()):
+                lines.append(f"<b>{layer.name()}</b>: not classified, skipping")
                 continue
             result = remove_unused_categories(layer, dry_run=True)
             to_remove, to_keep = result
@@ -285,8 +289,8 @@ class RemoveUnusedPage(QWidget):
             if not layer:
                 continue
 
-            if not isinstance(layer.renderer(), QgsCategorizedSymbolRenderer):
-                msg = f"{layer.name()}: not categorized, skipped"
+            if not renderer_compat.is_supported(layer.renderer()):
+                msg = f"{layer.name()}: not classified, skipped"
                 self._process_log.append(msg)
                 self.log_message.emit(msg)
                 continue

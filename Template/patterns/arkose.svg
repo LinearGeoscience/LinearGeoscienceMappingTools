@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: arkose
+     source: Lit_Arkose.svg
+     8 zero-length dot(s) repaired to x2=x1+0.001 (Qt paints nothing for a zero-length subpath) -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- Sand dots (like sandstone) -->
+  <line x1="3" y1="3" x2="3.001" y2="3" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="15" y1="2" x2="15.001" y2="2" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="9" y1="8" x2="9.001" y2="8" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="21" y1="9" x2="21.001" y2="9" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="3" y1="15" x2="3.001" y2="15" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="15" y1="14" x2="15.001" y2="14" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="9" y1="20" x2="9.001" y2="20" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <line x1="21" y1="21" x2="21.001" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1" stroke-linecap="round"/>
+  <!-- Small feldspar crystal rectangles -->
+  <polygon points="6,5 8,4 9,6 7,7" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="18,11 20,10 21,12 19,13" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="0,17 2,16 3,18 1,19" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <polygon points="12,23 14,22 15,24 13,24" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

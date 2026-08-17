@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: granite
+     source: Lit_Granite.svg
+     no dot repair needed -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 24 24" width="24pt" height="24pt">
+  <rect width="24" height="24" fill="none" stroke="none"/>
+  <!-- + symbols -->
+  <line x1="4" y1="2" x2="4" y2="6" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="2" y1="4" x2="6" y2="4" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="16" y1="2" x2="16" y2="6" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="14" y1="4" x2="18" y2="4" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- x symbols -->
+  <line x1="9" y1="9" x2="13" y2="13" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="13" y1="9" x2="9" y2="13" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- + symbols row 2 -->
+  <line x1="4" y1="16" x2="4" y2="20" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="2" y1="18" x2="6" y2="18" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <!-- x symbols row 2 -->
+  <line x1="19" y1="17" x2="23" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="23" y1="17" x2="19" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

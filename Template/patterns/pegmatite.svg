@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LGS lithology texture: pegmatite
+     source: Lit_Pegmatite.svg
+     no dot repair needed -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1"
+     viewBox="0 0 30 30" width="30pt" height="30pt">
+  <rect width="30" height="30" fill="none" stroke="none"/>
+  <!-- Large sparse x symbols -->
+  <line x1="3" y1="3" x2="11" y2="11" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="11" y1="3" x2="3" y2="11" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="19" y1="17" x2="27" y2="25" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="27" y1="17" x2="19" y2="25" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+</svg>

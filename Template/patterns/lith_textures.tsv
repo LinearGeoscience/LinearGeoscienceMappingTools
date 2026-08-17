@@ -1,0 +1,287 @@
+# Lithology code -> texture tile. The injector reads this file and
+# refuses to run unless it is exactly 1:1 with BasemapCodes.
+# Edit freely: texture must name a tile in Template/patterns/.
+code	texture	type	rock	note	ink	variety
+ALPR	basalt	Lithology	Lamproite	lamproite: ultrapotassic volcanic	auto	-
+ANS	syenite	Lithology	Nepheline Syenite	nepheline syenite: intrusive, not volcanic	kfeldspar	-
+APH	rhyolite	Lithology	Phonolite	felsic-alkaline volcanic, flow banded	auto	-
+ATR	rhyolite	Lithology	Trachyte	felsic-alkaline volcanic, flow banded	auto	-
+F	granite	Lithology	Felsic Undifferentiated	granitoid, coarse	auto	granite
+FAB	felsic_fine	Lithology	Albitite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	plagioclase	felsic_fine
+FAPL	felsic_fine	Lithology	Aplite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
+FD	dacite	Lithology	Dacite	felsic lava	auto	-
+FGAP	felsic_fine	Lithology	Aplogranite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
+FGD	granodiorite	Lithology	Granodiorite	plagioclase-bearing granitoid	auto	-
+FGM	granite	Lithology	Monzogranite	granitoid, coarse	auto	granite
+FGR	granite	Lithology	Granite	granitoid, coarse	auto	granite
+FGR2M	granite	Lithology	Two-Mica Granite	granitoid, coarse	mica	granite
+FGRA	granite	Lithology	Alkali-Feldspar Granite	granitoid, coarse	kfeldspar	granite
+FGRB	granite	Lithology	Biotite Granite	granitoid, coarse	mica	granite
+FGRL	granite	Lithology	Leucogranite	granitoid, coarse	plagioclase	granite
+FGY	felsic_fine	Lithology	Granophyre	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
+FI	granite	Lithology	Felsic Intrusive	granitoid, coarse	auto	granite
+FIG	ignimbrite	Lithology	Ignimbrite	pyroclastic / volcaniclastic	auto	-
+FMG	felsic_fine	Lithology	Microgranite	APLITE FIX: fine-grained felsic dyke/intrusive, NOT a vein hatch	auto	felsic_fine
+FMZQ	syenite	Lithology	Quartz Monzonite	alkali-feldspar rich	quartz	-
+FP	porphyry	Lithology	Felsic Porphyritic, undifferentiated	porphyritic texture	auto	-
+FPG	pegmatite	Lithology	Felsic Pegmatite	pegmatitic body	auto	-
+FPGS	pegmatite	Lithology	Felsic Pegmatite, Spodumene-bearing	pegmatitic body	lithium	-
+FQFP	porphyry	Lithology	Quartz-Feldspar Porphyry	porphyritic texture	quartz	-
+FQP	porphyry	Lithology	Quartz Porphyry	porphyritic texture	quartz	-
+FR	rhyolite	Lithology	Rhyolite	felsic lava	auto	-
+FRD	dacite	Lithology	Rhyodacite	felsic lava	auto	-
+FSY	syenite	Lithology	Syenite	alkali-feldspar rich	kfeldspar	-
+FSYG	syenite	Lithology	Syenogranite	alkali-feldspar rich	kfeldspar	-
+FSYG (R)	syenite	Lithology	Syenogranite (Radiogenic)	alkali-feldspar rich	kfeldspar	-
+FTA	tuff	Lithology	Felsic Volcanic Ash Tuff	pyroclastic / volcaniclastic	auto	-
+FTJ	granodiorite	Lithology	Trondhjemite	plagioclase-bearing granitoid	auto	-
+FTO	granodiorite	Lithology	Tonalite	plagioclase-bearing granitoid	auto	-
+FTO (LA)	granodiorite	Lithology	Tonalite (Least Altered)	plagioclase-bearing granitoid	auto	-
+FTX	tuff	Lithology	Felsic Volcanic Crystal Lithic Tuff	pyroclastic / volcaniclastic	auto	-
+FV	rhyolite	Lithology	Felsic Volcanic	felsic lava	auto	-
+FVC	tuff	Lithology	Felsic Volcaniclastic	pyroclastic / volcaniclastic	auto	-
+FVP	porphyry	Lithology	Felsic Volcanic Porphyritic	porphyritic texture	auto	-
+FVX	breccia	Lithology	Felsic Volcanic Breccia	volcanic breccia	auto	-
+HAMP	amphibolite	Lithology	Para-Amphibolite, Undifferentiated	para-amphibolite	amphibole	para_amphibolite
+HBL	schist	Lithology	Blueschist	blueschist / greenschist facies, foliated	auto	-
+HCAT	cataclasite	Lithology	Cataclasite	brittle fault rock	auto	-
+HCK	granite	Lithology	Charnockite granite (includes enderbite, jotunite and mangerite)	charnockite: a granitoid	auto	-
+HCS	skarn	Lithology	Calc-Silicate Rock	calc-silicate / skarn mineralogy	garnet	-
+HEC	eclogite	Lithology	Eclogite	eclogite	garnet	-
+HFBX	breccia	Lithology	Fault Breccia	brittle fault rock	auto	-
+HFG	gneiss	Lithology	Felsic Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	-
+HGF	granulite	Lithology	Felsic Granulite	gneissic banding; granulites read as high-grade gneiss	auto	granulite
+HGG	gneiss	Lithology	Granite Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	-
+HGGA	augen_gneiss	Lithology	Granite Augen Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	-
+HGI	granulite	Lithology	Intermediate Granulite (including diorite)	gneissic banding; granulites read as high-grade gneiss	auto	granulite
+HGM	granulite	Lithology	Mafic Granulite	gneissic banding; granulites read as high-grade gneiss	auto	granulite
+HGOU	breccia	Lithology	Fault Gouge	ductile fault rock; gouge and pseudotachylite share the fault reading	auto	-
+HGS	schist	Lithology	Greenschist	blueschist / greenschist facies, foliated	auto	-
+HGT	skarn	Lithology	Garnetite (>75% gt)	calc-silicate / skarn mineralogy	garnet	-
+HGU	granulite	Lithology	Ultramafic Granulite	gneissic banding; granulites read as high-grade gneiss	auto	granulite
+HHF	hornfels	Lithology	Hornfels	contact metamorphic, granular	auto	-
+HIG	gneiss	Lithology	Intermediate Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	-
+HMB	marble	Lithology	Marble	marble: a carbonate	carbonate	-
+HMG	gneiss	Lithology	Mafic Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	-
+HMI	migmatite	Lithology	Migmatite	partial melt	auto	-
+HMID	migmatite	Lithology	Diatexite Migmatite (>25% pmelt)	partial melt	auto	-
+HMIM	migmatite	Lithology	Metatexite Migmatite (<25% pmelt)	partial melt	auto	-
+HMIN	migmatite	Lithology	Nebulitic Migmatite	partial melt	auto	-
+HMIP	migmatite	Lithology	Patch Migmatite	partial melt	auto	-
+HMIS	migmatite	Lithology	Stromatic Migmatite	partial melt	auto	-
+HMIT	migmatite	Lithology	Net Migmatite	partial melt	auto	-
+HMY	phyllite	Lithology	Mylonite	ductile fault rock; gouge and pseudotachylite share the fault reading	auto	-
+HPA	amphibolite	Lithology	Aluminous Para-Amphibolite (Kyanite, Andalusite, Sillimanite, Staurolite)	para-amphibolite	amphibole	para_amphibolite
+HPC	amphibolite	Lithology	Calcic Para-Amphibolite (Diopside, Almandine garnet, Cordierite, Sillimanite)	para-amphibolite	amphibole	para_amphibolite
+HPEG	gneiss	Lithology	Pelitic Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	paragneiss
+HPG	gneiss	Lithology	Paragneiss	gneissic banding; granulites read as high-grade gneiss	auto	paragneiss
+HPH	phyllite	Lithology	Phyllite	fine crenulated foliation	auto	-
+HPK	amphibolite	Lithology	Alkali Para Amphibolites (Pyrophyllite, Muscovite, Biotite minor aluminosilicates)	para-amphibolite	mica	para_amphibolite
+HPMA	amphibolite	Lithology	Mafic Para-Amphibolite	para-amphibolite	amphibole	para_amphibolite
+HPPG	gneiss	Lithology	Semi-Pelitic Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	paragneiss
+HPSG	gneiss	Lithology	Psammitic Gneiss	gneissic banding; granulites read as high-grade gneiss	auto	paragneiss
+HPST	mylonite	Lithology	Pseudotachylite	ductile fault rock; gouge and pseudotachylite share the fault reading	auto	-
+HSK	skarn	Lithology	Skarn	calc-silicate / skarn mineralogy	garnet	-
+HSL	slate	Lithology	Slate	slaty cleavage	auto	-
+HUMY	phyllite	Lithology	Ultramylonite	ductile fault rock; gouge and pseudotachylite share the fault reading	auto	-
+I	diorite	Lithology	Intermediate Undifferentiated	intermediate intrusive	auto	diorite
+IA	basalt	Lithology	Andesite	intermediate lava	auto	-
+IAC	tuff	Lithology	Andesitic Volcaniclastic	pyroclastic / volcaniclastic	auto	-
+IBN	basalt	Lithology	Boninite	intermediate lava	pyroxene	-
+ICB	syenite	Lithology	Carbonatite	carbonatite: a carbonate rock	carbonate	-
+ID	diorite	Lithology	Diorite	intermediate intrusive	auto	diorite
+IDQ	diorite	Lithology	Quartz Diorite	intermediate intrusive	quartz	-
+II	diorite	Lithology	Intermediate Intrusive	intermediate intrusive	auto	diorite
+IIG	ignimbrite	Lithology	Intermediate Ignimbrite	pyroclastic / volcaniclastic	auto	-
+ILP	dolerite	Lithology	Intermediate Lamprophyre	lamprophyre: fine dyke rock	auto	-
+IMC	porphyry	Lithology	Megacrystic Intermediate	megacrystic / porphyritic	auto	-
+IMZ	syenite	Lithology	Monzonite	monzonite: alkali-feldspar rich	kfeldspar	-
+IMZD	diorite	Lithology	Monzodiorite	intermediate intrusive	auto	diorite
+IP	porphyry	Lithology	Intermediate Porphyritic	megacrystic / porphyritic	auto	-
+IPG	pegmatite	Lithology	Intermediate Pegmatite	pegmatitic body	auto	-
+ITA	basalt	Lithology	Trachyandesite	intermediate lava	auto	-
+IVC	tuff	Lithology	Intermediate Volcaniclastic	pyroclastic / volcaniclastic	auto	-
+IVX	breccia	Lithology	Intermediate Volcanic Breccia	volcanic breccia	auto	-
+M	gabbro	Lithology	Mafic Undifferentiated	mafic plutonic	auto	gabbro
+MAGG	breccia	Lithology	Mafic Agglomerate	hyaloclastite / agglomerate	auto	-
+MAM	amphibolite	Lithology	Amphibolite, Ortho	ortho-amphibolite	amphibole	-
+MB	basalt	Lithology	Basalt	mafic lava	auto	basalt
+MBA	basalt	Lithology	Basaltic Andesite	mafic lava	auto	basalt
+MBFS	porphyry	Lithology	Glomerocrystic / Megacrystic Basalt	glomerocrystic / megacrystic	auto	-
+MBK	basalt	Lithology	Komatiitic Basalt, High-Mg Basalt	mafic lava	auto	basalt
+MBP	basalt	Lithology	Pillow Basalt	mafic lava	auto	basalt
+MBV	basalt	Lithology	Variolitic Basalt	mafic lava	auto	basalt
+MBX	breccia	Lithology	Mafic Breccia, Hyaloclastite	hyaloclastite / agglomerate	auto	-
+MD	dolerite	Lithology	Dolerite	mafic dyke / sill	auto	dolerite
+MDF	dolerite	Lithology	Ferrodolerite	mafic dyke / sill	iron_oxide	dolerite
+MDFS	porphyry	Lithology	Glomerocrystic / Megacrystic Dolerite	glomerocrystic / megacrystic	auto	-
+MDH	dolerite	Lithology	Dolerite (High Mg)	mafic dyke / sill	auto	dolerite
+MDQ	dolerite	Lithology	Quartz Dolerite	mafic dyke / sill	quartz	-
+MG	gabbro	Lithology	Gabbro	mafic plutonic	auto	gabbro
+MGA	gabbro	Lithology	Anorthosite	mafic plutonic	plagioclase	-
+MGBO	gabbro	Lithology	Olivine Gabbro	mafic plutonic	olivine	ol_gabbro
+MGF	gabbro	Lithology	Ferrogabbro	mafic plutonic	iron_oxide	-
+MGFS	porphyry	Lithology	Glomerocrystic / Megacrystic Gabbro	glomerocrystic / megacrystic	auto	-
+MGGN	gabbro	Lithology	Gabbronorite	mafic plutonic	pyroxene	gabbro
+MGGNO	gabbro	Lithology	Olivine Gabbronorite	mafic plutonic	olivine	ol_gabbro
+MGL	gabbro	Lithology	Leucogabbro	mafic plutonic	plagioclase	-
+MGN	gabbro	Lithology	Norite	mafic plutonic	pyroxene	-
+MGNO	gabbro	Lithology	Olivine Norite	mafic plutonic	olivine	ol_gabbro
+MGQ	gabbro	Lithology	Quartz Gabbro	mafic plutonic	quartz	-
+MGT	gabbro	Lithology	Gabbro, Magnetite Rich	mafic plutonic	iron_oxide	-
+MGTC	gabbro	Lithology	Troctolite	mafic plutonic	olivine	ol_gabbro
+MGY	gabbro	Lithology	Mafic Granophyre	mafic plutonic	auto	-
+MI	gabbro	Lithology	Mafic Intrusive	mafic plutonic	auto	gabbro
+MLP	dolerite	Lithology	Mafic Lamprophyre	mafic dyke / sill	auto	-
+MMZG	gabbro	Lithology	Monzogabbro	mafic plutonic	auto	-
+MPC	basalt	Lithology	Picrite	mafic lava	olivine	-
+MPG	pegmatite	Lithology	Mafic Pegmatite	pegmatitic body	auto	-
+S	sandstone	Lithology	Sediment Undiff	arenaceous	auto	-
+SAK	arkose	Lithology	Arkose	arenaceous	auto	-
+SBS	shale	Lithology	Carbonaceous Shale	argillaceous	carbonaceous	-
+SBX	breccia	Lithology	Sedimentary Breccia	angular clasts	auto	-
+SCA	chalk	Lithology	Calcarenite	carbonate	carbonate	-
+SCG	conglomerate	Lithology	Conglomerate	clast-supported / pebbly	auto	-
+SCGFM	conglomerate	Lithology	Felsic Conglomerate, Monomict	clast-supported / pebbly	auto	-
+SCGFP	conglomerate	Lithology	Felsic Conglomerate, Polymict	clast-supported / pebbly	auto	-
+SCGIM	conglomerate	Lithology	Intermediate Conglomerate, Monomict	clast-supported / pebbly	auto	-
+SCGIP	conglomerate	Lithology	Intermediate Conglomerate, Polymict	clast-supported / pebbly	auto	-
+SCGMM	conglomerate	Lithology	Mafic Conglomerate, Monomict	clast-supported / pebbly	auto	-
+SCGMP	conglomerate	Lithology	Mafic Conglomerate, Polymict	clast-supported / pebbly	auto	-
+SCGUM	conglomerate	Lithology	Ultramafic Conglomerate, Monomict	clast-supported / pebbly	auto	-
+SCGUP	conglomerate	Lithology	Ultramafic Conglomerate, Polymict	clast-supported / pebbly	auto	-
+SCT	chert	Lithology	Chert	siliceous	quartz	-
+SCTB	chert	Lithology	Carbonaceous Chert	siliceous	carbonaceous	-
+SDM	conglomerate	Lithology	Diamictite	clast-supported / pebbly	auto	-
+SDO	dolomite	Lithology	Dolomite	carbonate	carbonate	-
+SDOSL	siltstone	Lithology	Dolomitic Siltstone	silt grade	carbonate	-
+SEV	evaporite	Lithology	Evaporite	evaporite	auto	-
+SGT	greywacke	Lithology	Gritstone	clast-supported / pebbly	auto	-
+SGW	greywacke	Lithology	Greywacke	poorly sorted / graded	auto	-
+SIF	iron_formation	Lithology	Iron Formation	banded iron / jaspilite	iron_oxide	-
+SJP	iron_formation	Lithology	Jaspilite	banded iron / jaspilite	iron_oxide	-
+SLI	limestone	Lithology	Limestone	carbonate	carbonate	-
+SMD	mudstone	Lithology	Mudstone	argillaceous	auto	-
+SML	marl	Lithology	Marl	carbonate	carbonate	-
+SPE	mudstone	Lithology	Pelite	argillaceous	auto	-
+SPH	laterite	Lithology	Phosphorite	phosphorite: oolitic / nodular	auto	-
+SPP	mudstone	Lithology	Semipelite	argillaceous	auto	-
+SPR	tuff	Lithology	Peperite	pyroclastic	auto	-
+SPS	sandstone	Lithology	Psammite	arenaceous	auto	-
+SQT	quartzite	Lithology	Quartzite	quartz arenite / metaquartzite	quartz	-
+SSH	shale	Lithology	Shale	argillaceous	auto	-
+SSL	siltstone	Lithology	Siltstone	silt grade	auto	-
+SST	sandstone	Lithology	Sandstone	arenaceous	auto	sandstone
+SSTF	sandstone	Lithology	Feldspathic Sandstone	arenaceous	auto	sandstone
+SSTL	sandstone	Lithology	Lithic Sandstone	arenaceous	auto	sandstone
+SSTM	sandstone	Lithology	Micaceous Sandstone	arenaceous	mica	sandstone
+SSTP	sandstone	Lithology	Sandstone, Pebbly	clast-supported / pebbly	auto	-
+SSTQ	sandstone	Lithology	Quartz Sandstone	arenaceous	auto	sandstone
+SSTR	stromatolite	Lithology	Stromatolitic Carbonate	carbonate	carbonate	-
+STB	greywacke	Lithology	Turbidite	poorly sorted / graded	auto	-
+STI	conglomerate	Lithology	Tillite	clast-supported / pebbly	auto	-
+STU	tuff	Lithology	Tuff	pyroclastic	auto	-
+SW	greywacke	Lithology	Wacke	poorly sorted / graded	auto	-
+U	dunite	Lithology	Ultramafic	olivine-rich ultramafic; altered variants keep the ultramafic reading	auto	ultramafic_alt
+U-A	dunite	Lithology	Ultramafic, Amphibole Altered	olivine-rich ultramafic; altered variants keep the ultramafic reading	amphibole	ultramafic_alt
+U-CA	dunite	Lithology	Ultramafic, Chlorite-Amphibole Altered	olivine-rich ultramafic; altered variants keep the ultramafic reading	amphibole	ultramafic_alt
+U-T	dunite	Lithology	Ultramafic, Talc Altered	olivine-rich ultramafic; altered variants keep the ultramafic reading	talc	ultramafic_alt
+U-TA	dunite	Lithology	Ultramafic, Talc-Amphibole Altered	olivine-rich ultramafic; altered variants keep the ultramafic reading	amphibole	ultramafic_alt
+U-TCB	dunite	Lithology	Ultramafic, Talc-CarbonateAltered	olivine-rich ultramafic; altered variants keep the ultramafic reading	talc	ultramafic_alt
+U-TCBA	dunite	Lithology	Ultramafic, Talc-Carbonate-Amphibole Altered	olivine-rich ultramafic; altered variants keep the ultramafic reading	talc	ultramafic_alt
+UCR	pyroxenite	Lithology	Chromitite	chromitite: banded cumulate ore	chromite	-
+UDN	dunite	Lithology	Dunite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	-
+UHB	amphibolite	Lithology	Hornblendite	hornblendite	amphibole	-
+UHZ	peridotite	Lithology	Harzburgite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	peridotite
+UKI	breccia	Lithology	Kimberlite	kimberlite: diatreme breccia	auto	-
+UKO	basalt	Lithology	Komatiite	komatiite: ultramafic lava	auto	-
+UKOC	dunite	Lithology	Komatiite, Cumulate (B) Zone	olivine-rich ultramafic; altered variants keep the ultramafic reading	auto	-
+UKOS	basalt	Lithology	Komatiite, Spinifex (A) Zone	komatiite: ultramafic lava	auto	-
+ULP	dolerite	Lithology	Ultramafic Lamprophyre	lamprophyre: fine dyke rock	auto	-
+ULZ	peridotite	Lithology	Lherzolite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	peridotite
+UPD	peridotite	Lithology	Peridotite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	peridotite
+UPDO	peridotite	Lithology	Olivine Peridotite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	peridotite
+UPG	pegmatite	Lithology	Ultramafic Pegmatite	pegmatitic body	auto	-
+UPY	pyroxenite	Lithology	Pyroxenite	pyroxene cumulate	pyroxene	pyroxenite
+UPYC	pyroxenite	Lithology	Clinopyroxenite	pyroxene cumulate	pyroxene	pyroxenite
+UPYO	pyroxenite	Lithology	Orthopyroxenite	pyroxene cumulate	pyroxene	pyroxenite
+USP	serpentinite	Lithology	Serpentinite	olivine-rich ultramafic; altered variants keep the ultramafic reading	talc	-
+USPX	basalt	Lithology	Spinifex Texture Ultramafic	komatiite: ultramafic lava	auto	-
+UWB	pyroxenite	Lithology	Websterite	pyroxene cumulate	pyroxene	pyroxenite
+UWBO	pyroxenite	Lithology	Olivine Websterite	pyroxene cumulate	olivine	pyroxenite
+UWH	peridotite	Lithology	Wehrlite	olivine-rich ultramafic; altered variants keep the ultramafic reading	olivine	peridotite
+VC	crosshatch	Lithology	Carbonate Vein	vein fill	carbonate	-
+VL	crosshatch	Lithology	Laminated Vein	vein fill	auto	vein
+VN	crosshatch	Lithology	Vein	vein fill	auto	vein
+VPG	pegmatite	Lithology	Pegmatite Vein	pegmatite vein	auto	-
+VQ	crosshatch	Lithology	Quartz Vein	vein fill	quartz	-
+VQC	crosshatch	Lithology	Quartz-Carbonate Vein	vein fill	carbonate	-
+VS	crosshatch	Lithology	Shear Vein	vein fill	auto	vein
+VSTW	crosshatch	Lithology	Stockwork	vein fill	auto	-
+VT	crosshatch	Lithology	Extension Vein	vein fill	auto	vein
+VX	breccia	Lithology	Breccia Vein	breccia vein	auto	-
+ZBXSI	breccia	Lithology	Silica Flood Breccia	silica flood breccia	auto	-
+ZCS	schist	Lithology	Chlorite Schist	schist: named after the protolith but it is a schist	talc	-
+ZF	schist	Lithology	Felsic Schist	schist: named after the protolith but it is a schist	auto	-
+ZGT	schist	Lithology	Garnet Schist	schist: named after the protolith but it is a schist	garnet	-
+ZI	schist	Lithology	Intermediate Schist	schist: named after the protolith but it is a schist	auto	-
+ZM	schist	Lithology	Mafic Schist	schist: named after the protolith but it is a schist	auto	schist_mafic
+ZMAM	schist	Lithology	Amphibolite Schist	schist: named after the protolith but it is a schist	amphibole	-
+ZMB	schist	Lithology	Basalt Schist	schist: named after the protolith but it is a schist	auto	schist_mafic
+ZMD	schist	Lithology	Dolerite Schist	schist: named after the protolith but it is a schist	auto	schist_mafic
+ZMG	schist	Lithology	Gabbro Schist	schist: named after the protolith but it is a schist	auto	schist_mafic
+ZQM	schist	Lithology	Quartz-Mica Schist	schist: named after the protolith but it is a schist	mica	-
+ZS	schist	Lithology	Sedimentary Schist	schist: named after the protolith but it is a schist	auto	schist_sed
+ZSAS	schist	Lithology	Andalusite Schist	schist: named after the protolith but it is a schist	auto	-
+ZSBS	schist	Lithology	Carbonaceous Shale Schist	schist: named after the protolith but it is a schist	carbonaceous	-
+ZSPE	schist	Lithology	Pelitic Schist	schist: named after the protolith but it is a schist	auto	schist_sed
+ZSQT	schist	Lithology	Quartzite Schist	schist: named after the protolith but it is a schist	quartz	-
+ZSST	schist	Lithology	Sandstone Schist	schist: named after the protolith but it is a schist	auto	schist_sed
+ZU	schist	Lithology	Ultramafic Schist	schist: named after the protolith but it is a schist	auto	schist_ultramafic
+ZU-A	schist	Lithology	Ultramafic Schist, Amphibole Altered	schist: named after the protolith but it is a schist	amphibole	schist_ultramafic
+ZU-CA	schist	Lithology	Ultramafic Schist, Chlorite-Amphibole Altered	schist: named after the protolith but it is a schist	amphibole	schist_ultramafic
+ZU-P	schist	Lithology	Ultramafic Schist, Phlogopitic	schist: named after the protolith but it is a schist	mica	schist_ultramafic
+ZU-T	schist	Lithology	Ultramafic Schist, Talc Altered	schist: named after the protolith but it is a schist	talc	schist_ultramafic
+ZU-TA	schist	Lithology	Ultramafic Schist, Talc-Amphibole Altered	schist: named after the protolith but it is a schist	amphibole	schist_ultramafic
+ZU-TCB	schist	Lithology	Ultramafic Schist, Talc-Carbonate Altered	schist: named after the protolith but it is a schist	talc	schist_ultramafic
+RARZ	sandstone	Regolith	Arenose Zone	arenose zone	auto	-
+RBX	breccia	Regolith	Ferruginous Collapse Breccia	ferruginous collapse breccia	iron_oxide	-
+RCC	limestone	Regolith	Calcrete	calcrete: carbonate cement	carbonate	-
+RDLM	laterite	Regolith	Lateritic Duricrust, Massive	lateritic duricrust / ferricrete	auto	duricrust
+RDLN	laterite	Regolith	Lateritic Duricrust, Nodular	lateritic duricrust / ferricrete	auto	duricrust
+RDLP	laterite	Regolith	Lateritic Duricrust, Pisolitic	lateritic duricrust / ferricrete	auto	duricrust
+RDLX	laterite	Regolith	Lateritic Duricrust, Fragmental	lateritic duricrust / ferricrete	auto	duricrust
+RFC	laterite	Regolith	Ferricrete	lateritic duricrust / ferricrete	iron_oxide	-
+RFSP	claystone	Regolith	Ferruginous Saprolite, Undifferentiated	weathered profile: clay-rich saprolite zones	iron_oxide	-
+RGO	iron_formation	Regolith	Gossan	gossan / ironstone	iron_oxide	-
+RIST	iron_formation	Regolith	Ironstone	gossan / ironstone	iron_oxide	-
+RMZ	claystone	Regolith	Mottled Zone	weathered profile: clay-rich saprolite zones	auto	saprolite
+RPLZ	claystone	Regolith	Plasmic Zone	weathered profile: clay-rich saprolite zones	auto	saprolite
+RSIL	chert	Regolith	Silcrete	silcrete / silica cap	quartz	-
+RSLS	chert	Regolith	Silica Cap ex Black Shale	silcrete / silica cap	quartz	-
+RSLU	chert	Regolith	Silica Cap Ultramafic	silcrete / silica cap	quartz	-
+RSPC	claystone	Regolith	Saprolitic Clays	weathered profile: clay-rich saprolite zones	auto	saprolite
+RSPL	claystone	Regolith	Saprolite Lower, Moderately Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
+RSPR	claystone	Regolith	Saprock, Weakly Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
+RSPU	claystone	Regolith	Saprolite Upper, Strongly Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
+TALL	alluvium	Transported Cover	Alluvium	alluvium	auto	-
+TCO	colluvium	Transported Cover	Colluvium	colluvial / scree	auto	colluvium
+TCOC	colluvium	Transported Cover	Colluvium, Coarse	colluvial / scree	auto	colluvium
+TCOD	claystone	Transported Cover	Colluvium, Fine silt & Clay	clay / loam / hardpan	auto	-
+TCOS	sandstone	Transported Cover	Colluvium, Sands	sandy cover	auto	-
+TCY	claystone	Transported Cover	Clay	clay / loam / hardpan	auto	-
+TDLP	laterite	Transported Cover	Duricrust of Transported Pisoliths	transported pisoliths	auto	-
+TEVS	evaporite	Transported Cover	Evaporitic Sediments	salt pan / evaporitic / gypsum dunes	auto	-
+TGRV	gravel	Transported Cover	Gravel	gravel / lag	auto	-
+TGYP	evaporite	Transported Cover	Gypsum dunes, Kopai	salt pan / evaporitic / gypsum dunes	auto	-
+THP	claystone	Transported Cover	Hard Pan	clay / loam / hardpan	auto	-
+TLG	gravel	Transported Cover	Lag	gravel / lag	auto	-
+TLSC	colluvium	Transported Cover	Lithic Scree	colluvial / scree	auto	-
+TLTP	laterite	Transported Cover	Transported Pisoliths	transported pisoliths	auto	-
+TRSL	colluvium	Transported Cover	Residual Soil, Lithic Fragments	colluvial / scree	auto	residual_soil
+TRSLM	claystone	Transported Cover	Residual Soil, Loam	clay / loam / hardpan	auto	-
+TRSS	sandstone	Transported Cover	Residual Soil, Sandy	sandy cover	auto	residual_soil
+TSA	sandstone	Transported Cover	Sand	sandy cover	auto	-
+TSAC	sandstone	Transported Cover	Clayey Sand	sandy cover	auto	-
+TSI	siltstone	Transported Cover	Silt	silt	auto	-
+TSP	evaporite	Transported Cover	Salt Pan	salt pan / evaporitic / gypsum dunes	auto	-

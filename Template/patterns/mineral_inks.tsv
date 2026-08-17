@@ -1,0 +1,28 @@
+# Texture ink colours that signal a diagnostic mineral.
+# Used by the `ink` column of lith_textures.tsv; `auto` there means "tint of
+# this lithology's own fill" and is the default for everything else.
+#
+# Muted on purpose - these sit ON TOP of an already-coloured polygon, so a
+# saturated ink fights the fill instead of reading as mineralogy.
+#
+# Deliberately positioned at the LIGHTNESS EXTREMES, not mid-tone. Almost
+# every fill in the palette is a pale-to-mid pastel, so a mid-tone ink has
+# nothing to contrast against: a mid blue-grey quartz could not be made to
+# read on the mafic cyan of MDQ Quartz Dolerite at any fill lightness, and
+# fell back to a plain tint. Dark for most minerals; pale only where the
+# mineral genuinely is (plagioclase, talc, spodumene).
+ink	hex	signals
+quartz	#3d5f78	quartz, silica, chert, silcrete
+plagioclase	#f6f4ee	plagioclase / leucocratic - deliberately near-white
+kfeldspar	#8c4433	alkali feldspar, deep terracotta
+olivine	#4e5c2a	olivine-rich ultramafics
+pyroxene	#3b3f26	pyroxene cumulates
+amphibole	#28382e	amphibole, hornblende, actinolite
+mica	#5a3f22	biotite / muscovite / phlogopite
+carbonate	#44636f	calcite, dolomite, marble, calcrete
+talc	#dfe8dc	talc, serpentine, chlorite alteration - pale
+garnet	#6b1c24	garnet, eclogite, skarn
+iron_oxide	#6b2f1e	hematite, goethite, gossan, ironstone
+chromite	#262a34	chromitite
+carbonaceous	#1c1c1e	carbonaceous / graphitic
+lithium	#e0d4e8	spodumene-bearing pegmatite - pale lilac
