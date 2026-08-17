@@ -7,7 +7,7 @@ Version 3.3 | [GitHub](https://github.com/LinearGeoscience/LinearGeoscienceMappi
 ## Features
 
 - **Setup Mapping** - load the LGS mapping template and configure CRS, snapping, and scales
-- **Data Management** - import and append field data into the mapping template, merge and reproject GeoPackages, export mapping for distribution. 
+- **Data Management** - guided import of existing mapping into the current template (layer, field and code matching worked out for you), merge and reproject GeoPackages, export mapping for distribution.
 - **Stereonet Analysis** - interactive plotting of structural data, with export to Stereonet 11 and Leapfrog formats
 - **Field Photos** - georeference, browse, and export field photos
 - **Declination Tools** - calculate magnetic declination per point (WMM2025) and batch-adjust structural measurements

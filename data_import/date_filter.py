@@ -7,12 +7,16 @@ Enhanced date filtering with comprehensive timezone support.
 
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, available_timezones
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from qgis.PyQt.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                  QComboBox, QCheckBox, QDateTimeEdit, QGroupBox,
-                                 QLineEdit, QPushButton, QCompleter)
-from qgis.PyQt.QtCore import Qt, QDateTime, QStringListModel
-from .utils import FILTER_TYPE_AFTER, FILTER_TYPE_BEFORE, FILTER_TYPE_BETWEEN
+                                 QLineEdit, QCompleter)
+from qgis.PyQt.QtCore import Qt, QDateTime
+# Filter kinds. Defined here rather than imported: this widget is the only
+# thing that produces them and execute.py the only thing that reads them.
+FILTER_TYPE_AFTER = "after_date_time"
+FILTER_TYPE_BEFORE = "before_date_time"
+FILTER_TYPE_BETWEEN = "between_dates"
 
 
 class EnhancedTimezoneSelector(QWidget):

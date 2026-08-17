@@ -189,7 +189,7 @@ INFO_HARDCODE_DATA = """
 
 INFO_RECONCILE = """
 <h1>Reconcile / Merge Field Data</h1>
-<p>A three-way merge between a working QField template and the master GeoPackage. Where the <b>Append Mapping Data</b> tool only ever <i>adds</i> new features, Reconcile also propagates <b>edits</b> and <b>deletes</b>, and lets you re-sync an edited template <b>without losing the edits</b>. Everything is previewed before anything is written.</p>
+<p>A three-way merge between a working QField template and the master GeoPackage. Where the <b>Import Mapping Data</b> tool only ever <i>adds</i> new features, Reconcile also propagates <b>edits</b> and <b>deletes</b>, and lets you re-sync an edited template <b>without losing the edits</b>. Everything is previewed before anything is written.</p>
 <h2>How it works:</h2>
 <ul>
    <li><b>UUID identity:</b> features are matched by their <b>UUID</b> (never the per-file <b>fid</b>).</li>
@@ -291,54 +291,28 @@ INFO_REPROJECT_GEOPACKAGE = """
 """
 
 
-INFO_APPEND_DATA = """
-<h1>Enhanced GeoPackage Append Tool with Advanced Recoding</h1>
-<p>A comprehensive tool for appending data between GeoPackage files with advanced recoding capabilities, duplicate detection, and data transformation features.</p>
-<h2>Core Features:</h2>
-<ul>
-   <li><b>Layer Mapping:</b> Map source layers to different target layers in the master GeoPackage.</li>
-   <li><b>Field Mapping:</b> Remap source fields to different field names in the target layer.</li>
-   <li><b>Value Recoding:</b> Manually recode field values using lookup tables from master layers or attribute tables.</li>
-   <li><b>Preserve Original Values:</b> Keep original values in separate fields while applying recodings.</li>
-   <li><b>Global Date Filtering:</b> Filter records across all layers by date/time ranges.</li>
-   <li><b>Duplicate Detection:</b> Intelligent duplicate analysis with visual indicators and date-based cutoff detection.</li>
-   <li><b>UUID Field Detection:</b> Auto-detect UUID fields with fuzzy matching and manual override options.</li>
-</ul>
-<h2>Advanced Recoding Capabilities:</h2>
-<ul>
-   <li><b>Manual Value Mapping:</b> Create custom mappings for field values using dropdown interfaces.</li>
-   <li><b>Lookup Table Integration:</b> Use existing master layers or attribute tables as value lookup sources.</li>
-   <li><b>Visual Field Selection:</b> Integrated tree view for selecting layers, fields, and configuring recodings.</li>
-   <li><b>Type Compatibility Checking:</b> Visual indicators for field type compatibility between source and master.</li>
-   <li><b>Batch Configuration:</b> Configure multiple layers and fields simultaneously with visual feedback.</li>
-</ul>
-<h2>Workflow Process:</h2>
+INFO_IMPORT_DATA = """
+<h1>Import Mapping Data</h1>
+<p>Brings existing mapping into a current LGS template. Since Aug 2026 that is a migration rather than a copy: layers were renumbered, fields were added, and the code lists were audited &mdash; codes renamed, retired, and a whole <i>- Major</i>/<i>- Minor</i> convention replaced by the <b>Weight</b> field. This tool works all of that out for you and asks only where a real decision is needed.</p>
+<p>It also handles the other direction: point it at a filtered layer already open in QGIS &mdash; a database subset, say &mdash; and it lands that in the mapping layers so it can be styled and viewed.</p>
+<h2>The five steps</h2>
 <ol>
-   <li><b>File Selection:</b> Choose source and master GeoPackages with validation.</li>
-   <li><b>Load & Analyze:</b> Automatically load layers, detect UUID fields, and analyze duplicates.</li>
-   <li><b>Layer Configuration:</b> Select layers and configure target mapping, field mapping, and value recoding.</li>
-   <li><b>Value Recoding Setup:</b> For each field requiring recoding:
-       <ul>
-           <li>Select a lookup table or layer from the master GeoPackage.</li>
-           <li>Choose the value field to use for mapping.</li>
-           <li>Manually map each unique source value to target values.</li>
-           <li>Optionally preserve original values in separate fields.</li>
-       </ul>
-   </li>
-   <li><b>Global Filtering:</b> Apply date/time filters across all layers if needed.</li>
-   <li><b>Preview Changes:</b> Review detailed preview showing all transformations, mappings, and new records.</li>
-   <li><b>Execute:</b> Apply changes with transaction safety and progress tracking.</li>
+   <li><b>What are you importing?</b> A GeoPackage, or layers open in QGIS (with their current filter and, if you want, just the selected features). Into this project, or into another GeoPackage. Both ends are read straight away and everything that can be matched is matched before you press Next.</li>
+   <li><b>Which layers go where?</b> Matched on geometry first, then on the layer name (tolerating a different number in front of it) and on how much the two column sets overlap &mdash; which is what pairs <i>1_Structures</i> with <i>1 - FieldNotebook</i> despite the names sharing nothing. Code tables and styles are excluded.</li>
+   <li><b>Which columns go where?</b> Identical names pair themselves; known renames such as <i>SubType1Code</i> &rarr; <i>MappedSubType1</i> are applied; anything else is offered as a suggestion to confirm. Retired free-text columns can be kept in Comments. The destination's own columns are never added to or altered.</li>
+   <li><b>What do the old codes become?</b> Every distinct value of every coded column, with what it became and why: matched outright, matched through a rename (<i>FAP</i> is now <i>FAPL</i>), matched by name (<i>Hematite</i> is the code <i>Hem</i>), or split into a code plus a Weight (<i>Fault - Minor</i> becomes <i>Fault</i> with Weight <i>Minor</i>). Whatever is left gets an existing code, a brand-new code added to this project's code table, or a blank &mdash; your call, per value.</li>
+   <li><b>Ready to import.</b> Everything that will happen, with blocking problems kept apart from things merely worth knowing. Save the decisions so the next import of the same shape is three clicks, or export them for a colleague.</li>
 </ol>
-<h2>Key Benefits:</h2>
+<h2>What it does for you while writing</h2>
 <ul>
-   <li><b>Data Standardization:</b> Harmonize field values across different data sources using lookup tables.</li>
-   <li><b>Flexible Mapping:</b> Handle complex data integration scenarios with different schemas.</li>
-   <li><b>Quality Control:</b> Preview all changes before committing to prevent data issues.</li>
-   <li><b>Duplicate Management:</b> Intelligent handling of duplicate records with UUID tracking.</li>
-   <li><b>Date-based Filtering:</b> Process only recent data or specific time ranges globally.</li>
-   <li><b>Visual Feedback:</b> Clear indicators for configured recodings, duplicates, and mapping status.</li>
+   <li><b>Fills the template's own defaults.</b> Confidence, Weight, Intensity, the Basemap Description looked up from BasemapCodes, Easting/Northing, a UUID &mdash; all set the way the form would set them, so the symbology renders correctly instead of falling through to "other".</li>
+   <li><b>Works out the group values.</b> Category, Type and TypeLith1 are derived from the code beneath them, so the cascading dropdowns work on imported features.</li>
+   <li><b>Leaves the destination's schema alone.</b> No columns are added, ever. A column with nowhere to go is dropped or folded into Comments.</li>
+   <li><b>Reprojects, and handles 3D.</b> Z values go into Elevation where the destination layer is 2D.</li>
+   <li><b>Skips what is already there</b>, matched on UUID, including features you imported once and then deleted on purpose.</li>
+   <li><b>Copies the destination first</b>, so any run can be undone by restoring that copy.</li>
 </ul>
-<p><b>Use Cases:</b> Ideal for merging field mapping data from multiple sources, standardizing geological codes, harmonizing attribute values, and managing complex data integration workflows with different naming conventions and value systems.</p>
+<p><b>Afterwards:</b> run <i>Hardcode Data &amp; Update Legends</i> to fill the Mapped* columns and legend text. If you added any new codes, run <i>Recode &amp; Restyle</i> so they get symbols.</p>
 """
 
 

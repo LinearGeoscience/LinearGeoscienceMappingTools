@@ -817,8 +817,8 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Reproject GeoPackage", None,
                         feature_info.INFO_REPROJECT_GEOPACKAGE, self.run_reprojectgeopackage)
         grp.addSeparator()
-        grp.addFeature("Append Mapping Data", None,
-                        feature_info.INFO_APPEND_DATA, self.run_appenddata)
+        grp.addFeature("Import Mapping Data", None,
+                        feature_info.INFO_IMPORT_DATA, self.run_importdata)
         grp.addSeparator()
         grp.addFeature("Import Mining Survey Data", None,
                         feature_info.INFO_MINING_IMPORT, self.run_mining_import)
@@ -1018,11 +1018,11 @@ class LinearGeosciencePluginMain:
         from .script_domainclassification import run
         run(self.iface)
 
-    def run_appenddata(self):
-        if not self._confirm_z_filter_off("Append Mapping Data"):
+    def run_importdata(self):
+        if not self._confirm_z_filter_off("Import Mapping Data"):
             return
-        from .script_adddata import run_gpkg_append_tool_dialog
-        run_gpkg_append_tool_dialog(self.iface)
+        from .data_import import run_import_dialog
+        run_import_dialog(self.iface)
 
     def run_mining_import(self):
         from .mining_import import run

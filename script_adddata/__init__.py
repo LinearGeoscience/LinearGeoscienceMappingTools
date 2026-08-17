@@ -2,35 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-Enhanced GeoPackage Append Tool with Advanced Recoding
-------------------------------------------------------
-A modular PyQGIS tool for appending data from source GeoPackages
-to master GeoPackages with advanced recoding and duplicate detection.
+Reconcile / Merge Field Data, plus the shared UUID-field detection.
 
-Features:
-- Layer and field name mapping
-- Value recoding with templates
-- UUID-based duplicate detection with JSON tracking
-- Temporal overlap warnings
-- Enhanced preview with comprehensive statistics
-- Timeline visualization of data additions
-- Comprehensive timezone support
+The GeoPackage append tool that gave this package its name was replaced by
+data_import/ — a guided importer that treats bringing old mapping into a current
+template as the migration it now is, rather than a row copy. What stayed is the
+three-way reconcile system, which is a different feature that happened to live
+here, and utils.detect_uuid_field, which hardcode_data and reconcile both need.
+
+The package keeps its name because six test modules and the reconcile engine
+resolve `script_adddata/reconcile` by path; renaming it is churn for no gain.
 """
 
-# Import core utilities (always available)
-from .utils import LayerRecoding, ValueRecoding
-from .metadata import UUIDTracker, MetadataManager
+from .utils import detect_uuid_field
 
-# Import main window
-from .main import GeoPackageAppendTool, run_gpkg_append_tool_dialog
-
-__version__ = "3.1.0"
-
-__all__ = [
-    'GeoPackageAppendTool',
-    'run_gpkg_append_tool_dialog',
-    'LayerRecoding',
-    'ValueRecoding',
-    'UUIDTracker',
-    'MetadataManager'
-]
+__all__ = ['detect_uuid_field']
