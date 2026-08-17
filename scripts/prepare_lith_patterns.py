@@ -42,11 +42,19 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lith_tile_seams as seams          # noqa: E402
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEST = os.path.join(REPO, "Template", "patterns")
+# Tiles that cannot come from the library: a motif nobody authored (calcrete),
+# or artwork whose band structure a transform cannot fix. Checked FIRST, so an
+# entry here overrides the library file named in CURATION.
+AUTHORED = os.path.join(REPO, "Template", "patterns_authored")
 DEFAULT_SOURCE = os.path.join(
     os.path.expanduser("~"), "OneDrive", "2 - Work", "Linear Geoscience",
     "Q", "QGIS", "QGIS Patterns", "LGS_lith_Patterns")
+STROKE_WIDTHS = os.path.join(DEST, "stroke_widths.tsv")
 
 # Texture name -> source file. Names are the vocabulary the per-code mapping
 # (Template/patterns/lith_textures.tsv) speaks, so they name the ROCK where
@@ -147,7 +155,67 @@ CURATION = [
     ("arkose",         "Lit_Arkose.svg",       7),  # angular clusters
     ("shale",          "Lit_Shale.svg",       27),  # solid fine laminae
     ("cataclasite",    "Lit_Cataclasite.svg", 52),  # dense angular fragments
+    # --- round 6: authored here, no library source ------------------------
+    # RCC Calcrete was drawing a regolith carbonate as a bedded marine
+    # limestone (and rendering as identical pixels to SLI once the limestone
+    # chemical hue was applied on top). A calcrete is nodular, not bedded.
+    ("calcrete",       None,                   8),  # carbonate nodules
 ]
+
+# ---------------------------------------------------------------- seams
+# Blank-band repairs (R3). These tiles satisfy the geometric edge rules and
+# still show a stripe, because their motif rhythm does not divide their own
+# period - siltstone runs 3,3,3,3,3 then 5 at the wrap, laterite 5,5,10. Four
+# ways of detecting this automatically were built and measured; all four
+# misfire (see scripts/lith_tile_seams.py), so the tiles are named.
+#
+# RELATTICE re-spaces the rows and preserves row COUNT and every within-row
+# offset - those encode the grain size - so ink coverage barely moves.
+RELATTICE = {
+    "siltstone":  "y",   # 6 dot rows, 3,3,3,3,3 then 5 across the wrap
+    "laterite":   "y",   # pisolith rings at y=5,10,15: gaps 5,5,10
+    "peridotite": "y",   # same 5,5,10
+    "mudstone":   "y",   # dash rows every 4 in a 24 box, 8 at the wrap
+}
+
+# RESIZE trims dead space so the wrap gap equals the interior gap. Only the
+# repeat length changes: QGIS scales a tile by WIDTH, so height is free.
+RESIZE = {
+    "breccia": (30.0, 26.0),   # fragments end at y=25 in a 30 box
+}
+
+# Phase shifts that move strokes off the tile edges (R1). Computed once with
+# lith_tile_seams.suggest_phase() - which places the boundary in the middle of
+# the largest gap between stroke positions, i.e. maximum clearance - and STORED
+# rather than re-derived, so this script stays byte-reproducible. Only tiles
+# needing a non-zero shift are listed; every tile then gets wrap() regardless.
+PHASE = {
+    "alluvium":       (-5.5, -7.5),
+    "arkose":         (-6.0, -5.5),
+    "chalk":          (-17.0, -18.5),
+    "colluvium":      (-7.0, -18.0),
+    "dolomite":       (-7.5, -5.0),
+    "dunite":         (-1.0, -2.0),
+    "granulite":      (0.0, -4.0),
+    "iron_formation": (0.0, -4.0),
+    "limestone":      (-7.5, -5.0),
+    "marble":         (-7.5, -5.0),
+    "marl":           (-7.5, -2.0),
+    "migmatite":      (1.0, -2.5),
+    "porphyry":       (-4.0, -0.5),
+    "shale":          (0.0, -8.3),
+    "slate":          (0.0, -1.0),
+}
+
+# Tiles knowingly left alone. gneiss / migmatite / phyllite carry a DOUBLET
+# band structure (a singlet, a pair, a singlet) that is the motif; relatticing
+# them would flatten it into evenly spaced bands and destroy the rock. Their
+# edge defects are fixed by wrap(); only the band rhythm is imperfect.
+SEAM_ACCEPTED = {
+    "gneiss": "doublet band structure is the motif, not a defect",
+    "migmatite": "doublet band structure is the motif, not a defect",
+    "phyllite": "crenulation spacing is deliberately irregular",
+}
 
 # The ELSE branch of the renderer expression needs a real tile: a NULL
 # svgFile falls back to the symbol layer's static default instead of
@@ -194,6 +262,62 @@ def repair_dots(svg):
     return LINE_RE.sub(fix, svg), fixed[0]
 
 
+def load_widths():
+    """{texture: width_pt} if calibrated yet, else {}.
+
+    The seam repair needs the REAL stroke width, not the 0.1 placeholder in the
+    artwork: whether a motif crosses a tile edge depends on how fat its stroke
+    is, and these run 0.24 to 2.49 pt. On a first run - no stroke_widths.tsv
+    yet - fall back to a width wide enough to be conservative, then
+    calibrate_lith_strokes.py and a second prepare settle it.
+    """
+    out = {}
+    if not os.path.exists(STROKE_WIDTHS):
+        return out
+    with open(STROKE_WIDTHS, encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if line.startswith("#") or len(parts) < 2 or parts[0] == "texture":
+                continue
+            try:
+                out[parts[0]] = float(parts[1])
+            except ValueError:
+                pass
+    return out
+
+
+def repair_seams(svg, motif, width):
+    """Make one tile toroidal. Returns (svg, [notes]).
+
+    Order matters: resize and relattice change where the motif sits, the phase
+    shift moves it clear of the edges, and wrap is last because it has to see
+    the final positions to know what crosses.
+    """
+    notes = []
+    if motif in RESIZE:
+        w2, h2 = RESIZE[motif]
+        svg = seams.resize(svg, w2, h2)
+        notes.append("repeat trimmed to %gx%g to remove the blank band"
+                     % (w2, h2))
+    if motif in RELATTICE:
+        axis = RELATTICE[motif]
+        svg, n = seams.relattice(svg, axis)
+        notes.append("%d motif rows re-spaced on %s so the rhythm divides the "
+                     "tile" % (n, axis))
+    if motif in PHASE:
+        dx, dy = PHASE[motif]
+        svg = seams.phase_shift(svg, dx, dy)
+        notes.append("motif shifted by (%g,%g) to clear the tile edges"
+                     % (dx, dy))
+    before = len(seams.parse(svg)[2])
+    svg = seams.wrap(svg, width)
+    after = len(seams.parse(svg)[2])
+    if after != before:
+        notes.append("%d wrap counterpart(s) added so edge-crossing motifs "
+                     "complete across the seam" % (after - before))
+    return svg, notes
+
+
 def main():
     source = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SOURCE
 
@@ -201,6 +325,11 @@ def main():
     if len(set(names)) != len(names):
         bail("duplicate motif name in CURATION")
 
+    authored = {n for n, s, _i in CURATION if s is None}
+    if not os.path.isdir(source) and authored - {
+            n for n, _s, _i in CURATION
+            if os.path.exists(os.path.join(AUTHORED, n + ".svg"))}:
+        bail("authored tiles missing from %s" % AUTHORED)
     if not os.path.isdir(source):
         # Already prepared? then this is a no-op, not a failure.
         missing = [n for n in names
@@ -213,9 +342,23 @@ def main():
         return
 
     os.makedirs(DEST, exist_ok=True)
+    widths = load_widths()
+    if not widths:
+        print("note: no stroke_widths.tsv yet - seam repair will use a "
+              "conservative width; re-run after calibrate_lith_strokes.py")
     total_fixed = 0
+    total_seam = 0
     for motif, src, _ink in CURATION:
-        path = os.path.join(source, src)
+        if src is None:
+            path = os.path.join(AUTHORED, motif + ".svg")
+            origin = "authored (Template/patterns_authored/)"
+        else:
+            path = os.path.join(AUTHORED, motif + ".svg")
+            if os.path.exists(path):
+                origin = "authored override of " + src
+            else:
+                path = os.path.join(source, src)
+                origin = src
         if not os.path.exists(path):
             bail("source tile not found: " + path)
         with open(path, encoding="utf-8") as fh:
@@ -224,14 +367,22 @@ def main():
         total_fixed += n
         if "param(outline)" not in svg:
             bail("%s: no param(outline) - artwork is not parameterised, "
-                 "QGIS colour control would be inert" % src)
+                 "QGIS colour control would be inert" % origin)
+        try:
+            svg, seam_notes = repair_seams(svg, motif, widths.get(motif, 1.0))
+        except ValueError as exc:
+            bail("%s: seam repair could not handle the artwork: %s"
+                 % (motif, exc))
+        total_seam += len(seam_notes)
         header = ("<!-- LGS lithology texture: %s\n"
                   "     source: %s\n"
                   "     %s -->\n"
-                  % (motif, src,
-                     "%d zero-length dot(s) repaired to x2=x1+0.001 "
-                     "(Qt paints nothing for a zero-length subpath)" % n
-                     if n else "no dot repair needed"))
+                  % (motif, origin,
+                     "\n     ".join(
+                         (["%d zero-length dot(s) repaired to x2=x1+0.001 "
+                           "(Qt paints nothing for a zero-length subpath)" % n]
+                          if n else [])
+                         + seam_notes) or "no repair needed"))
         # keep the xml declaration first
         if svg.startswith("<?xml"):
             decl, rest = svg.split("\n", 1)
@@ -241,8 +392,9 @@ def main():
         with open(os.path.join(DEST, motif + ".svg"), "w",
                   encoding="utf-8", newline="\n") as fh:
             fh.write(out)
-        print("  %-16s <- %-24s %s"
-              % (motif, src, "repaired %d dot(s)" % n if n else ""))
+        bits = (["%d dot(s)" % n] if n else []) + seam_notes
+        print("  %-16s <- %-30s %s"
+              % (motif, origin, "; ".join(bits)))
 
     with open(os.path.join(DEST, BLANK_NAME + ".svg"), "w",
               encoding="utf-8", newline="\n") as fh:
@@ -258,8 +410,28 @@ def main():
         os.remove(os.path.join(DEST, f))
         print("  removed stale tile: " + f)
 
-    print("\n%d tiles written to %s (%d zero-length dots repaired)"
-          % (len(CURATION) + 1, DEST, total_fixed))
+    print("\n%d tiles written to %s (%d zero-length dots repaired, "
+          "%d seam repairs applied)"
+          % (len(CURATION) + 1, DEST, total_fixed, total_seam))
+
+    # Report, don't enforce: the test owns enforcement. But a silent
+    # regression here would be found much later, so say it now.
+    widths = load_widths()
+    still = {}
+    for motif, _src, _ink in CURATION:
+        with open(os.path.join(DEST, motif + ".svg"), encoding="utf-8") as fh:
+            issues = seams.audit(fh.read(), widths.get(motif, 1.0))
+        if issues:
+            still[motif] = issues
+    if still:
+        print("\n%d tile(s) still fail the seam rules:" % len(still))
+        for motif, issues in sorted(still.items()):
+            print("  %-16s %s" % (motif, issues[0][1]))
+    else:
+        print("seam audit: all %d tiles are toroidally sound" % len(CURATION))
+    if SEAM_ACCEPTED:
+        print("band rhythm knowingly left as authored: %s"
+              % ", ".join(sorted(SEAM_ACCEPTED)))
 
 
 if __name__ == "__main__":

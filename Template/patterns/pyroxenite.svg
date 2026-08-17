@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- LGS lithology texture: pyroxenite
      source: Lit_Pyroxenite.svg
-     no dot repair needed -->
+     5 wrap counterpart(s) added so edge-crossing motifs complete across the seam -->
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1"
      viewBox="0 0 24 24" width="24pt" height="24pt">
   <rect width="24" height="24" fill="none" stroke="none"/>
@@ -10,8 +10,13 @@
   <line x1="14" y1="2" x2="18" y2="6" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="8" y1="8" x2="12" y2="12" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="20" y1="8" x2="24" y2="12" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="-4" y1="8" x2="0" y2="12" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="2" y1="14" x2="6" y2="18" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="14" y1="14" x2="18" y2="18" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="8" y1="20" x2="12" y2="24" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="8" y1="-4" x2="12" y2="0" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <line x1="20" y1="20" x2="24" y2="24" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="20" y1="-4" x2="24" y2="0" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="-4" y1="20" x2="0" y2="24" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="-4" y1="-4" x2="0" y2="0" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
 </svg>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- LGS lithology texture: pegmatite
      source: Lit_Pegmatite.svg
-     no dot repair needed -->
+     no repair needed -->
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1"
      viewBox="0 0 30 30" width="30pt" height="30pt">
   <rect width="30" height="30" fill="none" stroke="none"/>

@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- LGS lithology texture: gneiss
      source: Lit_Gneiss.svg
-     no dot repair needed -->
+     11 wrap counterpart(s) added so edge-crossing motifs complete across the seam -->
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1"
      viewBox="0 0 30 24" width="30pt" height="24pt">
   <rect width="30" height="24" fill="none" stroke="none"/>
   <!-- Thick wavy banded lines -->
   <path d="M0,4 Q7.5,1 15,4 Q22.5,7 30,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M30,4 Q37.5,1 45,4 Q52.5,7 60,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-30,4 Q-22.5,1 -15,4 Q-7.5,7 0,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <path d="M0,12 Q7.5,9 15,12 Q22.5,15 30,12" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M30,12 Q37.5,9 45,12 Q52.5,15 60,12" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-30,12 Q-22.5,9 -15,12 Q-7.5,15 0,12" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <path d="M0,14 Q7.5,11 15,14 Q22.5,17 30,14" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M30,14 Q37.5,11 45,14 Q52.5,17 60,14" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-30,14 Q-22.5,11 -15,14 Q-7.5,17 0,14" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
   <path d="M0,22 Q7.5,19 15,22 Q22.5,25 30,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M0,-2 Q7.5,-5 15,-2 Q22.5,1 30,-2" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M30,22 Q37.5,19 45,22 Q52.5,25 60,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M30,-2 Q37.5,-5 45,-2 Q52.5,1 60,-2" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-30,22 Q-22.5,19 -15,22 Q-7.5,25 0,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-30,-2 Q-22.5,-5 -15,-2 Q-7.5,1 0,-2" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
 </svg>

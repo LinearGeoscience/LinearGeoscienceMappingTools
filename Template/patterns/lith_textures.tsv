@@ -246,7 +246,7 @@ ZU-TA	schist	Lithology	Ultramafic Schist, Talc-Amphibole Altered	schist: named a
 ZU-TCB	schist	Lithology	Ultramafic Schist, Talc-Carbonate Altered	schist: named after the protolith but it is a schist	talc	schist_ultramafic
 RARZ	sandstone	Regolith	Arenose Zone	arenose zone	auto	-
 RBX	breccia	Regolith	Ferruginous Collapse Breccia	ferruginous collapse breccia	iron_oxide	-
-RCC	limestone	Regolith	Calcrete	calcrete: carbonate cement	carbonate	-
+RCC	calcrete	Regolith	Calcrete	nodular carbonate, NOT the bedded limestone brick	carbonate	-
 RDLM	laterite	Regolith	Lateritic Duricrust, Massive	lateritic duricrust / ferricrete	auto	duricrust
 RDLN	laterite	Regolith	Lateritic Duricrust, Nodular	lateritic duricrust / ferricrete	auto	duricrust
 RDLP	laterite	Regolith	Lateritic Duricrust, Pisolitic	lateritic duricrust / ferricrete	auto	duricrust

@@ -1,19 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- LGS lithology texture: migmatite
      source: Lit_Migmatite.svg
-     no dot repair needed -->
+     motif shifted by (1,-2.5) to clear the tile edges
+     5 wrap counterpart(s) added so edge-crossing motifs complete across the seam -->
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1"
      viewBox="0 0 30 24" width="30pt" height="24pt">
   <rect width="30" height="24" fill="none" stroke="none"/>
   <!-- Wavy lines -->
-  <path d="M0,4 Q7.5,1 15,4 Q22.5,7 30,4" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <path d="M0,14 Q7.5,11 15,14 Q22.5,17 30,14" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <path d="M0,22 Q7.5,19 15,22 Q22.5,25 30,22" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <!-- Scattered + symbols -->
-  <line x1="6" y1="8" x2="6" y2="12" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <line x1="4" y1="10" x2="8" y2="10" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <line x1="22" y1="8" x2="22" y2="12" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <line x1="20" y1="10" x2="24" y2="10" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <line x1="14" y1="17" x2="14" y2="21" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
-  <line x1="12" y1="19" x2="16" y2="19" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M1,1.5 Q8.5,-1.5 16,1.5 Q23.5,4.5 31,1.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M1,25.5 Q8.5,22.5 16,25.5 Q23.5,28.5 31,25.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-29,1.5 Q-21.5,-1.5 -14,1.5 Q-6.5,4.5 1,1.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-29,25.5 Q-21.5,22.5 -14,25.5 Q-6.5,28.5 1,25.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M1,11.5 Q8.5,8.5 16,11.5 Q23.5,14.5 31,11.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-29,11.5 Q-21.5,8.5 -14,11.5 Q-6.5,14.5 1,11.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M1,19.5 Q8.5,16.5 16,19.5 Q23.5,22.5 31,19.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <path d="M-29,19.5 Q-21.5,16.5 -14,19.5 Q-6.5,22.5 1,19.5" fill="none" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="7" y1="5.5" x2="7" y2="9.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="5" y1="7.5" x2="9" y2="7.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="23" y1="5.5" x2="23" y2="9.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="21" y1="7.5" x2="25" y2="7.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="15" y1="14.5" x2="15" y2="18.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
+  <line x1="13" y1="16.5" x2="17" y2="16.5" stroke="param(outline) #000000" stroke-width="param(outline-width) 0.1"/>
 </svg>
