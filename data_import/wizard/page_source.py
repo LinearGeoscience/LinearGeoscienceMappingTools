@@ -43,6 +43,7 @@ class SourcePage(QWizardPage):
         super().__init__(wizard)
         self.wizard_ref = wizard
         self._task = None
+        self._restart_pending = False
         self._analysed = False
         self._loaded_profile_path = ''
 
@@ -296,6 +297,12 @@ class SourcePage(QWizardPage):
     def _start_analysis(self):
         state = self._collect_state()
         if self._task is not None:
+            # Inputs changed while the previous read was still running. Dropping
+            # the new one leaves the stale answer on screen and, worse, leaves
+            # the value/UUID readers bound to the OLD file while the worker
+            # reads the new one — so supersede it instead.
+            self._restart_pending = True
+            self._task.cancel()
             return
 
         try:
@@ -316,6 +323,8 @@ class SourcePage(QWizardPage):
 
         def finished(result):
             self._task = None
+            if self._resume_if_superseded():
+                return
             self.progress.setVisible(False)
             source_model, target_model, built = result
             state.source_model = source_model
@@ -327,6 +336,8 @@ class SourcePage(QWizardPage):
 
         def failed(error, _traceback):
             self._task = None
+            if self._resume_if_superseded():
+                return
             self.progress.setVisible(False)
             state.analysis_error = str(error)
             self.status_label.setText('Could not read that: {0}'.format(error))
@@ -334,6 +345,8 @@ class SourcePage(QWizardPage):
 
         def cancelled():
             self._task = None
+            if self._resume_if_superseded():
+                return
             self.progress.setVisible(False)
             self.status_label.setText('Cancelled.')
 
@@ -342,11 +355,26 @@ class SourcePage(QWizardPage):
             on_error=failed, on_cancelled=cancelled, owner=self,
             bar=self.progress, label=self.status_label)
 
+    def _resume_if_superseded(self):
+        """True when this result is stale and a fresh read has been started."""
+        if not self._restart_pending:
+            return False
+        self._restart_pending = False
+        self._start_analysis()
+        return True
+
     def _capture_main_thread_inputs(self, state):
-        """Snapshot everything the worker may not touch."""
+        """Snapshot everything the worker may not touch.
+
+        The paths are pinned here too. The worker used to re-read them from the
+        wizard state, which meant a path changed mid-read gave a model from one
+        file and value readers bound to another.
+        """
         project = QgsProject.instance()
         state.source_refs = {}
         state.layer_snapshots = {}
+        state.analysis_source_path = state.source_path
+        state.analysis_destination_path = state.destination_path
 
         if state.destination_kind == 'project':
             state.target_model = domain.read_project_model(project)
@@ -357,9 +385,30 @@ class SourcePage(QWizardPage):
 
         if state.source_kind == 'gpkg':
             path = state.source_path
-            state.counts_provider = (
-                lambda table, fields, _p=path: scan.gpkg_value_counts(
-                    _p, table, fields))
+            date_filter = self._date_filter_config()
+
+            def counts(table, fields, _p=path, _f=date_filter):
+                # The scan honours the same date filter the write will, so a
+                # filtered append does not ask about codes it is going to
+                # leave behind.
+                names = scan.gpkg_column_names(_p, table)
+                where = scan.date_filter_expression(_f, names)
+                return scan.gpkg_value_counts(_p, table, fields, where=where)
+
+            def source_uuids(table, _p=path, _f=date_filter):
+                names = scan.gpkg_column_names(_p, table)
+                column = next((n for n in names if n.lower() == 'uuid'), '')
+                if not column:
+                    return None, 0
+                where = scan.date_filter_expression(_f, names)
+                counted = scan.gpkg_value_counts(_p, table, [column],
+                                                 where=where).get(column)
+                if counted is None:
+                    return None, 0
+                return set(counted.counts), counted.empty
+
+            state.counts_provider = counts
+            state.source_uuids_provider = source_uuids
             state.source_model = None
             return
 
@@ -393,6 +442,22 @@ class SourcePage(QWizardPage):
                                                     fields, fids)
 
         state.counts_provider = counts
+
+        def source_uuids(table, _sources=sources):
+            entry = _sources.get(table)
+            if entry is None:
+                return None, 0
+            feature_source, names, fids = entry
+            column = next((n for n in names if n.lower() == 'uuid'), '')
+            if not column:
+                return None, 0
+            counted = scan.feature_source_value_counts(
+                feature_source, names, [column], fids).get(column)
+            if counted is None:
+                return None, 0
+            return set(counted.counts), counted.empty
+
+        state.source_uuids_provider = source_uuids
 
     def _date_filter_config(self):
         try:

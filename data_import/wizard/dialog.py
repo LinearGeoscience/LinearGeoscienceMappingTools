@@ -18,11 +18,13 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QMessageBox, QWizard
 
 try:
-    from .. import domain, plan as plan_module
+    from .. import domain, plan as plan_module, scan
+    from ..domain import uuid_field_of
     from . import (page_codes, page_fields, page_layers, page_review,
                    page_run, page_source, style)
 except ImportError:  # direct (non-package) execution inside QGIS
-    from data_import import domain, plan as plan_module
+    from data_import import domain, plan as plan_module, scan
+    from data_import.domain import uuid_field_of
     from data_import.wizard import (page_codes, page_fields, page_layers,
                                     page_review, page_run, page_source, style)
 
@@ -67,7 +69,13 @@ class WizardState(object):
         # counts_provider(table, fields) -> {field: ValueCounts}; source_refs
         # says where each layer's features come from; layer_snapshots holds the
         # QgsVectorLayerFeatureSource objects alive for the duration.
+        # The paths the CURRENT analysis was started against. Pinned on the
+        # main thread so the worker cannot read a file the readers were not
+        # built for.
+        self.analysis_source_path = ''
+        self.analysis_destination_path = ''
         self.counts_provider = None
+        self.source_uuids_provider = None
         self.source_refs = {}
         self.layer_snapshots = {}
 
@@ -141,12 +149,16 @@ class ImportWizard(QWizard):
             if progress_cb is not None:
                 progress_cb(percent, message)
 
+        source_path = state.analysis_source_path or state.source_path
+        destination_path = (state.analysis_destination_path
+                            or state.destination_path)
+
         note(5, 'Reading the destination...')
         if state.destination_kind == 'gpkg':
-            target_model = domain.read_gpkg_model(state.destination_path)
+            target_model = domain.read_gpkg_model(destination_path)
             destination = plan_module.DestinationRef(
-                'gpkg', state.destination_path,
-                os.path.basename(state.destination_path))
+                'gpkg', destination_path,
+                os.path.basename(destination_path))
         else:
             target_model = state.target_model     # captured on the main thread
             destination = plan_module.DestinationRef(
@@ -156,7 +168,7 @@ class ImportWizard(QWizard):
         note(25, 'Reading the source...')
         source_model = state.source_model
         if state.source_kind == 'gpkg':
-            source_model = domain.read_gpkg_model(state.source_path)
+            source_model = domain.read_gpkg_model(source_path)
 
         note(45, 'Matching layers and columns...')
 
@@ -170,12 +182,24 @@ class ImportWizard(QWizard):
 
         describe_for = describer_for(source_model)
 
-        note(60, 'Working out what the old codes become...')
+        note(60, 'Working out what is new and what the old codes become...')
+
+        uuid_source_path = (destination.path or target_model.path or '')
+
+        def destination_uuids(layer_name, _p=uuid_source_path):
+            spec = target_model.layers.get(layer_name)
+            column = uuid_field_of(spec) if spec else ''
+            if not column or not _p:
+                return None
+            return scan.gpkg_column_set(_p, layer_name, column)
+
         built = plan_module.build_plan(
             source_model, target_model, destination, value_counts_for,
             source_describe_for=describe_for,
             profile=state.profile or {},
-            source_refs=state.source_refs)
+            source_refs=state.source_refs,
+            source_uuids_for=state.source_uuids_provider,
+            destination_uuids_for=destination_uuids)
 
         built.options.date_filter = state.date_filter
 

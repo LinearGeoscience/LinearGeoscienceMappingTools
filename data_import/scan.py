@@ -5,6 +5,11 @@ Two backends behind one shape: a GeoPackage table read with sqlite3 (pure, and
 fast enough to count a 2000-feature column without opening QGIS) and a loaded
 QgsVectorLayer, which is what the database-subset workflow needs because the
 layer's own subset filter and selection are the whole point of it.
+
+The date-filter expression lives here rather than next to the widget that
+produces it, because the scan has to honour the same filter the write will.
+Otherwise a filtered append asks you to decide codes that only appear in
+features it is about to leave behind.
 """
 
 import sqlite3
@@ -19,6 +24,50 @@ except ImportError:  # flat execution / pure test loader
 # Above this many distinct values a column is free text, not a code list, and
 # enumerating it helps nobody.
 DISTINCT_CAP = 2000
+
+# Date filter kinds, produced by date_filter.GlobalDateFilterWidget.
+FILTER_TYPE_AFTER = 'after_date_time'
+FILTER_TYPE_BEFORE = 'before_date_time'
+FILTER_TYPE_BETWEEN = 'between_dates'
+
+# Date columns, best first. Matched by name rather than declared type: a source
+# that has been through a shapefile round-trip carries its date as text.
+DATE_FIELD_NAMES = ('date&time', 'datetime', 'date_time', 'date', 'timestamp',
+                    'surveydate', 'created')
+
+
+def date_filter_expression(config, field_names):
+    """A filter clause from the date widget's config, or ''.
+
+    Valid as both a QGIS expression and SQLite SQL, which is what lets the same
+    string filter a QgsFeatureRequest and a GROUP BY.
+    """
+    if not config or not config.get('enabled'):
+        return ''
+    field = ''
+    lowered = {name.lower(): name for name in field_names}
+    for candidate in DATE_FIELD_NAMES:
+        if candidate in lowered:
+            field = lowered[candidate]
+            break
+    if not field:
+        return ''
+
+    kind = config.get('type')
+    start = config.get('start_datetime')
+    end = config.get('end_datetime')
+
+    def stamp(value):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+
+    if kind == FILTER_TYPE_AFTER and start:
+        return '"{0}" >= \'{1}\''.format(field, stamp(start))
+    if kind == FILTER_TYPE_BEFORE and start:
+        return '"{0}" <= \'{1}\''.format(field, stamp(start))
+    if kind == FILTER_TYPE_BETWEEN and start and end:
+        return '"{0}" >= \'{1}\' AND "{0}" <= \'{2}\''.format(
+            field, stamp(start), stamp(end))
+    return ''
 
 
 class ValueCounts(object):
@@ -50,15 +99,17 @@ def _connect(path):
                            uri=True)
 
 
-def gpkg_value_counts(path, table, fields):
+def gpkg_value_counts(path, table, fields, where=''):
     """{field: ValueCounts} for several columns of a GeoPackage table."""
     results = OrderedDict()
     connection = _connect(path)
+    clause = ' WHERE ' + where if where else ''
     try:
         quoted_table = table.replace('"', '""')
         try:
             total = connection.execute(
-                'SELECT COUNT(*) FROM "{0}"'.format(quoted_table)).fetchone()[0]
+                'SELECT COUNT(*) FROM "{0}"{1}'.format(
+                    quoted_table, clause)).fetchone()[0]
         except sqlite3.Error:
             return results
         for field in fields:
@@ -68,8 +119,9 @@ def gpkg_value_counts(path, table, fields):
             truncated = False
             try:
                 rows = connection.execute(
-                    'SELECT "{0}", COUNT(*) FROM "{1}" GROUP BY 1 '
-                    'ORDER BY COUNT(*) DESC'.format(quoted, quoted_table))
+                    'SELECT "{0}", COUNT(*) FROM "{1}"{2} GROUP BY 1 '
+                    'ORDER BY COUNT(*) DESC'.format(quoted, quoted_table,
+                                                    clause))
             except sqlite3.Error:
                 continue
             for raw, count in rows:
@@ -170,6 +222,31 @@ def feature_source_value_counts(feature_source, field_names, fields,
     for bucket in results.values():
         bucket.total = total
     return results
+
+
+def gpkg_column_names(path, table):
+    """Column names of a GeoPackage table, in declaration order."""
+    connection = _connect(path)
+    try:
+        return [row[1] for row in connection.execute(
+            'PRAGMA table_info("{0}")'.format(table.replace('"', '""')))]
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+
+
+def gpkg_column_set(path, table, column):
+    """Every non-blank value of one column, as a set. Used for UUID matching."""
+    connection = _connect(path)
+    try:
+        rows = connection.execute('SELECT "{0}" FROM "{1}"'.format(
+            column.replace('"', '""'), table.replace('"', '""')))
+        return {normalise(value) for (value,) in rows if not is_blank(value)}
+    except sqlite3.Error:
+        return set()
+    finally:
+        connection.close()
 
 
 def gpkg_feature_count(path, table, where=''):

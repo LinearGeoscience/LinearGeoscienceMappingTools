@@ -28,6 +28,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if REPO_ROOT not in sys.path:
@@ -467,6 +468,164 @@ class TestAddingACode(unittest.TestCase):
                            "SELECT COUNT(*) FROM LineworkCodes "
                            "WHERE Code = 'Fault - test'")
         self.assertEqual(untouched, [(0,)])
+
+
+class TestAppendWorkflow(unittest.TestCase):
+    """The other half of what this tool is for: topping up a local master.
+
+    Mapping accumulates on a master GeoPackage and each new field export
+    repeats most of what is already there. Only the genuinely new features may
+    land, matched on UUID, optionally narrowed by date.
+    """
+
+    FIELDS = ['Type', 'Subtype1', 'Geologist', 'UUID', 'Comments', 'Date&Time']
+
+    def setUp(self):
+        self.work = tempfile.mkdtemp(prefix='lgs_import_append_')
+        self.master = os.path.join(self.work, 'LGS_Master.gpkg')
+        shutil.copy2(TEMPLATE, self.master)
+
+    def tearDown(self):
+        shutil.rmtree(self.work, ignore_errors=True)
+
+    def _export(self, name, rows):
+        """A QField-shaped FieldNotebook export. rows: [(uuid, day_offset)]."""
+        from qgis.core import QgsWkbTypes
+
+        path = os.path.join(self.work, name)
+        fields = QgsFields()
+        for field_name in self.FIELDS:
+            fields.append(QgsField(field_name, QMetaType.Type.QString))
+        options = QgsVectorFileWriter.SaveVectorOptions()
+        options.driverName = 'GPKG'
+        options.layerName = '1 - FieldNotebook'
+        options.actionOnExistingFile = \
+            QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
+        writer = QgsVectorFileWriter.create(
+            path, fields, QgsWkbTypes.Type.Point,
+            QgsCoordinateReferenceSystem(DESTINATION_CRS),
+            QgsCoordinateTransformContext(), options)
+        for index, (uuid_value, day) in enumerate(rows):
+            feature = QgsFeature(fields)
+            feature.setAttributes(
+                ['Structure', 'S0', '1', uuid_value, '',
+                 '2026-08-{0:02d} 09:00:00'.format(1 + day)])
+            feature.setGeometry(QgsGeometry.fromWkt(
+                'POINT({0} {1})'.format(500000 + index, 7000000 + index)))
+            writer.addFeature(feature)
+        del writer
+        return path
+
+    def _import(self, source, date_filter=None):
+        target = domain.read_gpkg_model(self.master)
+        source_model = domain.read_gpkg_model(source)
+
+        def counts(table, fields, _f=date_filter):
+            names = scan.gpkg_column_names(source, table)
+            return scan.gpkg_value_counts(
+                source, table, fields,
+                where=scan.date_filter_expression(_f, names))
+
+        def source_uuids(table, _f=date_filter):
+            names = scan.gpkg_column_names(source, table)
+            where = scan.date_filter_expression(_f, names)
+            counted = scan.gpkg_value_counts(source, table, ['UUID'],
+                                             where=where)['UUID']
+            return set(counted.counts), counted.empty
+
+        def destination_uuids(layer_name):
+            return scan.gpkg_column_set(self.master, layer_name, 'UUID')
+
+        built = plan_module.build_plan(
+            source_model, target,
+            plan_module.DestinationRef('gpkg', self.master, 'master'),
+            counts, source_uuids_for=source_uuids,
+            destination_uuids_for=destination_uuids)
+        built.options.backup = False
+        built.options.date_filter = date_filter
+        for item in built.included():
+            for resolutions in item.resolutions.values():
+                for resolution in resolutions.values():
+                    if not resolution.decided:
+                        resolution.leave_blank()
+        self.assertTrue(built.validate().ok)
+        return built, execute.run_import(built, execute.prepare_sources(built))
+
+    def _uuids(self):
+        return sorted(value for (value,) in _query(
+            self.master, 'SELECT UUID FROM "1 - FieldNotebook"'))
+
+    def test_only_the_new_features_land_on_a_second_import(self):
+        first = self._export('week1.gpkg',
+                             [('uuid-001', 0), ('uuid-002', 1)])
+        _plan, result = self._import(first)
+        self.assertEqual((result.total_added, result.total_skipped), (2, 0))
+
+        second = self._export('week2.gpkg',
+                              [('uuid-001', 0), ('uuid-002', 1),
+                               ('uuid-003', 8)])
+        built, result = self._import(second)
+        self.assertEqual((result.total_added, result.total_skipped), (1, 2))
+        self.assertEqual(self._uuids(), ['uuid-001', 'uuid-002', 'uuid-003'])
+
+    def test_the_review_page_predicts_that_before_running(self):
+        first = self._export('week1.gpkg',
+                             [('uuid-001', 0), ('uuid-002', 1)])
+        self._import(first)
+        second = self._export('week2.gpkg',
+                              [('uuid-001', 0), ('uuid-002', 1),
+                               ('uuid-003', 8)])
+        built, result = self._import(second)
+        summary = built.summary()
+        self.assertEqual(summary['expected_new'], result.total_added)
+        self.assertEqual(summary['already_present'], result.total_skipped)
+
+    def test_a_date_filter_narrows_what_is_considered(self):
+        source = self._export('all.gpkg',
+                              [('uuid-001', 0), ('uuid-002', 1),
+                               ('uuid-003', 8), ('uuid-004', 9)])
+        after_day_five = {'enabled': True,
+                          'type': scan.FILTER_TYPE_AFTER,
+                          'start_datetime': datetime(2026, 8, 6, 9, 0, 0),
+                          'end_datetime': None}
+        _plan, result = self._import(source, date_filter=after_day_five)
+        self.assertEqual(result.total_added, 2)
+        self.assertEqual(self._uuids(), ['uuid-003', 'uuid-004'])
+
+    def test_a_between_filter_takes_a_window(self):
+        source = self._export('all.gpkg',
+                              [('uuid-001', 0), ('uuid-002', 1),
+                               ('uuid-003', 8), ('uuid-004', 9)])
+        window = {'enabled': True,
+                  'type': scan.FILTER_TYPE_BETWEEN,
+                  'start_datetime': datetime(2026, 8, 2, 0, 0, 0),
+                  'end_datetime': datetime(2026, 8, 9, 23, 59, 59)}
+        _plan, result = self._import(source, date_filter=window)
+        self.assertEqual(self._uuids(), ['uuid-002', 'uuid-003'])
+        self.assertEqual(result.total_added, 2)
+
+    def test_a_feature_deleted_on_purpose_does_not_come_back(self):
+        source = self._export('week1.gpkg',
+                              [('uuid-001', 0), ('uuid-002', 1)])
+        self._import(source)
+        connection = sqlite3.connect(self.master)
+        connection.execute('DELETE FROM "1 - FieldNotebook" WHERE UUID = ?',
+                           ('uuid-002',))
+        connection.commit()
+        connection.close()
+        self.assertEqual(self._uuids(), ['uuid-001'])
+
+        _plan, result = self._import(source)
+        self.assertEqual(result.total_added, 0)
+        self.assertEqual(self._uuids(), ['uuid-001'])
+
+    def test_features_without_a_uuid_get_one_and_are_flagged(self):
+        source = self._export('nouuid.gpkg', [('', 0), ('uuid-002', 1)])
+        built, result = self._import(source)
+        self.assertEqual(result.total_added, 2)
+        self.assertTrue(all(self._uuids()))
+        warnings = ' '.join(f.title for f in built.validate().warnings)
+        self.assertIn('have no UUID', warnings)
 
 
 def _suite():

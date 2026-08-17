@@ -141,6 +141,14 @@ def base_sql_type(declared):
     return 'text'
 
 
+def uuid_field_of(layer_spec):
+    """The column that identifies a feature across GeoPackages, or ''."""
+    for name in layer_spec.fields:
+        if fold(name) == 'uuid':
+            return name
+    return ''
+
+
 def is_copyable_field(name):
     """False for fid and QGIS auxiliary-storage columns."""
     lowered = (name or '').lower()

@@ -89,9 +89,17 @@ class LayersPage(QWizardPage):
             source_spec = plan.source_model.layers.get(item.source.table)
             self.table.setItem(row, COLUMN_SOURCE,
                                style.read_only_item(item.source.label))
+            if item.already_present:
+                features_text = '{0:,} new of {1:,}'.format(
+                    item.expected_new, item.feature_count)
+                features_tip = ('{0:,} are already in the destination, matched '
+                                'on UUID'.format(item.already_present))
+            else:
+                features_text = '{0:,}'.format(item.feature_count)
+                features_tip = ''
             self.table.setItem(
                 row, COLUMN_FEATURES,
-                style.read_only_item('{0:,}'.format(item.feature_count)))
+                style.read_only_item(features_text, tooltip=features_tip))
             self.table.setItem(
                 row, COLUMN_GEOMETRY,
                 style.read_only_item(
@@ -174,11 +182,17 @@ class LayersPage(QWizardPage):
             return
         included = plan.included()
         features = sum(item.feature_count for item in included)
+        already = plan.total_already_present()
+        if already:
+            text = ('{0} layer(s) selected, {1:,} new feature(s) '
+                    '({2:,} of {3:,} are already in the destination).').format(
+                len(included), plan.total_expected_new(), already, features)
+        else:
+            text = '{0} layer(s) selected, {1:,} feature(s).'.format(
+                len(included), features)
         needs_review = sum(
             1 for item in included
             if item.layer_match is not None and item.layer_match.needs_review)
-        text = '{0} layer(s) selected, {1:,} feature(s).'.format(
-            len(included), features)
         if needs_review:
             text += '  {0} row(s) worth a check.'.format(needs_review)
         self.summary_label.setText(text)

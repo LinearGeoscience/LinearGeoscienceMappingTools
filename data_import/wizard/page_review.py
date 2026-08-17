@@ -104,12 +104,24 @@ class ReviewPage(QWizardPage):
 
     def _summary_html(self, plan):
         summary = plan.summary()
-        lines = ['<b>{0} feature(s)</b> into <b>{1}</b>, across {2} layer(s):'
-                 .format('{0:,}'.format(summary['features']),
-                         summary['destination'], summary['layers']), '<ul>']
+        already = summary['already_present']
+        headline = ('<b>{0} new feature(s)</b> into <b>{1}</b>, across '
+                    '{2} layer(s)').format(
+            '{0:,}'.format(summary['expected_new']), summary['destination'],
+            summary['layers'])
+        if already:
+            headline += (' — {0:,} of the {1:,} in the source '
+                         'are already there'.format(already,
+                                                    summary['features']))
+        lines = [headline + ':', '<ul>']
         for item in plan.included():
-            lines.append('<li>{0} → <b>{1}</b> ({2:,} features)</li>'.format(
-                item.source.label, item.target_layer, item.feature_count))
+            if item.already_present:
+                detail = '{0:,} new, {1:,} already there'.format(
+                    item.expected_new, item.already_present)
+            else:
+                detail = '{0:,} features'.format(item.feature_count)
+            lines.append('<li>{0} → <b>{1}</b> ({2})</li>'.format(
+                item.source.label, item.target_layer, detail))
         lines.append('</ul>')
         if summary['codes_total']:
             lines.append(

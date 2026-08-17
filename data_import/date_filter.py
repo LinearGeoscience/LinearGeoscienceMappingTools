@@ -12,11 +12,14 @@ from qgis.PyQt.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                  QComboBox, QCheckBox, QDateTimeEdit, QGroupBox,
                                  QLineEdit, QCompleter)
 from qgis.PyQt.QtCore import Qt, QDateTime
-# Filter kinds. Defined here rather than imported: this widget is the only
-# thing that produces them and execute.py the only thing that reads them.
-FILTER_TYPE_AFTER = "after_date_time"
-FILTER_TYPE_BEFORE = "before_date_time"
-FILTER_TYPE_BETWEEN = "between_dates"
+# The filter kinds live in scan.py with the expression builder that consumes
+# them, so the pure layer can honour the same filter the write does.
+try:
+    from .scan import (FILTER_TYPE_AFTER, FILTER_TYPE_BEFORE,
+                       FILTER_TYPE_BETWEEN)
+except ImportError:  # flat execution inside QGIS
+    from scan import (FILTER_TYPE_AFTER, FILTER_TYPE_BEFORE,
+                      FILTER_TYPE_BETWEEN)
 
 
 class EnhancedTimezoneSelector(QWidget):

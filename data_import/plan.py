@@ -18,10 +18,10 @@ to leave the destination's forms and styling quietly broken.
 from collections import OrderedDict
 
 try:
-    from .domain import fold
+    from .domain import fold, uuid_field_of
     from . import match_fields, match_layers, match_values
 except ImportError:  # flat execution / pure test loader
-    from domain import fold
+    from domain import fold, uuid_field_of
     import match_fields
     import match_layers
     import match_values
@@ -95,6 +95,13 @@ class LayerImport(object):
     def __init__(self, source, target_layer, field_plan=None,
                  resolutions=None, include=True, feature_count=0,
                  layer_match=None):
+        # Filled by build_plan when both ends can be counted. Appending to a
+        # master that already holds most of this file is the common case, and
+        # "1,653 features" is a misleading thing to show when 1,600 of them are
+        # already there.
+        self.already_present = 0
+        self.without_uuid = 0
+        self.new_estimate = None
         self.source = source                  # SourceRef
         self.target_layer = target_layer      # destination table name
         self.field_plan = field_plan          # match_fields.LayerFieldPlan
@@ -150,6 +157,12 @@ class LayerImport(object):
 
     def value_counts_by_status(self):
         return match_values.summarise(list(self.all_resolutions()))
+
+    @property
+    def expected_new(self):
+        """Features expected to land. None when it could not be worked out."""
+        return (self.feature_count if self.new_estimate is None
+                else self.new_estimate)
 
     def __repr__(self):
         return 'LayerImport({0!r} -> {1!r}, {2} features)'.format(
@@ -249,6 +262,15 @@ class ImportPlan(object):
 
     def total_features(self):
         return sum(item.feature_count for item in self.included())
+
+    def total_expected_new(self):
+        return sum(item.expected_new for item in self.included())
+
+    def total_already_present(self):
+        return sum(item.already_present for item in self.included())
+
+    def total_without_uuid(self):
+        return sum(item.without_uuid for item in self.included())
 
     def new_codes(self):
         codes = OrderedDict()
@@ -428,6 +450,32 @@ class ImportPlan(object):
                     '{0} is {1}; the destination is {2}.'.format(
                         label, source_crs, destination_crs), layer=label)
 
+        for item in included:
+            label = item.source.label
+            if item.new_estimate is not None and item.already_present:
+                if item.new_estimate == 0:
+                    report.add(
+                        WARNING,
+                        'Nothing new in {0}'.format(label),
+                        'All {0:,} features are already in the destination, '
+                        'matched on UUID. Nothing will be added.'.format(
+                            item.already_present), layer=label)
+                else:
+                    report.add(
+                        NOTE, '{0}: {1:,} new, {2:,} already there'.format(
+                            label, item.new_estimate, item.already_present),
+                        'Existing features are matched on UUID and skipped.',
+                        layer=label)
+            if item.without_uuid:
+                report.add(
+                    WARNING,
+                    '{0:,} feature(s) in {1} have no UUID'.format(
+                        item.without_uuid, label),
+                    'They will be given new ones, so importing this same file '
+                    'again would add them a second time. Everything with a '
+                    'UUID is still matched and skipped as normal.',
+                    layer=label)
+
         new_codes = self.new_codes()
         if new_codes:
             report.add(
@@ -449,6 +497,9 @@ class ImportPlan(object):
         return {
             'layers': len(self.included()),
             'features': self.total_features(),
+            'expected_new': self.total_expected_new(),
+            'already_present': self.total_already_present(),
+            'without_uuid': self.total_without_uuid(),
             'codes_total': sum(totals.values()),
             'codes_auto': auto,
             'codes_by_status': totals,
@@ -474,7 +525,8 @@ def _same_file(left, right):
 
 def build_plan(source_model, target_model, destination, value_counts_for,
                source_describe_for=None, profile=None, options=None,
-               source_refs=None):
+               source_refs=None, source_uuids_for=None,
+               destination_uuids_for=None):
     """Auto-build a complete plan. The wizard then edits it in place.
 
     `value_counts_for(source_table, fields)` returns {field: ValueCounts} —
@@ -484,6 +536,10 @@ def build_plan(source_model, target_model, destination, value_counts_for,
     `source_describe_for(table_name)` returns a callable code -> description
     using the SOURCE's own lookup table of that name, or None when the source
     has no code tables. That is what powers rename detection.
+
+    `source_uuids_for(table)` and `destination_uuids_for(layer)` return sets of
+    UUIDs. Optional, and only used to say up front how much of an append is
+    actually new — the writer does its own matching regardless.
     """
     profile = profile or {}
     seeded_layers = profile.get('layers') or {}
@@ -511,6 +567,9 @@ def build_plan(source_model, target_model, destination, value_counts_for,
         target_spec = target_model.layers.get(layer_match.target_name)
         if target_spec is None:
             continue
+
+        _estimate_new(item, source_spec, target_spec, source_uuids_for,
+                      destination_uuids_for)
 
         item.field_plan = match_fields.match_fields(
             source_spec, target_spec,
@@ -540,3 +599,22 @@ def build_plan(source_model, target_model, destination, value_counts_for,
 
     return ImportPlan(source_model, target_model, destination, layer_imports,
                       options or ImportOptions())
+
+
+def _estimate_new(item, source_spec, target_spec, source_uuids_for,
+                  destination_uuids_for):
+    """Work out how much of this layer is genuinely new, before writing."""
+    if source_uuids_for is None or destination_uuids_for is None:
+        return
+    if not uuid_field_of(source_spec) or not uuid_field_of(target_spec):
+        return
+    try:
+        source_uuids, blank = source_uuids_for(item.source.table)
+        existing = destination_uuids_for(item.target_layer)
+    except Exception:
+        return
+    if source_uuids is None or existing is None:
+        return
+    item.without_uuid = blank
+    item.already_present = len(source_uuids & existing)
+    item.new_estimate = len(source_uuids - existing) + blank

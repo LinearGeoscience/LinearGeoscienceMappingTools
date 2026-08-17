@@ -47,16 +47,14 @@ from qgis.core import (
 )
 
 try:
-    from .domain import fold, is_blank, normalise
+    from .domain import fold, is_blank, normalise, uuid_field_of
     from . import derive
-    from .date_filter import (FILTER_TYPE_AFTER, FILTER_TYPE_BEFORE,
-                              FILTER_TYPE_BETWEEN)
+    from .scan import date_filter_expression
     from .metadata import MetadataManager, UUIDTracker
 except ImportError:  # flat execution inside QGIS
-    from domain import fold, is_blank, normalise
+    from domain import fold, is_blank, normalise, uuid_field_of
     import derive
-    from date_filter import (FILTER_TYPE_AFTER, FILTER_TYPE_BEFORE,
-                             FILTER_TYPE_BETWEEN)
+    from scan import date_filter_expression
     from metadata import MetadataManager, UUIDTracker
 
 # The backup helper is shared with the mining importer rather than duplicated:
@@ -218,45 +216,6 @@ class SourceSnapshot(object):
         if self.fids is not None:
             return len(self.fids)
         return 0
-
-
-DATE_FIELD_NAMES = ('date&time', 'datetime', 'date_time', 'date', 'timestamp',
-                    'surveydate', 'created')
-
-
-def date_filter_expression(config, field_names):
-    """A QGIS filter expression from the date-filter widget's config, or ''.
-
-    The field is chosen by name rather than by declared type, because a source
-    that has been through a shapefile round-trip carries its date as text and
-    would otherwise be missed.
-    """
-    if not config or not config.get('enabled'):
-        return ''
-    field = ''
-    lowered = {name.lower(): name for name in field_names}
-    for candidate in DATE_FIELD_NAMES:
-        if candidate in lowered:
-            field = lowered[candidate]
-            break
-    if not field:
-        return ''
-
-    kind = config.get('type')
-    start = config.get('start_datetime')
-    end = config.get('end_datetime')
-
-    def stamp(value):
-        return value.strftime('%Y-%m-%d %H:%M:%S')
-
-    if kind == FILTER_TYPE_AFTER and start:
-        return '"{0}" >= \'{1}\''.format(field, stamp(start))
-    if kind == FILTER_TYPE_BEFORE and start:
-        return '"{0}" <= \'{1}\''.format(field, stamp(start))
-    if kind == FILTER_TYPE_BETWEEN and start and end:
-        return '"{0}" >= \'{1}\' AND "{0}" <= \'{2}\''.format(
-            field, stamp(start), stamp(end))
-    return ''
 
 
 def _attributes_by_name(feature, names):
@@ -436,7 +395,7 @@ def _import_layer(gpkg_path, plan, item, snapshot, batch_id, progress,
     comment_fields = item.comment_fields()
     comments_target = _comments_field(target_spec)
 
-    uuid_field = _uuid_field(target_spec)
+    uuid_field = uuid_field_of(target_spec)
     existing_uuids = set()
     if plan.options.skip_duplicate_uuids and uuid_field:
         existing_uuids = _existing_uuids(layer, uuid_field)
@@ -769,13 +728,6 @@ def _build_transform(snapshot, layer, plan, item, transform_context):
         return None
     context = transform_context or QgsProject.instance().transformContext()
     return QgsCoordinateTransform(source_crs, target_crs, context)
-
-
-def _uuid_field(target_spec):
-    for name in target_spec.fields:
-        if fold(name) == 'uuid':
-            return name
-    return ''
 
 
 def _comments_field(target_spec):
