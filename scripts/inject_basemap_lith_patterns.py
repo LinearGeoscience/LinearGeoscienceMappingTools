@@ -115,9 +115,18 @@ BLANK = "blank"
 # for a sweep with the LGS_INK_BASE environment variable rather than an argv
 # flag - calibrate_lith_strokes.py and the test both import this module and
 # would never see argv.
-INK_BASE = float(os.environ.get("LGS_INK_BASE", "3.6"))
+INK_BASE = float(os.environ.get("LGS_INK_BASE", "2.2"))
 REF_INK_PCT = 8.0
-INK_TARGET_MIN, INK_TARGET_MAX = 2.0, 3.6
+
+# The floor MOVES WITH THE DIAL, and it has to. With a fixed 2.0 floor most of
+# the heavy tiles sat on it already, so turning INK_BASE down softened only the
+# sparse tiles and the dial appeared to stop working - which is exactly what it
+# looked like on the first review sheet.
+#
+# 1.35 is the hard end: below that a texture stops being faint and starts being
+# absent, and the dense tiles are the ones that get there first.
+INK_TARGET_MIN = max(1.35, INK_BASE * 0.55)
+INK_TARGET_MAX = INK_BASE
 
 # Which WAY to move is decided against this fixed reference, NOT against the
 # per-texture target, and that separation is the whole point.
@@ -139,7 +148,7 @@ DIRECTION_REFERENCE = 4.5
 # bars exist because the target is now variable: the margin scales the check
 # with the target, the floor keeps it meaningful if the target goes very low.
 WEAK_INK_MARGIN = 0.85
-WEAK_INK_FLOOR = 1.6
+WEAK_INK_FLOOR = 1.15
 
 # How much of the fill's chroma the texture ink is allowed to carry. Keeps a
 # near-white fill from spawning a saturated ink - see tint().
@@ -157,7 +166,14 @@ PALE_INKS = ("plagioclase", "talc")
 # A texture only needs to be legible, not to pass text-contrast rules, so
 # mineral pairs are held to a gentler bar than the auto tint. Pushing every
 # mineral pair to 4.5 forced fills right out of the muted palette.
-MINERAL_CONTRAST = 3.2
+#
+# This follows the dial too, or the 93 codes carrying a mineral signal would be
+# the only hard thing left on a softened map - at INK_BASE 1.85 a fixed 3.2
+# would make them nearly twice the weight of everything around them. The
+# multiplier is set so the value is EXACTLY 3.2 at INK_BASE 3.6, which is where
+# that number was chosen; the 2.4 floor keeps a mineral ink the strongest mark
+# on the page, because it is the one carrying diagnostic mineralogy.
+MINERAL_CONTRAST = max(2.4, INK_BASE * 0.889)
 
 # If the fill's hue is already within this of the mineral ink's, the fill is
 # ALREADY saying what the ink would say - iron formation drawn in iron-oxide
