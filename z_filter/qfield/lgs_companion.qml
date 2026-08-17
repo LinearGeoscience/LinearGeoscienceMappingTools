@@ -248,8 +248,20 @@ Item {
 
   property var mainWindow: iface.mainWindow()
 
+  // mirror of lgs_layers.CANONICAL_LAYERS — same names, same ORDER. allTargets
+  // derives each layer's lgs_z_orig_<i> key from its index here, so reordering
+  // this list re-points stored baselines. Linework and Overlay swapped ordinals
+  // in Aug 2026 so lines draw above Overlay's washes.
   readonly property var layerNames: [
-    '1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
+    '1 - FieldNotebook', '2 - Linework', '3 - Overlay', '4 - Basemap']
+  // Pre-swap spelling for each renamed layer. A project GeoPackage created
+  // before the swap keeps the old table names even when exported by a current
+  // plugin, so every lookup falls back through here. QML cannot enumerate the
+  // project's layers, hence an explicit alias rather than a name sweep.
+  readonly property var legacyLayerNames: ({
+    '2 - Linework': '3 - Linework',
+    '3 - Overlay': '2 - Overlay'
+  })
   readonly property string elevationField: 'Elevation'
   readonly property var tolPresets: [1, 2.5, 5, 10]
   // mirror of z_filter/expression.py::FLAT_SPAN — range features flatter
@@ -714,7 +726,24 @@ Item {
       if (matches && matches.length > 0)
         return matches[0]
     } catch (error) {}
+    // Fall back to the pre-swap ordinal so pre-Aug-2026 project GeoPackages
+    // still resolve (see legacyLayerNames).
+    const legacy = legacyLayerNames[name]
+    if (legacy !== undefined) {
+      try {
+        const old = qgisProject.mapLayersByName(legacy)
+        if (old && old.length > 0)
+          return old[0]
+      } catch (error) {}
+    }
     return null
+  }
+
+  // "3 - Overlay" / "2 - Overlay" -> "Overlay". Mirror of lgs_layers.base_name,
+  // used to key cross-layer maps by identity rather than by ordinal.
+  function baseName(name) {
+    const match = /^\s*[A-Za-z]?\d+\s*[-_ ]\s*(.+?)\s*$/.exec(String(name || ''))
+    return match !== null ? match[1] : String(name || '').trim()
   }
 
   function slugName(name) {
@@ -3011,7 +3040,7 @@ Item {
 
   // Priority order for the tap-to-pick layer lock; mirror of the LGS
   // template polygon layers (singlepart POLYGON, fid PK, UUID field).
-  readonly property var clipLayerNames: ['2 - Overlay', '4 - Basemap']
+  readonly property var clipLayerNames: ['3 - Overlay', '4 - Basemap']
   // mirror of detect_uuid_field (clipper_dockwidget.py)
   readonly property var uuidPatterns: [
     'uuid', 'guid', 'globalid', 'unique_id', 'uniqueid', 'feature_uuid']
@@ -6609,7 +6638,7 @@ Item {
 
   function candidateReverseLayers() {
     // Active layer first — reverse what you're working on — then the
-    // standard LGS layers that hold lines (normally '3 - Linework').
+    // standard LGS layers that hold lines (normally '2 - Linework').
     let layers = []
     try {
       const active = reshapeActiveLayer()
@@ -6954,12 +6983,15 @@ Item {
   }
 
   function copyFieldMapFor(srcLayerName, dstLayerName) {
-    // Declarative cross-layer pair map, keyed 'src>dst'. Pairs are
-    // kept only when both fields exist in the live schemas
-    // (buildCopyPairs), so entries for fields that have not been
-    // injected yet are harmless.
+    // Declarative cross-layer pair map, keyed 'src>dst' by BASE name (no
+    // "N - " ordinal). Keying on identity rather than numbering means the map
+    // survives a layer renumbering and works against pre-swap project
+    // GeoPackages; a miss here degrades silently to the Comments/Confidence
+    // whitelist in buildCopyPairs, which is why it must not depend on ordinals.
+    // Pairs are kept only when both fields exist in the live schemas, so
+    // entries for fields that have not been injected yet are harmless.
     const maps = {
-      '4 - Basemap>1 - FieldNotebook': [
+      'Basemap>FieldNotebook': [
         ['Lithology1', 'Lithology'],
         ['Lithology2', 'Lithology2'],
         ['Lith1Mineral1', 'Mineral'],
@@ -6975,7 +7007,7 @@ Item {
       // ValueRelation-filtered by TypeLith1 and the notebook has no
       // TypeLith source — a copied code could contradict the target's
       // TypeLith1.
-      '1 - FieldNotebook>4 - Basemap': [
+      'FieldNotebook>Basemap': [
         ['Mineral', 'Lith1Mineral1'],
         ['Mineral2', 'Lith1Mineral2'],
         ['Mineral3', 'Lith1Mineral3'],
@@ -6988,18 +7020,18 @@ Item {
       // Linework's single Percent was retired for per-mineral
       // percentages (inject_linework_mineral_pcts.py); Overlay keeps
       // one Percent, so it pairs with Mineral 1's percentage.
-      '2 - Overlay>3 - Linework': [
+      'Overlay>Linework': [
         ['Mineral1', 'Mineral1'],
         ['Percent', 'Mineral1Pct'],
         ['Weight', 'Weight']
       ],
-      '3 - Linework>2 - Overlay': [
+      'Linework>Overlay': [
         ['Mineral1', 'Mineral1'],
         ['Mineral1Pct', 'Percent'],
         ['Weight', 'Weight']
       ]
     }
-    const key = String(srcLayerName) + '>' + String(dstLayerName)
+    const key = baseName(srcLayerName) + '>' + baseName(dstLayerName)
     return maps[key] !== undefined ? maps[key] : null
   }
 
@@ -7055,10 +7087,12 @@ Item {
 
   function candidateCopyLayers() {
     // Points and lines first — findHitInLayers returns the first layer
-    // with a hit, so polygons would otherwise swallow every tap.
+    // with a hit, so polygons would otherwise swallow every tap. This order is
+    // by GEOMETRY, not by the layer numbering, and happens to coincide with it
+    // now that Linework is 2.
     let layers = []
-    for (const name of ['1 - FieldNotebook', '3 - Linework',
-                        '2 - Overlay', '4 - Basemap']) {
+    for (const name of ['1 - FieldNotebook', '2 - Linework',
+                        '3 - Overlay', '4 - Basemap']) {
       const layer = layerByName(name)
       if (layer !== null)
         layers.push(layer)

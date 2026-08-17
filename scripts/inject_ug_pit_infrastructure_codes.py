@@ -4,12 +4,12 @@ The Dec 2023 scans annotate mining context everywhere: sump, pillar
 ("on hold due to pillar"), stopes, backfill, drives.  Pit mapping needs
 the bench geometry equivalents.  User-approved sets (2026-08-15):
 
-2 - Overlay (Infrastructure):
+3 - Overlay (Infrastructure):
     Stope Outline (line-only, muted maroon - clone of Pit Outline)
     Pillar / Sump / Backfilled / Underground Workings /
     Stockpile / ROM Pad (flat washes - clones of Laydown, house alpha)
 
-3 - Linework (Infrastructure), all grey Track clones:
+2 - Linework (Infrastructure), all grey Track clones:
     Decline (long dash) . Drive Outline (solid) . Vent Raise (thin)
     Bench Crest (solid) . Bench Toe (dash) . Ramp (wider)
     Haul Road (widest)
@@ -31,8 +31,8 @@ import uuid
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-OV_LAYER = "2 - Overlay"
-LW_LAYER = "3 - Linework"
+OV_LAYER = "3 - Overlay"
+LW_LAYER = "2 - Linework"
 
 OV_FIRST_FID = 159     # max OverlayCodes fid = 158
 OV_FIRST_SYMBOL = 159  # max Overlay symbol = 158

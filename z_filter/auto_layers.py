@@ -10,7 +10,7 @@ from qgis.core import Qgis, QgsProject, QgsWkbTypes
 from qgis.PyQt.QtCore import QVariant
 
 from . import detect
-from .expression import Z_LAYERS, spec_field_names
+from .expression import is_canonical, spec_field_names
 
 
 def _geometry_class(layer):
@@ -58,7 +58,9 @@ def detect_extra_layers(project=None, exclude_ids=()):
     for layer in project.mapLayers().values():
         if layer.type() != Qgis.LayerType.Vector:
             continue
-        if layer.id() in exclude or layer.name() in Z_LAYERS:
+        # is_canonical rather than `in Z_LAYERS` so the four mapping layers stay
+        # excluded even when they carry pre-swap numbering.
+        if layer.id() in exclude or is_canonical(layer.name()):
             continue
         if layer.providerType() == 'memory':
             continue  # won't survive a QField export

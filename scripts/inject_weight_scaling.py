@@ -21,8 +21,8 @@ was never recorded - the Aug 2026 fix: the old ramp mapped 0.5-2 cm to
 1.0, indistinguishable from "unknown". All other categories, and
 features with no width, get factor 1.
 
-Scope: every symbol in the "3 - Linework" renderer; only the Structure zone
-symbols in "2 - Overlay" (infrastructure untouched).
+Scope: every symbol in the "2 - Linework" renderer; only the Structure zone
+symbols in "3 - Overlay" (infrastructure untouched).
 Existing data-defined properties (e.g. the OverlayStrike-driven lineAngle on
 zone hatches) are preserved.
 
@@ -234,8 +234,8 @@ def main():
     con = sqlite3.connect(gpkg)
     cur = con.cursor()
 
-    # 3 - Linework: whole renderer
-    cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name='3 - Linework'")
+    # 2 - Linework: whole renderer
+    cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name='2 - Linework'")
     qml = cur.fetchone()[0]
     rm = re.search(r'<renderer-v2\b.*?</renderer-v2>', qml, re.S)
     if not rm:
@@ -243,12 +243,12 @@ def main():
     stats = Counter()
     new_renderer = inject_into_scope(rm.group(0), stats)
     qml = qml[:rm.start()] + new_renderer + qml[rm.end():]
-    cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='3 - Linework'", (qml,))
+    cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='2 - Linework'", (qml,))
     assert cur.rowcount == 1
-    print("3 - Linework:", dict(stats))
+    print("2 - Linework:", dict(stats))
 
-    # 2 - Overlay: zone symbols only
-    cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name='2 - Overlay'")
+    # 3 - Overlay: zone symbols only
+    cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name='3 - Overlay'")
     qml = cur.fetchone()[0]
     stats = Counter()
     for code in OVERLAY_ZONE_CODES:
@@ -259,9 +259,9 @@ def main():
         s, e = symbol_block(qml, sym)
         qml = qml[:s] + inject_into_scope(qml[s:e], stats,
                                           expr_fn=zone_weight_expression) + qml[e:]
-    print("2 - Overlay zones:", dict(stats))
+    print("3 - Overlay zones:", dict(stats))
 
-    # 2 - Overlay: Intensity scaling on Alteration/Weathering stipples
+    # 3 - Overlay: Intensity scaling on Alteration/Weathering stipples
     stats = Counter()
     cur.execute("SELECT Code FROM OverlayCodes WHERE Type IN ('Alteration','Weathering')")
     stipple_codes = [r[0] for r in cur.fetchall()]
@@ -275,14 +275,14 @@ def main():
         s, e = symbol_block(qml, sym)
         qml = qml[:s] + inject_into_scope(qml[s:e], stats, INTENSITY_PROPS,
                                           intensity_expression) + qml[e:]
-    cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='2 - Overlay'", (qml,))
+    cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='3 - Overlay'", (qml,))
     assert cur.rowcount == 1
-    print(f"2 - Overlay intensity ({len(stipple_codes)} stipple symbols):", dict(stats))
+    print(f"3 - Overlay intensity ({len(stipple_codes)} stipple symbols):", dict(stats))
 
     con.commit()
     cur.execute("PRAGMA integrity_check")
     print("integrity_check:", cur.fetchone()[0])
-    for layer in ["3 - Linework", "2 - Overlay"]:
+    for layer in ["2 - Linework", "3 - Overlay"]:
         cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?", (layer,))
         ET.fromstring(cur.fetchone()[0])
         print(f"QML parses: {layer}")

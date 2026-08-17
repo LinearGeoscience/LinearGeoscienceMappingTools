@@ -20,6 +20,11 @@ try:
 except ImportError:
     from script_adddata.utils import detect_uuid_field
 
+try:
+    from ..lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+except ImportError:
+    from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+
 
 class LayerScanSnapshot:
     """Thread-safe stand-in for the QgsVectorLayer surface analyze_layer
@@ -86,7 +91,7 @@ LGS_FIELDS = ['lgs_version', 'lgs_last_modified', 'lgs_author', 'lgs_editor',
 # geometry_axis 'x'/'y' enables a from-geometry fallback when the source
 # attribute is empty, so every point still gets hardcoded coordinates
 LAYER_CONFIGS = {
-    '1 - FieldNotebook': {
+    FIELDNOTEBOOK: {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [
             ('Easting', 'MappedEasting', 'x'),
@@ -100,19 +105,19 @@ LAYER_CONFIGS = {
         },
         'inject_lgs_fields': True,
     },
-    '2 - Overlay': {
+    LINEWORK: {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
         'inject_lgs_fields': True,
     },
-    '3 - Linework': {
+    OVERLAY: {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
         'inject_lgs_fields': True,
     },
-    '4 - Basemap': {
+    BASEMAP: {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [
             ('Lithology1', 'MappedLithology1', None),

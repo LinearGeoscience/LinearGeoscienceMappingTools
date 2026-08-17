@@ -89,9 +89,9 @@ def test_carry_attrs():
 def test_stamp_accepted_split_and_copy():
     child = payload("c1", Rock="")
     op = rc.Op(uuid="c1", op=rc.OP_INSERT, payload=child)
-    plan = rc.ReconcilePlan(layer="3 - Linework")
+    plan = rc.ReconcilePlan(layer="2 - Linework")
     plan.clean_inserts = [op]
-    plan.splits = [SplitGroup("3 - Linework", "p1", ["c1"], 0.95)]
+    plan.splits = [SplitGroup("2 - Linework", "p1", ["c1"], 0.95)]
     parents = {"p1": payload("p1", Rock="granite")}
 
     stamp_accepted(plan, parents)
@@ -103,9 +103,9 @@ def test_stamp_accepted_split_and_copy():
     # Rejected group leaves everything alone.
     child2 = payload("c2", Rock="")
     op2 = rc.Op(uuid="c2", op=rc.OP_INSERT, payload=child2)
-    plan2 = rc.ReconcilePlan(layer="3 - Linework")
+    plan2 = rc.ReconcilePlan(layer="2 - Linework")
     plan2.clean_inserts = [op2]
-    g = SplitGroup("3 - Linework", "p2", ["c2"], 0.95, accepted=False)
+    g = SplitGroup("2 - Linework", "p2", ["c2"], 0.95, accepted=False)
     plan2.splits = [g]
     stamp_accepted(plan2, {"p2": payload("p2", Rock="schist")})
     check(op2.lgs_parent_uuid is None, "rejected split does not stamp")
@@ -115,9 +115,9 @@ def test_stamp_accepted_split_and_copy():
 def test_stamp_accepted_merge():
     survivor = payload("s1", Rock="")
     op = rc.Op(uuid="s1", op=rc.OP_INSERT, payload=survivor)
-    plan = rc.ReconcilePlan(layer="2 - Overlay")
+    plan = rc.ReconcilePlan(layer="3 - Overlay")
     plan.clean_inserts = [op]
-    plan.merges = [MergeGroup("2 - Overlay", "s1", ["p1", "p2"], 0.9)]
+    plan.merges = [MergeGroup("3 - Overlay", "s1", ["p1", "p2"], 0.9)]
     parents = {"p1": payload("p1", Rock="granite"),
                "p2": payload("p2", Rock="basalt")}
     stamp_accepted(plan, parents)

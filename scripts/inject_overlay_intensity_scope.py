@@ -3,7 +3,7 @@
 Sibling of inject_overlay_weight_scope.py. Intensity (1-5) drives the
 Alteration/Weathering stipple symbology, but Weathering renders at the
 authored (Intensity 3 / NULL) look by convention - only Alteration
-features actually record an intensity. Two fixes to "2 - Overlay":
+features actually record an intensity. Two fixes to "3 - Overlay":
 
     1. Constraint: hard not-null on Intensity -> expression constraint,
        required only when Type = 'Alteration'.
@@ -26,7 +26,7 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 
 CONSTRAINT_TAG = ('<constraint constraints="4" notnull_strength="0" '
                   'field="Intensity" unique_strength="0" exp_strength="1"/>')

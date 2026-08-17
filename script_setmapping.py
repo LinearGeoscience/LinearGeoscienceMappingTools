@@ -19,6 +19,11 @@ try:
 except ImportError:
     from layer_select import layer_candidates, populate_layer_combo
 
+try:
+    from .lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+except ImportError:
+    from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+
 
 def get_over_point_placement():
     """OverPoint label placement (Qgis.LabelPlacement; QGIS 3.26+ and 4.x)."""
@@ -71,10 +76,11 @@ class ModernLayerConfigDialog(QDialog):
         formLayout.setSpacing(10)
 
         self.layerCombos = {}
+        # Row order follows the layer tree (Linework now sits above Overlay).
         layerTypes = {
             "FieldNotebook": "Field Notebook Layer:",
-            "Overlay": "Overlay Layer:",
             "Linework": "Linework Layer:",
+            "Overlay": "Overlay Layer:",
             "Basemap": "Basemap Layer:"
         }
 
@@ -169,11 +175,14 @@ class ModernLayerConfigDialog(QDialog):
 
     def populateLayerDropdowns(self):
         """Populate all layer dropdowns and auto-select the best name match."""
+        # find_best_match scores an ordinal-insensitive hit at 95, so these
+        # still bind a project built from a pre-Aug-2026 template where
+        # Linework/Overlay carried the other numbers.
         target_names = {
-            "FieldNotebook": "1 - FieldNotebook",
-            "Overlay": "2 - Overlay",
-            "Linework": "3 - Linework",
-            "Basemap": "4 - Basemap"
+            "FieldNotebook": FIELDNOTEBOOK,
+            "Overlay": OVERLAY,
+            "Linework": LINEWORK,
+            "Basemap": BASEMAP,
         }
 
         layers = layer_candidates()

@@ -12,6 +12,11 @@ import os
 from qgis.core import QgsProject, QgsMessageLog, Qgis
 
 try:
+    from .lgs_layers import base_name
+except ImportError:
+    from lgs_layers import base_name
+
+try:
     from thefuzz import fuzz
     HAS_FUZZY = True
 except ImportError:
@@ -64,20 +69,30 @@ def layer_display_name(layer, max_tail_chars=50):
 def find_best_match(target_name, layer_names):
     """Find the index of the best name match for target_name.
 
-    Scoring: exact (100) > target substring of name (90) > name substring of
-    target (80) > fuzzy ratio (if thefuzz/fuzzywuzzy available, threshold 60).
+    Scoring: exact (100) > same layer ignoring the "N - " ordinal (95) >
+    target substring of name (90) > name substring of target (80) > fuzzy ratio
+    (if thefuzz/fuzzywuzzy available, threshold 60).
     Returns (index, score) or (None, 0).
+
+    The 95 tier is what lets a project built from a pre-Aug-2026 template still
+    bind: Linework and Overlay swapped ordinals, so a "2 - Linework" target has
+    to match a "3 - Linework" layer. Without it the match would fall through to
+    the fuzzy tier, where "2 - Linework" also scores ~90 against "2 - Overlay"
+    — close enough to pick the wrong layer.
     """
     if not target_name:
         return None, 0
     target_lower = target_name.lower()
+    target_base = base_name(target_name).casefold()
     best_index, best_score = None, 0
 
     for i, name in enumerate(layer_names):
         name_lower = name.lower()
         if target_lower == name_lower:
             return i, 100
-        if target_lower in name_lower:
+        if target_base and base_name(name).casefold() == target_base:
+            score = 95
+        elif target_lower in name_lower:
             score = 90
         elif name_lower in target_lower:
             score = 80

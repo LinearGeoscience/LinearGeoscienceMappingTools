@@ -129,7 +129,7 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_opacity_layers_data_line(self):
         names = ['Ortho 2024', 'Say "hi"']
-        vectors = ['2 - Overlay', 'Pit "A" walls']
+        vectors = ['3 - Overlay', 'Pit "A" walls']
         _path, text = self._write(opacity_layers=names, vector_layers=vectors)
         data = _data_values(text)
         self.assertEqual(data['opacitylayers'], json.dumps(names))

@@ -36,6 +36,11 @@ except ImportError:
 
 from .controller import ZFilterController, suspended_filters
 from .expression import DEFAULT_TOLERANCE, ELEVATION_FIELD, format_number
+
+try:
+    from ..lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+except ImportError:
+    from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
 from .ladder import LevelLadder
 from .levels import (
     DEFAULT_STEP,
@@ -61,12 +66,14 @@ _CHIP_STYLE = (
 class ZFilterDockWidget(QDockWidget):
     """Dock panel driving the elevation (Z) filter across the mapping layers."""
 
-    # (canonical layer name, geometry to offer in the combo)
+    # (canonical layer name, geometry to offer in the combo). Row order follows
+    # the layer tree, so it tracks CANONICAL_LAYERS rather than being spelled
+    # out again — Linework and Overlay swapped numbers in Aug 2026.
     LAYER_SLOTS = [
-        ('1 - FieldNotebook', Qgis.GeometryType.Point),
-        ('2 - Overlay', Qgis.GeometryType.Polygon),
-        ('3 - Linework', Qgis.GeometryType.Line),
-        ('4 - Basemap', Qgis.GeometryType.Polygon),
+        (FIELDNOTEBOOK, Qgis.GeometryType.Point),
+        (LINEWORK, Qgis.GeometryType.Line),
+        (OVERLAY, Qgis.GeometryType.Polygon),
+        (BASEMAP, Qgis.GeometryType.Polygon),
     ]
 
     def __init__(self, iface, parent=None):

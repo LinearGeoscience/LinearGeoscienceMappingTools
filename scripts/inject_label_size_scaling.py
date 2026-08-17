@@ -4,10 +4,10 @@ Big features carried the same label size as hairline veins and sliver
 polygons, so busy maps read wrong.  Injects a data-defined SIZE
 expression into the simple-labeling settings of three layers:
 
-    3 - Linework   base * Weight factor * recorded-width factor
+    2 - Linework   base * Weight factor * recorded-width factor
                    (width factor mirrors the stroke ramp, dampened -
                    same detail-scope gate as inject_weight_scaling)
-    2 - Overlay    base * Weight factor * on-screen-extent factor
+    3 - Overlay    base * Weight factor * on-screen-extent factor
     4 - Basemap    base * on-screen-extent factor
 
 The extent factor is screen-relative (sqrt($area)*1000/@map_scale =
@@ -60,8 +60,8 @@ EXTENT_F = (
 )
 
 LAYER_FACTORS = {
-    "3 - Linework": [WEIGHT_F, WIDTH_F],
-    "2 - Overlay": [WEIGHT_F, EXTENT_F],
+    "2 - Linework": [WEIGHT_F, WIDTH_F],
+    "3 - Overlay": [WEIGHT_F, EXTENT_F],
     "4 - Basemap": [EXTENT_F],
 }
 

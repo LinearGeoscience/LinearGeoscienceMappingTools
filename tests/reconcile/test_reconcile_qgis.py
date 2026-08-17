@@ -118,7 +118,7 @@ def _master_by_uuid(gpkg, name=LAYER):
 
 
 def _find_polygon_layer(gpkg):
-    for name in ["2 - Overlay", "3 - Linework", "4 - Basemap"]:
+    for name in ["3 - Overlay", "2 - Linework", "4 - Basemap"]:
         lyr = QgsVectorLayer(f"{gpkg}|layername={name}", name, "ogr")
         if lyr.isValid() and QgsWkbTypes.geometryType(lyr.wkbType()) == \
                 Qgis.GeometryType.Polygon:

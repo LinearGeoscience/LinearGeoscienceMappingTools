@@ -47,7 +47,7 @@ import sqlite3
 import sys
 import xml.etree.ElementTree as ET
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 
 U = 37.5  # callout_dist_for_scale(5000) = 0.0075 * 5000 map units, mirrors FieldNotebook
 PLACEMENT_ATTRS = {

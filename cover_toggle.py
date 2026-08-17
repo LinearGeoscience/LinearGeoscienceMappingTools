@@ -16,20 +16,20 @@ from .z_filter.expression import (
     ENTRY_ORIG_SUBSET_PREFIX,
     SCOPE,
     VAR_COVER_HIDDEN,
-    Z_LAYERS,
     apply_cover_to_subset,
     combine,
     strip_cover_subset,
     strip_z_subset_any,
 )
+from .lgs_layers import BASEMAP, find_layer
 
-BASEMAP_NAME = Z_LAYERS[3]  # '4 - Basemap'
+BASEMAP_NAME = BASEMAP
 
 
 def get_basemap_layer(project=None):
-    project = project or QgsProject.instance()
-    matches = project.mapLayersByName(BASEMAP_NAME)
-    return matches[0] if matches else None
+    # find_layer rather than mapLayersByName: tolerates the pre-Aug-2026
+    # numbering so older projects still resolve.
+    return find_layer(project or QgsProject.instance(), BASEMAP)
 
 
 def _split_live_subset(project, layer):

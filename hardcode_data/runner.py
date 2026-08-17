@@ -26,6 +26,11 @@ except ImportError:  # standalone
     from analysis import (analyze_layer, apply_layer_report, LAYER_CONFIGS,
                           MODE_EMPTY_ONLY, SOURCE_UUID)
 
+try:
+    from ..lgs_layers import lookup as layer_config_lookup
+except ImportError:
+    from lgs_layers import lookup as layer_config_lookup
+
 try:  # pragma: no cover - only inside QGIS
     from qgis.core import QgsVectorLayer
 except Exception:  # pragma: no cover
@@ -87,7 +92,9 @@ def hardcode_geopackage(template_gpkg: str, *, project_id: str = "",
         if progress_cb:
             progress_cb(int(i / max(len(layer_names), 1) * 100),
                         f"Preparing {name}")
-        config = LAYER_CONFIGS.get(name)
+        # Tolerant lookup: callers may pass names from a pre-Aug-2026 template
+        # where Linework/Overlay carried the other ordinal.
+        config = layer_config_lookup(LAYER_CONFIGS, name)
         if config is None:
             continue
 

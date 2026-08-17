@@ -21,7 +21,7 @@ function extractFunction(name) {
 }
 
 const code = ['isEmptyValue', 'valueIsAmbiguous', 'copyFieldIsSkipped',
-              'copyFieldMapFor', 'buildCopyPairs']
+              'baseName', 'copyFieldMapFor', 'buildCopyPairs']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
@@ -180,7 +180,7 @@ check('FieldNotebook->Basemap has NO Lithology pair (TypeLith filter)',
 // --- unmapped cross-layer pair falls back to the whitelist --------------
 const ovNames = ['fid', 'Type', 'SubType1', 'Mineral1', 'Percent',
                  'Weight', 'Comments', 'Confidence', 'UUID']
-const ovFn = buildCopyPairs(ovNames, fnDst, '2 - Overlay',
+const ovFn = buildCopyPairs(ovNames, fnDst, '3 - Overlay',
                             '1 - FieldNotebook')
 check('unmapped pair -> whitelist only',
   ovFn.length === 2 && hasPair(ovFn, 'Comments', 'Comments') &&
@@ -193,19 +193,28 @@ check('unmapped pair -> whitelist only',
 const lwNames = ['fid', 'Type', 'Category', 'Mineral1', 'Mineral2',
                  'Mineral1Pct', 'Mineral2Pct', 'Weight', 'Comments',
                  'Confidence', 'UUID']
-const ovLw = buildCopyPairs(ovNames, lwNames, '2 - Overlay', '3 - Linework')
+const ovLw = buildCopyPairs(ovNames, lwNames, '3 - Overlay', '2 - Linework')
 check('Overlay->Linework maps mineral/percent/weight',
   hasPair(ovLw, 'Mineral1', 'Mineral1') &&
   hasPair(ovLw, 'Percent', 'Mineral1Pct') &&
   hasPair(ovLw, 'Weight', 'Weight') &&
   hasPair(ovLw, 'Comments', 'Comments'),
   pairString(ovLw))
-const lwOv = buildCopyPairs(lwNames, ovNames, '3 - Linework', '2 - Overlay')
+const lwOv = buildCopyPairs(lwNames, ovNames, '2 - Linework', '3 - Overlay')
 check('Linework->Overlay maps Mineral1Pct back to Percent',
   hasPair(lwOv, 'Mineral1', 'Mineral1') &&
   hasPair(lwOv, 'Mineral1Pct', 'Percent') &&
   !lwOv.some(function(p) { return p.from === 'Mineral2Pct' }),
   pairString(lwOv))
+
+// --- pre-swap ordinals still map ------------------------------------------
+// copyFieldMapFor keys on the base name, so a project GeoPackage created
+// before the Aug-2026 Linework/Overlay renumber resolves the same pairs. A
+// regression here degrades silently to the Comments/Confidence whitelist.
+const ovLwLegacy = buildCopyPairs(ovNames, lwNames, '2 - Overlay', '3 - Linework')
+check('legacy ordinals map the same as current ones',
+  pairString(ovLwLegacy) === pairString(ovLw),
+  pairString(ovLwLegacy))
 
 // --- empty inputs -> no pairs --------------------------------------------
 check('no shared fields -> empty plan',

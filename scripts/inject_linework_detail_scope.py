@@ -33,7 +33,7 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
-LAYER = "3 - Linework"
+LAYER = "2 - Linework"
 
 OLD_GATE = "\"Category\" = 'Veins'"
 DETAIL_VIS = ("(\"Category\" IN ('Veins','Lithology') "

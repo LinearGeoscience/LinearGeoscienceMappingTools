@@ -475,8 +475,14 @@ class GeoPackageReprojectDialog(QDialog):
             conn = sqlite3.connect(gpkg_path)
             cursor = conn.cursor()
 
-            # Get spatial vector layers
-            cursor.execute("SELECT table_name FROM gpkg_contents WHERE data_type = 'features'")
+            # Get spatial vector layers. ORDER BY table_name makes the "N - "
+            # prefix authoritative for stacking: this list is appended to the
+            # layer tree in order by script_loadtemplate.load_template_to_project,
+            # so without it the draw order would be whatever gpkg_contents row
+            # order happened to be. Matches static_mapping_export, which already
+            # sorts the same way.
+            cursor.execute("SELECT table_name FROM gpkg_contents "
+                           "WHERE data_type = 'features' ORDER BY table_name")
             vector_layers = [row[0] for row in cursor.fetchall()]
 
             # Get raster layers

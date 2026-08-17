@@ -42,7 +42,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from collections import Counter
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 EXPECT_STRUCTURE = 9
 EXPECT_LPF = 8            # LinePatternFill layers across the 9 symbols (Stockwork has 2)
 EXPECT_ALT_OUTLINES = 125  # Alteration dashed outlines must stay untouched

@@ -39,6 +39,11 @@ try:
 except ImportError:
     from layer_select import layer_display_name
 
+try:
+    from ..lgs_layers import find_layer
+except ImportError:
+    from lgs_layers import find_layer
+
 
 # ── Module-level helpers (moved verbatim from script_plotsymbols.py) ──
 
@@ -254,7 +259,10 @@ class PlotSymbolsPage(QWidget):
     def _populate_default_mappings(self):
         project = QgsProject.instance()
         for layer_name, (table_name, key_field, layer_field) in LAYER_CONFIG.items():
-            found = project.mapLayersByName(layer_name)
+            # find_layer, not mapLayersByName: a project built from a pre-swap
+            # template numbers Linework/Overlay the other way round.
+            layer = find_layer(project, layer_name)
+            found = [layer] if layer is not None else []
             tables = project.mapLayersByName(table_name)
             if found and tables:
                 # First match per name; the row's Layer dropdown lists every

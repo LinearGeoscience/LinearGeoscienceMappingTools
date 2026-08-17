@@ -3,7 +3,7 @@
 UG paper-mapping parity: expert mapping queries structures liberally
 ("Ft?", "VQZ/Ft?") and distinguishes mapped from inferred geometry by
 line style.  This adds a `Confidence` field (ValueMap, default
-'Observed') to 1 - FieldNotebook, 2 - Overlay, 3 - Linework and
+'Observed') to 1 - FieldNotebook, 3 - Overlay, 2 - Linework and
 4 - Basemap, plus:
 
 LABELS - Queried appends '?':
@@ -50,11 +50,11 @@ INFERRED_TEST = "\"Confidence\" IN ('Inferred','Queried')"
 MEGA_DASH = "100000;1"
 
 # layer -> (anchor form field, place '?' handling key)
-LAYERS = ["1 - FieldNotebook", "2 - Overlay", "3 - Linework", "4 - Basemap"]
+LAYERS = ["1 - FieldNotebook", "2 - Linework", "3 - Overlay", "4 - Basemap"]
 FORM_ANCHOR = {
     "1 - FieldNotebook": "Type",
-    "2 - Overlay": "Type",
-    "3 - Linework": "Weight",
+    "2 - Linework": "Weight",
+    "3 - Overlay": "Type",
     "4 - Basemap": "ContactType",
 }
 
@@ -381,7 +381,7 @@ def main():
     con.commit()
 
     # Linework dashing
-    qml = new_qmls["3 - Linework"]
+    qml = new_qmls["2 - Linework"]
     rm = re.search(r'<renderer-v2\b.*?</renderer-v2>', qml, re.S)
     if not rm:
         bail("Linework renderer-v2 not found")
@@ -407,7 +407,7 @@ def main():
     print(f"Linework dashing: {n_flip} flip codes changed, "
           f"{n_solid} solid codes changed "
           f"(0/0 on re-run means already applied)")
-    new_qmls["3 - Linework"] = qml[:rm.start()] + renderer + qml[rm.end():]
+    new_qmls["2 - Linework"] = qml[:rm.start()] + renderer + qml[rm.end():]
 
     # Validate BEFORE writing.
     for layer, q in new_qmls.items():
@@ -445,7 +445,7 @@ def main():
         print(f"round-trip ok: {layer}")
 
     q, = cur.execute("SELECT styleQML FROM layer_styles "
-                     "WHERE f_table_name='3 - Linework'").fetchone()
+                     "WHERE f_table_name='2 - Linework'").fetchone()
     assert q.count(MEGA_DASH) >= len(FLIP_CODES), "flip dd missing"
     assert q.count("outlineStyle") >= len(SOLID_CODES), "solid dd missing"
     # excluded variants untouched: their symbols contain no Confidence dd

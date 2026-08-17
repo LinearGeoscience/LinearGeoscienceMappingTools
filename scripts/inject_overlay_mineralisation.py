@@ -10,7 +10,7 @@ pyrite, anything:
     Massive Sulphide Zone . Semi-Massive Sulphide Zone . Stringer Zone
     Disseminated Zone . Blebby Zone . Vein Zone . Barren Zone
 
-New fields on '2 - Overlay' (Mineralisation form container only):
+New fields on '3 - Overlay' (Mineralisation form container only):
     Mineral1  TEXT  ValueRelation -> MineralCodes
     Percent   MEDIUMINT 0-100
 
@@ -52,7 +52,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape, quoteattr
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 CAT_TABLE = "OverlayCategories"
 CODE_TABLE = "OverlayCodes"
 NEW_TYPE = "Mineralisation"

@@ -25,9 +25,15 @@ Z_MAX_FIELD = "Z_Max"
 # pollute the suggestions.
 FLAT_SPAN = 2.0
 
-# Canonical layer names the filter targets (mirror of
-# script_adddata/reconcile/migrate.LGS_LAYERS, which imports qgis).
-Z_LAYERS = ['1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
+# Canonical layer names the filter targets. Single source of truth is
+# lgs_layers (no qgis import), which script_adddata/reconcile/migrate.LGS_LAYERS
+# also re-exports.
+try:
+    from ..lgs_layers import CANONICAL_LAYERS, is_canonical
+except ImportError:
+    from lgs_layers import CANONICAL_LAYERS, is_canonical
+
+Z_LAYERS = list(CANONICAL_LAYERS)
 
 # Project-entry scope + keys (QgsProject.writeEntry/readEntry).
 SCOPE = "LinearGeoscience"

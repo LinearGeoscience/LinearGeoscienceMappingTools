@@ -6,7 +6,7 @@ veins (1.46) and far lighter than faults/shears (2.26).  Intrusive
 bodies are map-defining features; bump them all to 1.8 mm, clearly
 heavier than veins while staying below the fault/shear tier.
 
-Edits the SimpleLine line_width STATICS in the '3 - Linework' renderer
+Edits the SimpleLine line_width STATICS in the '2 - Linework' renderer
 only.  Re-run inject_weight_scaling.py afterwards - it rebuilds the
 Weight/width data-defined expressions from the current statics, so the
 overrides pick up the new 1.8 base (the established re-bake rule).
@@ -23,7 +23,7 @@ import sqlite3
 import sys
 import xml.etree.ElementTree as ET
 
-LAYER = "3 - Linework"
+LAYER = "2 - Linework"
 NEW_WIDTH = "1.8"
 # Every Lithology-category code (LineworkCodes Type='Lithology').
 TARGET_TYPES = [

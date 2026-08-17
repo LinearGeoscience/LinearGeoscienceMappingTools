@@ -87,7 +87,7 @@ def test_locking(master):
     # load_base_layer: None when no base, {} when layer absent in an existing base
     check(checkout.load_base_layer(master, "NoSuchTemplate", "x") is None,
           "load_base_layer None when no base")
-    check(checkout.load_base_layer(master, "LGS_SiteA_28350", "2 - Overlay") == {},
+    check(checkout.load_base_layer(master, "LGS_SiteA_28350", "3 - Overlay") == {},
           "load_base_layer empty dict when layer absent")
 
 

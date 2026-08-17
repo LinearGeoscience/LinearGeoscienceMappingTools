@@ -45,6 +45,11 @@ except ImportError:  # standalone
     import commit as commit_mod
     from migrate import LGS_LAYERS
 
+try:
+    from ...lgs_layers import gpkg_layer_name
+except Exception:  # pragma: no cover
+    from lgs_layers import gpkg_layer_name
+
 try:  # pragma: no cover - only inside QGIS
     from qgis.core import (QgsVectorLayer, QgsCoordinateTransform, QgsProject)
 except Exception:  # pragma: no cover
@@ -70,6 +75,15 @@ def new_batch_id() -> str:
 
 def _open(gpkg: str, layer_name: str):
     lyr = QgsVectorLayer(f"{gpkg}|layername={layer_name}", layer_name, "ogr")
+    if lyr.isValid():
+        return lyr
+    # A GeoPackage checked out before the Aug-2026 Linework/Overlay swap numbers
+    # those two layers the other way round. Without this the reconcile loop
+    # would treat every layer as absent and sync nothing, silently.
+    actual = gpkg_layer_name(gpkg, layer_name)
+    if not actual or actual == layer_name:
+        return None
+    lyr = QgsVectorLayer(f"{gpkg}|layername={actual}", actual, "ogr")
     return lyr if lyr.isValid() else None
 
 

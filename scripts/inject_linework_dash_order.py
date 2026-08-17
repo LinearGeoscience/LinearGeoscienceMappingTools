@@ -1,6 +1,6 @@
 """Linework restyle: formline dash density, length ordering, axial dash-dot.
 
-Three cartographic fixes to the '3 - Linework' categorized renderer
+Three cartographic fixes to the '2 - Linework' categorized renderer
 (attr="Type", reference scale 5000):
 
     - Formlines (8 categories: Formline, Formline - S0, - S0 (Younging
@@ -42,7 +42,7 @@ import sqlite3
 import sys
 import xml.etree.ElementTree as ET
 
-LAYER = "3 - Linework"
+LAYER = "2 - Linework"
 
 FORMLINE_VALUES = [
     "Formline",

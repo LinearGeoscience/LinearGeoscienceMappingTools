@@ -39,7 +39,7 @@ def run_add_elevation_field(iface):
     """
     from qgis.core import QgsProject
     from . import field_setup
-    from .expression import ELEVATION_FIELD, Z_LAYERS
+    from .expression import ELEVATION_FIELD, Z_LAYERS, is_canonical
 
     try:
         from ..layer_select import layer_display_name
@@ -47,8 +47,10 @@ def run_add_elevation_field(iface):
         from layer_select import layer_display_name
 
     parent = iface.mainWindow()
+    # is_canonical, not `in Z_LAYERS`: projects built from a pre-Aug-2026
+    # template number Linework/Overlay the other way round and must still match.
     targets = [lyr for lyr in QgsProject.instance().mapLayers().values()
-               if lyr.name() in Z_LAYERS]
+               if is_canonical(lyr.name())]
     if not targets:
         QMessageBox.warning(
             parent, "Add Elevation Field",

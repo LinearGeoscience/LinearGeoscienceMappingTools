@@ -1,4 +1,4 @@
-"""Per-vein detail fields on '3 - Linework' (UG paper-mapping parity).
+"""Per-vein detail fields on '2 - Linework' (UG paper-mapping parity).
 
 Expert underground mapping annotates every vein with width, mineral
 assemblage, texture and sulphide percentage ("10cm HYV GA vn 5%",
@@ -38,7 +38,7 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
-LAYER = "3 - Linework"
+LAYER = "2 - Linework"
 
 VEINS_VIS = "\"Category\" = 'Veins'"
 # field, sql type, widget kind, alias, visibility expression

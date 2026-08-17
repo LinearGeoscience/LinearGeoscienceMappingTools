@@ -61,7 +61,7 @@ def gate(field):
 # layer -> [(label, old, new, expected count)]
 # Counts are asserted, never assumed: a mismatch aborts before any write.
 EDITS = {
-    "3 - Linework": [
+    "2 - Linework": [
         # 239 symbol outlineWidth/size dd props + 1 label Size dd prop.
         ("Width_cm ramp gate (stroke + label size)",
          gate("Width_cm")[0], gate("Width_cm")[1], 240),
@@ -78,7 +78,7 @@ EDITS = {
         ("Mineral3Pct label gate", gate("Mineral3Pct")[0],
          gate("Mineral3Pct")[1], 1),
     ],
-    "2 - Overlay": [
+    "3 - Overlay": [
         # Mineralisation stipple/hatch density ramp: 0 -> middle step.
         ("Percent density ramp",
          "CASE WHEN {q}Percent{q} IS NULL THEN 1".format(q=Q),

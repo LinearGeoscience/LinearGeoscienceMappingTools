@@ -147,7 +147,7 @@ class LayerNameParser:
 
         Handles formats like:
         - "1 - FieldNotebook" -> "FieldNotebook"
-        - "2 - Overlay" -> "Overlay"
+        - "3 - Overlay" -> "Overlay"
         - "Layer_Name" -> "Layer_Name"
         - "SomeLayer" -> "SomeLayer"
 

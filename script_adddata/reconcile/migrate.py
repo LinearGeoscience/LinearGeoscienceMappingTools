@@ -58,7 +58,12 @@ except Exception:  # pragma: no cover
         create_compatible_field = None
         detect_uuid_field = None
 
-LGS_LAYERS = ['1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
+try:
+    from ...lgs_layers import CANONICAL_LAYERS, gpkg_layer_name
+except Exception:  # pragma: no cover
+    from lgs_layers import CANONICAL_LAYERS, gpkg_layer_name
+
+LGS_LAYERS = list(CANONICAL_LAYERS)
 UUID_DEFAULT_EXPR = "uuid('WithoutBraces')"
 
 
@@ -68,6 +73,14 @@ def _utc_now() -> str:
 
 def _open(master_gpkg: str, layer_name: str):
     lyr = QgsVectorLayer(f"{master_gpkg}|layername={layer_name}", layer_name, "ogr")
+    if lyr.isValid():
+        return lyr
+    # Tolerate pre-Aug-2026 numbering (Linework/Overlay swapped) so an existing
+    # master GeoPackage can still be registered for change tracking.
+    actual = gpkg_layer_name(master_gpkg, layer_name)
+    if not actual or actual == layer_name:
+        return None
+    lyr = QgsVectorLayer(f"{master_gpkg}|layername={actual}", actual, "ogr")
     return lyr if lyr.isValid() else None
 
 

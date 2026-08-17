@@ -3,7 +3,7 @@
 Weight (Major/Moderate/Minor) only drives the Structure zone symbology
 (see inject_weight_scaling.py — Alteration/Weathering use Intensity, and
 Infrastructure is untouched), but the form config required it everywhere
-and showed it on the Alteration tab. Three fixes to "2 - Overlay":
+and showed it on the Alteration tab. Three fixes to "3 - Overlay":
 
     1. Constraint: hard not-null on Weight -> expression constraint,
        required only when Type = 'Structure'.
@@ -27,7 +27,7 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 
 CONSTRAINT_TAG = ('<constraint constraints="4" notnull_strength="0" '
                   'field="Weight" unique_strength="0" exp_strength="1"/>')

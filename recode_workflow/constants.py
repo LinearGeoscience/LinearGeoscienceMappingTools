@@ -3,14 +3,20 @@ Constants for the Recode & Restyle Workflow wizard.
 
 Layer configuration, grid sizing, and page metadata.
 """
+try:
+    from ..lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
+except ImportError:
+    from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
 
 # Default layer-to-code-table mappings
 # Format: { layer_name: (code_table_name, key_field_in_table, field_on_layer) }
+# Keyed by the canonical names; look up with lgs_layers.lookup() so a layer
+# carrying pre-Aug-2026 numbering still resolves.
 LAYER_CONFIG = {
-    '2 - Overlay':       ('OverlayCodes',       'Code', 'SubType1'),
-    '4 - Basemap':       ('BasemapCodes',       'Code', 'Lithology1'),
-    '3 - Linework':      ('LineworkCodes',       'Code', 'Type'),
-    '1 - FieldNotebook': ('FieldNotebookCodes', 'Code', 'Subtype1'),
+    OVERLAY:       ('OverlayCodes',       'Code', 'SubType1'),
+    BASEMAP:       ('BasemapCodes',       'Code', 'Lithology1'),
+    LINEWORK:      ('LineworkCodes',      'Code', 'Type'),
+    FIELDNOTEBOOK: ('FieldNotebookCodes', 'Code', 'Subtype1'),
 }
 
 # Grid sizing — fixed values in map units (meters for projected CRS).

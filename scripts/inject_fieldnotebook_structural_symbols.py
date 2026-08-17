@@ -1,4 +1,4 @@
-"""Structural symbol repair for 1 - FieldNotebook (+ 3 - Linework regressions).
+"""Structural symbol repair for 1 - FieldNotebook (+ 2 - Linework regressions).
 
 The 86 FieldNotebook structural SVG markers are Illustrator/Inkscape
 exports embedded as base64 with hardcoded colours in CSS <style> blocks
@@ -67,7 +67,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 FN_LAYER = "1 - FieldNotebook"
-LW_LAYER = "3 - Linework"
+LW_LAYER = "2 - Linework"
 SVG_NS = "http://www.w3.org/2000/svg"
 FOREIGN = ("sodipodi", "inkscape")
 

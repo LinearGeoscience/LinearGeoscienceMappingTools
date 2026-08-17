@@ -40,7 +40,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from collections import Counter
 
-LAYER = "2 - Overlay"
+LAYER = "3 - Overlay"
 EXPECT_ALTERATION = 125
 WASH_WIDTH = "0.3"         # Point; identifies the wash SimpleFill in each block
 OUTLINE_DASH = "1.5;0.7"   # MM dash;gap - matches the Basemap contact outlines

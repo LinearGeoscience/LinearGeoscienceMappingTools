@@ -20,7 +20,7 @@ try:
 except ImportError:
     sys.exit("Must be run with QGIS python (python-qgis / QGIS console).")
 
-LGS_LAYERS = ['1 - FieldNotebook', '2 - Overlay', '3 - Linework', '4 - Basemap']
+LGS_LAYERS = ['1 - FieldNotebook', '2 - Linework', '3 - Overlay', '4 - Basemap']
 ELEVATION_FIELD = "Elevation"
 
 

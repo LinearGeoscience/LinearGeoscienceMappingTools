@@ -33,7 +33,7 @@ _LE = '&lt;='
 
 # layer -> [(what, unguarded form that must be GONE, guarded form, min count)]
 _EXPECTED = {
-    '3 - Linework': [
+    '2 - Linework': [
         ('Width_cm ramp gate',
          'AND {q}Width_cm{q} IS NOT NULL THEN'.format(q=_Q),
          'AND coalesce({q}Width_cm{q}, 0) {gt} 0 THEN'.format(q=_Q, gt=_GT),
@@ -56,7 +56,7 @@ _EXPECTED = {
          'AND coalesce({q}Mineral3Pct{q}, 0) {gt} 0 THEN'.format(q=_Q, gt=_GT),
          1),
     ],
-    '2 - Overlay': [
+    '3 - Overlay': [
         ('Percent density ramp',
          'CASE WHEN {q}Percent{q} IS NULL THEN 1'.format(q=_Q),
          'CASE WHEN coalesce({q}Percent{q}, 0) {le} 0 THEN 1'.format(
@@ -129,8 +129,8 @@ class TestInjectorConstantsAgree(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.linework = html.unescape(_style_qml('3 - Linework'))
-        cls.overlay = html.unescape(_style_qml('2 - Overlay'))
+        cls.linework = html.unescape(_style_qml('2 - Linework'))
+        cls.overlay = html.unescape(_style_qml('3 - Overlay'))
 
     def _assert_baked(self, expr, blob, what, count):
         self.assertEqual(

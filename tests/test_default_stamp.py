@@ -21,7 +21,7 @@ _spec.loader.exec_module(default_stamp)
 stamp_elevation_defaults = default_stamp.stamp_elevation_defaults
 ELEVATION_DEFAULT_EXPRESSION = default_stamp.ELEVATION_DEFAULT_EXPRESSION
 
-CANONICAL = ['1 - FieldNotebook', '2 - Overlay', '3 - Linework',
+CANONICAL = ['1 - FieldNotebook', '2 - Linework', '3 - Overlay',
              '4 - Basemap']
 
 
@@ -81,25 +81,25 @@ class TestStampElevationDefaults(unittest.TestCase):
                 '<default field="Elevation" expression="" applyOnUpdate="0"/>'
                 '<default field="Other" expression="1+1"/>'
                 '</defaults>')
-        root = _project(_maplayer('2 - Overlay', body))
-        stamped = stamp_elevation_defaults(root, [('2 - Overlay',
+        root = _project(_maplayer('3 - Overlay', body))
+        stamped = stamp_elevation_defaults(root, [('3 - Overlay',
                                                    'Elevation')])
-        self.assertEqual(stamped, ['2 - Overlay'])
-        el = _default_el(root, '2 - Overlay', 'Elevation')
+        self.assertEqual(stamped, ['3 - Overlay'])
+        el = _default_el(root, '3 - Overlay', 'Elevation')
         self.assertEqual(el.get('expression'), ELEVATION_DEFAULT_EXPRESSION)
         # Unrelated field untouched.
-        other = _default_el(root, '2 - Overlay', 'Other')
+        other = _default_el(root, '3 - Overlay', 'Other')
         self.assertEqual(other.get('expression'), '1+1')
 
     def test_skips_existing_nonempty_expression(self):
         body = ('<defaults>'
                 '<default field="Elevation" expression="@my_custom"/>'
                 '</defaults>')
-        root = _project(_maplayer('3 - Linework', body))
-        stamped = stamp_elevation_defaults(root, [('3 - Linework',
+        root = _project(_maplayer('2 - Linework', body))
+        stamped = stamp_elevation_defaults(root, [('2 - Linework',
                                                    'Elevation')])
         self.assertEqual(stamped, [])
-        el = _default_el(root, '3 - Linework', 'Elevation')
+        el = _default_el(root, '2 - Linework', 'Elevation')
         self.assertEqual(el.get('expression'), '@my_custom')
 
     def test_stamps_extra_layer_custom_field(self):
