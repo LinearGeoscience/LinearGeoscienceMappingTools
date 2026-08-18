@@ -67,7 +67,10 @@ import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# the repo root, for the constants the runtime rescale has to agree with
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lith_palette  # noqa: E402
+from renderer_compat import SCALE_GATE_RATIO  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ORIGINAL = os.path.join(REPO, "Template", "LGS_MappingTemplate.gpkg")
@@ -82,13 +85,23 @@ LAYER = "4 - Basemap"
 FIELD = "Lithology1"
 EXPECT_CATS = 284          # 283 codes + the NULL / all-other-values class
 REFERENCE_SCALE = 5000
-# Texture off when zoomed out past this. Measured, not guessed: with
-# referencescale 5000 the tile and its stroke both shrink as you zoom out, so
-# every texture holds a steady 7-10% ink from 1:500 to 1:4000 and then
-# collapses to ZERO between 1:8000 and 1:16000 as the stroke goes sub-pixel.
-# A cutoff beyond that just rasterises tiles that draw nothing. The user's
-# projects map at 1:200-1:500, so this sits well outside normal working range.
-PATTERN_MAX_SCALE = 6000
+# Texture off when zoomed out past this. The ratio, not the number, is the
+# thing that is right: paper-unit sizes scale by referenceScale/mapScale, so
+# where a texture goes sub-pixel is linear in the reference scale, and the
+# old hard-coded 6000 was correct only while the reference scale stayed at
+# 5000 - see renderer_compat.SCALE_GATE_RATIO.
+#
+# Measured behaviour it has to bracket: with referencescale 5000 every
+# texture holds a steady 7-10% ink from 1:500 to 1:4000, then collapses to
+# ZERO between 1:8000 and 1:16000 as the stroke goes sub-pixel. So the ink is
+# genuinely gone by ~3x the reference scale and a gate above that only
+# rasterises tiles that draw nothing; the ratio is set to 5 on the user's
+# instruction, which trades some of that for headroom.
+#
+# script_setmapping.py rewrites this rule's maximumScale to the same ratio
+# whenever Set Mapping Scale changes the reference scale, so a project does
+# not stay pinned to whatever was baked here.
+PATTERN_MAX_SCALE = round(SCALE_GATE_RATIO * REFERENCE_SCALE)
 TILE_WIDTH_PT = 12.0       # pattern tile width, Point units (see 55eaeed)
 TILE_STROKE_PT = 0.3
 

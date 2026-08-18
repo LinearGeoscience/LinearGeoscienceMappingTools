@@ -27,8 +27,10 @@ PX = 132            # swatch width in px
 PXH = 88            # swatch height in px
 # Map units per swatch. Chosen so the render lands near 1:2500 - inside the
 # 1:500-1:4000 band where every texture holds a steady 7-10% ink. At 100 units
-# this rendered at 1:9664, past the pattern rule's 1:6000 cutoff, and every
-# swatch came out as flat colour with no texture at all.
+# this rendered at 1:9664, which now falls inside the rule's cutoff (the gate
+# moved from a flat 1:6000 to SCALE_GATE_RATIO x the reference scale) but is
+# well past the band where the ink survives, so the swatches came out as flat
+# colour with no texture at all.
 CELL_H = 26         # map units tall
 # The map cell MUST carry the same aspect ratio as the pixel cell. QGIS
 # expands the extent to fit the output aspect, so a square map cell drawn

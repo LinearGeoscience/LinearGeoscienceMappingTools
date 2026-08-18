@@ -31,6 +31,23 @@ except ImportError:  # allows import in non-QGIS test contexts
 # Set by scripts/inject_basemap_lith_patterns.py; matched exactly.
 PATTERN_RULE_LABEL = "Lithology texture"
 
+# How far past the project's mapping scale the lithology texture keeps
+# drawing.
+#
+# QGIS multiplies paper-unit symbol sizes by referenceScale/mapScale, so the
+# scale at which the texture goes sub-pixel is LINEAR in the
+# reference scale. A fixed cutoff is therefore only ever correct for one
+# mapping scale: the old hard-coded 1:6000 was right for the baked 1:5000
+# reference and wrong for every other entry in Set Mapping Scale's list,
+# which runs 1:50 to 1:250000. Map at 1:200 and the tile is 25x smaller on
+# paper, so the ink dies around 1:240 while the rule went on rasterising
+# tiles that drew nothing all the way to 1:6000.
+#
+# Lives here rather than in the injector because both the bake
+# (scripts/inject_basemap_lith_patterns.py) and the runtime rescale
+# (script_setmapping.py set_reference_scale) have to agree on it.
+SCALE_GATE_RATIO = 5
+
 # What QgsRuleBasedRenderer.convertFromRenderer() emits per category, i.e.
 # QgsExpression::createFieldEqualityExpression: "Field" = 'value'
 _EQ_RE = re.compile(r'^\s*"(?P<field>(?:[^"]|"")+)"\s*=\s*'

@@ -20,6 +20,11 @@ except ImportError:
     from layer_select import layer_candidates, populate_layer_combo
 
 try:
+    from .renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+except ImportError:
+    from renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+
+try:
     from .lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
 except ImportError:
     from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
@@ -444,8 +449,19 @@ class LayerConfigurator:
             QgsMessageLog.logMessage("[CRS] No layers selected for CRS update", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def set_reference_scale(self, layers_dict, scale_value):
-        """Set reference scale for selected layers"""
+        """Set reference scale for selected layers, and move the gates with it.
+
+        QGIS multiplies paper-unit symbol sizes by referenceScale/mapScale,
+        so where an ornament goes sub-pixel is LINEAR in the reference
+        scale. Two gates therefore have to move whenever it changes, or
+        they stay pinned to whatever the template happened to be baked at:
+
+        The one that matters is the Basemap 'Lithology texture' rule: its
+        cutoff is a plain number on the rule, not an expression, so nothing
+        else can move it when the mapping scale changes.
+        """
         updated = 0
+        gates = 0
         for role, layer_id in layers_dict.items():
             layer = self.get_layer(layer_id)
             if layer:
@@ -453,11 +469,37 @@ class LayerConfigurator:
                 if renderer:
                     renderer.setReferenceScale(scale_value)
                     updated += 1
+                    gates += self.rescale_pattern_rule(renderer, scale_value)
 
         if updated:
             QgsMessageLog.logMessage(f"[Scale] Set reference scale 1:{scale_value} for {updated} layers", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             QgsMessageLog.logMessage("[Scale] No layers selected for reference scale", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+        QgsMessageLog.logMessage(f"[Scale] Texture cutoff 1:{round(scale_value * SCALE_GATE_RATIO)} ({SCALE_GATE_RATIO}x); retuned {gates} rule(s)", 'Linear Geoscience', Qgis.MessageLevel.Info)
+
+    def rescale_pattern_rule(self, renderer, scale_value):
+        """Retune the lithology texture rule's cutoff. Returns rules changed.
+
+        Matched by label via renderer_compat.PATTERN_RULE_LABEL, never by
+        index - the rule is appended last today, but the bake rebuilds the
+        whole renderer and position is not a contract.
+
+        setMinimumScale, NOT setMaximumScale. QGIS names these for the view,
+        not the denominator: "minimum scale" is the most zoomed-OUT view the
+        rule survives, and is stored as the LARGER denominator. The shipped
+        rule reads minimumScale 6000 / maximumScale 0, and writing the
+        cutoff to maximumScale instead would leave the rule alive only
+        between 1:25000 and 1:6000 - an empty range, i.e. no textures ever.
+        """
+        root = getattr(renderer, "rootRule", None)
+        if root is None:          # categorized template: no texture rule
+            return 0
+        changed = 0
+        for rule in root().children():
+            if rule.label() == PATTERN_RULE_LABEL:
+                rule.setMinimumScale(scale_value * SCALE_GATE_RATIO)
+                changed += 1
+        return changed
 
     def configure_snapping(self, layers_dict):
         """Configure snapping for relevant layers"""
