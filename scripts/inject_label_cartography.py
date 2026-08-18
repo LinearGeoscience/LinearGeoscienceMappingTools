@@ -257,7 +257,13 @@ def verify(cur):
         cur.fetchone()[0], re.S).group(0)).find(
             "settings").find("text-style").get("fieldName")
     assert expr.count(DIV_BOLD) == N_DIV, "unit code not semibold everywhere"
-    assert expr.count(SPAN_LIGHT) == N_SPAN, "modifiers not held at regular"
+    # At least the two lithology modifier parentheticals, and nothing left
+    # in the plain weight.  Not an equality: later injectors legitimately
+    # add their own light spans to this label (the vein generation /
+    # selvedge tag, inject_vein_generation_selvedge.py), and the invariant
+    # here is "nothing un-split", not "exactly two spans exist".
+    assert expr.count(SPAN_LIGHT) >= N_SPAN, "modifiers not held at regular"
+    assert SPAN not in expr.replace(SPAN_LIGHT, ""), "a plain span survived"
     assert DIV not in expr.replace(DIV_BOLD, ""), "a plain <div> survived"
 
     # No halo and no mask anywhere in the template

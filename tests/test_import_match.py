@@ -34,6 +34,7 @@ _ADDED_SINCE = {
     'Lith2Texture1', 'Lith2Texture2', 'Lith1Mineral1Pct', 'Lith1Mineral2Pct',
     'Lith1Mineral3Pct', 'Lith2Mineral1Pct', 'Lith2Mineral2Pct',
     'Lith2Mineral3Pct',
+    'VeinGen', 'Selvedge_cm', 'SelvedgeMineral',
 }
 
 # What a client export calls each layer, and what the pre-Aug-2026 template did.
