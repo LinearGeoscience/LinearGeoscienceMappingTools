@@ -738,10 +738,14 @@ def marker_line_opts(phase_mm):
 
 
 def dot_opts(color):
-    """One stipple dot.  outline_width 0 keeps inject_weight_scaling's
-    SimpleMarker->outlineWidth mapping a no-op (it skips a base of 0); the
-    size DOES get the Weight x Width_cm ramp, which is wanted - the whole
-    vein annotation shrinks together."""
+    """One stipple dot.
+
+    outline_width 0 keeps inject_weight_scaling's SimpleMarker->outlineWidth
+    mapping a no-op (it skips a base of 0), and the size is kept off the
+    Weight x Width_cm ramp entirely by weight_scaling_skip_ids() - see the
+    reasoning there.  An earlier version of this comment claimed the
+    opposite; it was written before the skip hook existed.
+    """
     return {
         "angle": "0",
         "cap_style": "square",
