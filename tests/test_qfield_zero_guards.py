@@ -141,13 +141,15 @@ class TestInjectorConstantsAgree(unittest.TestCase):
             % (what, blob.count(expr), count, expr))
 
     def test_weight_scaling_gate(self):
-        # 239 stroke/marker overrides, plus 33 from the vein selvedge: the
-        # 11 halo strokes each carry the ramp on their width, and each of
-        # the 11 halo generators spends it twice more sizing its two offset
-        # curves (inject_vein_generation_selvedge.lw_expression).
+        # 234 stroke/marker overrides, plus 54 from the vein selvedge: each
+        # of the 9 vein symbols carries 3 stipple rings, and each ring spends
+        # the ramp twice sizing its two offset curves
+        # (inject_vein_generation_selvedge.lw_expression). The dots
+        # themselves are deliberately NOT ramped - see
+        # inject_vein_generation_selvedge.weight_scaling_skip_ids.
         module = _load('inject_weight_scaling.py')
         self._assert_baked(module.DETAIL_WIDTH_FACTOR, self.linework,
-                           'inject_weight_scaling.DETAIL_WIDTH_FACTOR', 272)
+                           'inject_weight_scaling.DETAIL_WIDTH_FACTOR', 288)
 
     def test_label_size_scaling_gate(self):
         module = _load('inject_label_size_scaling.py')

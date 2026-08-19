@@ -111,6 +111,21 @@ def bail(msg):
     raise SystemExit("ABORT: " + msg)
 
 
+def skip_ids():
+    """Layer ids that own their size and must not be ramped.
+
+    Imported late and defensively: inject_vein_generation_selvedge imports
+    DETAIL_WIDTH_FACTOR from THIS module at import time, so the dependency
+    only works in this direction and only once this module is fully loaded.
+    A missing module just means nothing to skip.
+    """
+    try:
+        import inject_vein_generation_selvedge as selvedge
+    except Exception:
+        return set()
+    return selvedge.weight_scaling_skip_ids()
+
+
 def weight_expression(dd_key, base):
     try:
         if float(base) <= 0:
@@ -178,13 +193,22 @@ def rebuild_dd_block(dd_xml, new_props):
     return ET.tostring(root, encoding="unicode")
 
 
-def inject_into_scope(scope, stats, prop_map=SCALED_PROPS, expr_fn=weight_expression):
-    """Process every <layer class=...> block inside the scope string."""
+def inject_into_scope(scope, stats, prop_map=SCALED_PROPS, expr_fn=weight_expression,
+                     skip_ids=()):
+    """Process every <layer class=...> block inside the scope string.
+
+    skip_ids names layers that must NOT be ramped even though their class is
+    scalable - see SKIP_IDS.
+    """
     out = []
     pos = 0
     layer_tags = list(re.finditer(r'<layer\b[^>]*\bclass="(\w+)"[^>]*>', scope))
     for i, lt in enumerate(layer_tags):
         cls = lt.group(1)
+        if skip_ids:
+            lid = re.search(r'\bid="([^"]*)"', lt.group(0))
+            if lid and lid.group(1) in skip_ids:
+                continue
         dd_m = re.search(r'<data_defined_properties>.*?</data_defined_properties>',
                          scope[lt.end():], re.S)
         if not dd_m:
@@ -241,7 +265,7 @@ def main():
     if not rm:
         bail("Linework renderer-v2 not found")
     stats = Counter()
-    new_renderer = inject_into_scope(rm.group(0), stats)
+    new_renderer = inject_into_scope(rm.group(0), stats, skip_ids=skip_ids())
     qml = qml[:rm.start()] + new_renderer + qml[rm.end():]
     cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name='2 - Linework'", (qml,))
     assert cur.rowcount == 1

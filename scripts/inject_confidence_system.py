@@ -83,10 +83,10 @@ SOLID_CODES = [
     "Fault - Thrust", "Kink Band Trace", "Marker - BIF", "Marker - Chert",
     "Monocline", "Nonconformity", "Unconformity", "Unconformity - Angular",
     "Terrane Boundary", "Pegmatite",
-    "Vein", "Vein - Breccia", "Vein - Carbonate", "Vein - Epidote",
-    "Vein - Extension", "Vein - Laminated", "Vein - Mineralised",
+    "Vein", "Vein - Breccia", "Vein - Carbonate",
+    "Vein - Extension", "Vein - Laminated",
     "Vein - Pegmatite", "Vein - Quartz", "Vein - Quartz-Carbonate",
-    "Vein - Shear",
+    "Vein - Shear",   # Epidote and Mineralised retired Aug 2026
 ]
 
 

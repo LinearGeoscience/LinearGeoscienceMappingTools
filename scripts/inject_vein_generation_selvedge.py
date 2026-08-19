@@ -19,17 +19,25 @@ S1-S5 - spend the whole Type code on the generation, which 13 vein codes
 cannot afford.  So VeinGen is orthogonal to Type: any vein type can carry
 any generation, and it reads on the map as a tag, not as a colour.
 
-THE SELVEDGE IS DRAWN.  On Linework a GeometryGenerator puts a thin paired
-halo either side of the vein, offset far enough to clear the widest the
-backbone ever renders; on Basemap it hems the inside of the vein polygon
-with a band in a deepened shade of the unit's own colour.  Both evaluate in
-PAPER MILLIMETRES (units=MM honours the renderer's referenceScale), so the
-ornament is the same size on the page at UG 1:100 and surface 1:10 000.
+THE SELVEDGE IS DRAWN, as a stipple.  A selvedge is a diffuse alteration
+halo and a solid line says the opposite - it reads as a second contact - so
+each vein wears up to three rings of fine dots, phased against each other so
+they interleave rather than line up.  Rings step OUTWARD as the recorded
+width grows (ring 1 always, ring 2 past 2 cm, ring 3 past 10 cm), so a wide
+selvedge visibly reaches further into the wallrock than a narrow one.  On
+Linework the rings are offset curves either side of the vein; on Basemap
+they are buffers OUTSIDE the polygon, because that is where altered wallrock
+actually is - and because an outward buffer cannot degenerate the way the
+inward band it replaced did.  Dot colour follows SelvedgeMineral.
+
+Everything evaluates in PAPER MILLIMETRES (units=MM honours the renderer's
+referenceScale), so the ornament is the same size on the page at UG 1:100
+and surface 1:10 000.
 
 Scope is Veins-only, narrower than the sibling detail fields that
 inject_linework_detail_scope.py widened onto dykes/sills and faults/shears.
 That is on purpose: the form gate must match where ink can appear, and the
-halo only exists on the 11 vein symbols.  Letting a mapper record a dyke's
+stipple only exists on the 9 vein symbols.  Letting a mapper record a dyke's
 chilled margin that renders nowhere would be worse than not offering it.
 
 Run order matters:
@@ -40,10 +48,13 @@ Run order matters:
                                       fieldName wholesale and would drop the
                                       vein tag (recovery chain below)
     inject_vein_generation_selvedge.py   <- this script
+    remove_linework_codes.py          MUST run first if codes are being
+                                      retired - this script bails on a
+                                      LW_VEIN_CODES entry it cannot find
     inject_weight_scaling.py          MUST run after: its Linework pass
                                       recurses into sub-symbols and ramps the
-                                      halo stroke to Weight x Width_cm for us.
-                                      Do not author that ramp here.
+                                      stipple dot size to Weight x Width_cm
+                                      for us.  Do not author that ramp here.
     inject_basemap_lith_patterns.py   re-bakes LGS_MappingTemplate_Patterns.gpkg
 
 If inject_basemap_mineral_pcts.py ever has to run again, replay:
@@ -81,7 +92,11 @@ BACKUP_DATE = "2026-08-18"
 BACKUP_NAME = "LGS_MappingTemplate_pre-vein-generations_%s.gpkg" % BACKUP_DATE
 MUS = "3x:0,0,0,0,0,0"
 MM_PER_PT = 25.4 / 72.0
-ALT_OUTLINE_DASH = "1.5;0.7"   # never emit this - see line_opts()
+ALT_OUTLINE_DASH = "1.5;0.7"   # inject_overlay_alteration_outline counts
+                               # its outlines by this dash over a
+                               # recursive walk.  Unreachable now that the
+                               # stipple carries no SimpleLine, but kept so
+                               # the test can keep asserting we never emit it.
 
 GENERATIONS = ("V1", "V2", "V3", "V4", "V5")
 
@@ -97,47 +112,132 @@ BM_VEINS = '"Lithology1" IN (%s)' % ", ".join("'%s'" % c for c in VEIN_LITHS)
 SELVEDGE_ON = ("(coalesce(\"Selvedge_cm\", 0) > 0 "
                "OR coalesce(\"SelvedgeMineral\", '') != '')")
 
-# Linework: the 11 vein codes that draw as a single solid backbone.  Vein
+# Linework: the 9 vein codes that draw as a single solid backbone.  Vein
 # Set / Sheeted and Stockwork Zone Boundary are excluded - a swarm and a
 # zone envelope have no two margins to hem, and their dashes encode
-# identity.  Same 11 as inject_confidence_system.SOLID_CODES' vein block,
-# and for the same reason.
+# identity.  Vein - Epidote and Vein - Mineralised were retired in Aug 2026
+# (scripts/remove_linework_codes.py).  Same 9 as
+# inject_confidence_system.SOLID_CODES' vein block, and for the same reason.
 LW_VEIN_CODES = [
-    "Vein", "Vein - Breccia", "Vein - Carbonate", "Vein - Epidote",
-    "Vein - Extension", "Vein - Laminated", "Vein - Mineralised",
+    "Vein", "Vein - Breccia", "Vein - Carbonate",
+    "Vein - Extension", "Vein - Laminated",
     "Vein - Pegmatite", "Vein - Quartz", "Vein - Quartz-Carbonate",
     "Vein - Shear",
 ]
 
+# --- The stipple -----------------------------------------------------------
+# A selvedge is a diffuse alteration halo, and a solid line says the opposite
+# - it reads as a second contact.  So it is drawn as rings of fine dots that
+# step OUTWARD as the recorded width grows: ring 1 always, ring 2 past 2 cm,
+# ring 3 past 10 cm.  The thresholds are the tiers the old solid halo already
+# used for its gap.
+#
+# Three authored layers rather than one generator emitting every ring,
+# because the interleave has to come from somewhere: offset_along_line is a
+# SYMBOL LAYER property, so rings can only differ in phase if each owns its
+# sub-symbol.  Without that the dots line up in radial rows and read as a
+# grid instead of a stipple.
+RINGS = (1, 2, 3)
+RING_SPACING = 1.0           # paper-mm between successive rings
+RING_ON = {
+    1: SELVEDGE_ON,
+    2: "%s AND coalesce(\"Selvedge_cm\", 0) > 2" % SELVEDGE_ON,
+    3: "%s AND coalesce(\"Selvedge_cm\", 0) > 10" % SELVEDGE_ON,
+}
+
+DOT_INTERVAL = 2.2           # paper-mm between dots along a ring
+DOT_SIZE = "0.45"            # paper-mm; the vein's OWN decoration is a 1.8mm
+                             # circle every 6mm, so the stipple stays clearly
+                             # subordinate to it
+# Phase per ring, as a fraction of the interval: thirds, so three rings never
+# line up with each other.
+DOT_PHASE = {r: round(DOT_INTERVAL * (r - 1) / 3.0, 3) for r in RINGS}
+
 # Vein - Shear already wears a decorative selvage: a one-sided
 # wave(offset_curve($geometry, 1.1), amplitude:=0.4) whose outer envelope
 # reaches 1.1 + 0.4 + 0.28/2 = 1.64mm from the centreline, and whose offset
-# is a STATIC that does not shrink with Weight or Width.  Push the halo
+# is a STATIC that does not shrink with Weight or Width.  Push the stipple
 # outside it so the two read as two things.
 LW_CLEARANCE = {"Vein - Shear": 1.40}
 
-# Paper-mm of white between the drawn vein EDGE and the halo CENTRELINE.
-# This, not the offset, is the constant of the design.
-LW_GAP = ("CASE WHEN coalesce(\"Selvedge_cm\", 0) <= 2 THEN 0.34 "
-          "WHEN \"Selvedge_cm\" <= 10 THEN 0.50 ELSE 0.70 END")
+# Paper-mm of white between the drawn vein EDGE and ring 1.  A constant now:
+# the recorded width is carried by how many rings appear, not by the gap.
+# Wide enough that the stipple reads as a separate halo rather than as fluff
+# on the line itself.
+LW_GAP = 0.55
 
-# Paper-mm width of the Basemap inner band.
-BM_BAND = ("CASE WHEN coalesce(\"Selvedge_cm\", 0) <= 2 THEN 0.45 "
-           "WHEN \"Selvedge_cm\" <= 10 THEN 0.70 ELSE 1.00 END")
+# Paper-mm from the polygon boundary out to ring 1.  Outward, so a narrow
+# vein pod cannot degenerate the way an inward buffer did.
+BM_GAP = 0.7
 
 WEIGHT_F = ("CASE WHEN \"Weight\" = 'Major' THEN %s "
             "WHEN \"Weight\" = 'Minor' THEN %s ELSE 1 END"
             % (FACTORS["Major"], FACTORS["Minor"]))
 
-HALO_WIDTH_PT = "0.6"     # subordinate to the 1.46pt backbone
-HALO_ALPHA = "150"
-BAND_DARKEN = 0.75        # band = the unit's own fill, 25% deeper
+# --- Selvedge mineral -> colour --------------------------------------------
+# Extends the paper convention in inject_overlay_mineralisation.MINERAL_RGB,
+# keyed on SelvedgeMineral instead of Mineral1.  Grouped by FAMILY, because a
+# selvedge is logged as a species but read as an alteration type - a sericite
+# and a muscovite selvedge are the same thing to the eye at map scale.
+#
+# Every code here was checked against MineralCodes.Value (which is the key
+# column - it has no Code column, see data_import/domain.py).  Codes not
+# listed fall through to the ELSE, which is the FEATURE'S OWN COLOUR rather
+# than a neutral: an unrecorded mineral should still read as belonging to its
+# vein, not introduce a hue that means nothing.
+SELVEDGE_RGB = [
+    (("Ser", "Ms", "Ilt", "Pg", "Prl"), "196,176,110"),      # white mica
+    (("Chl", "Fch", "Stp", "Cld"), "86,138,94"),             # chlorite
+    (("Bt", "Phl"), "138,94,54"),                            # biotite
+    (("Slc", "Qz", "Ccd", "Opl", "Jsp"), "150,155,160"),     # silica
+    (("Cb", "Cal", "Dol", "Ank", "Sd", "Mgs"), "108,152,178"),   # carbonate
+    (("Kfs", "Or", "Adl", "Mc", "Afs"), "198,124,140"),      # K-feldspar
+    (("Ab", "Olg", "Pl", "Sau"), "216,198,196"),             # albite
+    (("Ep", "Czo", "Zo", "Prh", "Grt", "Di", "Hd", "Scp"), "140,160,60"),
+    (("Act", "Tr", "Amp", "Hbl", "Cum", "Ath"), "62,102,78"),    # amphibole
+    (("Tlc", "Srp", "Atg", "Ctl", "Lz", "Brc"), "132,178,164"),  # talc/serp
+    (("Hem", "Mrt", "FeOx", "Gth", "Lm", "Jrs"), "176,72,58"),   # iron oxide
+    (("Mag", "Mgh", "Ilm"), "72,74,80"),                     # magnetite
+    (("Py", "Po", "Ccp", "Apy", "Sul", "MSul"), "196,150,42"),   # sulphide
+    (("Tur", "Elb", "Gr", "C"), "48,46,46"),                 # tourmaline
+    (("Kln", "Kao", "Cly", "Mnt", "Sme", "Alu", "Dck"), "200,186,160"),  # clay
+]
 
-# Pre-authored so inject_confidence_system.apply_solid() skips this stroke
-# on its next run (it skips SimpleLine layers already carrying outlineStyle)
-# - and because an inferred vein's inferred selvedge should dash too.
-CONFIDENCE_DASH = ("CASE WHEN \"Confidence\" IN ('Inferred','Queried') "
-                   "THEN 'dash' ELSE 'solid' END")
+# The Basemap fallback dot: the unit's own fill, 25% deeper, so a dot
+# with no mineral recorded still reads as belonging to that unit.
+BAND_DARKEN = 0.75
+
+DOT_ALPHA = 235
+
+
+def rgb_only(value):
+    """'r,g,b' from a QGIS colour string.
+
+    color_rgba() takes FOUR arguments.  Handing it a 4-part 'r,g,b,a' string
+    plus an alpha builds a five-argument call, which fails to PARSE - and a
+    data-defined expression that does not parse is dropped in silence, so the
+    dots simply keep their static colour and nothing anywhere complains.
+    That is exactly how this shipped broken once; tests/test_vein_selvedge_qgis
+    now parses every dd expression in the template for that reason.
+    """
+    return ",".join(value.split(",")[:3])
+
+
+def selvedge_colour_expr(fallback_rgb):
+    """Dot colour from SelvedgeMineral, falling back to the feature's own.
+
+    fallback_rgb must be a bare 'r,g,b' triple - see rgb_only().
+
+    Flat CASE, no nesting - QgsExpression parse cost doubles per
+    with_variable level and this is evaluated per feature per ring.
+    """
+    branches = " ".join(
+        "WHEN \"SelvedgeMineral\" IN (%s) THEN color_rgba(%s,%d)"
+        % (", ".join("'%s'" % c for c in codes), rgb, DOT_ALPHA)
+        for codes, rgb in SELVEDGE_RGB)
+    return "CASE %s ELSE color_rgba(%s,%d) END" % (branches, fallback_rgb,
+                                                   DOT_ALPHA)
+
 
 # --- Label fragments -------------------------------------------------------
 # The mm/cm/m formatter is inject_linework_vein_fields.WIDTH_TEXT, re-pointed
@@ -585,73 +685,73 @@ def get_dd(layer_el, key):
     return None
 
 
-def line_opts(color, width_pt):
-    """Solid stroke.  Deliberately NOT the 1.5;0.7 custom dash - that is the
-    signature inject_overlay_alteration_outline.py counts its outlines by,
-    over a recursive walk that would see this sub-symbol."""
+def marker_line_opts(phase_mm):
+    """A MarkerLine that lays dots along the ring at a per-ring phase.
+
+    offset_along_line is what interleaves the rings; it is a symbol-layer
+    property, which is the whole reason each ring is its own authored layer
+    rather than one generator emitting all three.
+    """
     return {
-        "align_dash_pattern": "0",
-        "capstyle": "round",
-        "customdash": "5;2",
-        "customdash_map_unit_scale": MUS,
-        "customdash_unit": "MM",
-        "dash_pattern_offset": "0",
-        "dash_pattern_offset_map_unit_scale": MUS,
-        "dash_pattern_offset_unit": "MM",
-        "draw_inside_polygon": "0",
-        "joinstyle": "round",
-        "line_color": color,
-        "line_style": "solid",
-        "line_width": width_pt,
-        "line_width_unit": "Point",
+        "average_angle_length": "4",
+        "average_angle_map_unit_scale": MUS,
+        "average_angle_unit": "MM",
+        "interval": _num(DOT_INTERVAL),
+        "interval_map_unit_scale": MUS,
+        "interval_unit": "MM",
         "offset": "0",
+        "offset_along_line": _num(phase_mm),
+        "offset_along_line_map_unit_scale": MUS,
+        "offset_along_line_unit": "MM",
         "offset_map_unit_scale": MUS,
         "offset_unit": "MM",
+        "place_on_every_part": "true",
+        "placements": "Interval",
         "ring_filter": "0",
-        "trim_distance_end": "0",
-        "trim_distance_end_map_unit_scale": MUS,
-        "trim_distance_end_unit": "MM",
-        "trim_distance_start": "0",
-        "trim_distance_start_map_unit_scale": MUS,
-        "trim_distance_start_unit": "MM",
-        "tweak_dash_pattern_on_corners": "0",
-        "use_custom_dash": "0",
-        "width_map_unit_scale": MUS,
+        "rotate": "0",
     }
 
 
-def fill_opts(color):
-    """Solid fill, no outline.  outline_width 0 keeps inject_weight_scaling's
-    SimpleFill->outlineWidth mapping a no-op (it skips a base of 0)."""
+def dot_opts(color):
+    """One stipple dot.  outline_width 0 keeps inject_weight_scaling's
+    SimpleMarker->outlineWidth mapping a no-op (it skips a base of 0); the
+    size DOES get the Weight x Width_cm ramp, which is wanted - the whole
+    vein annotation shrinks together."""
     return {
-        "border_width_map_unit_scale": MUS,
+        "angle": "0",
+        "cap_style": "square",
         "color": color,
+        "horizontal_anchor_point": "1",
         "joinstyle": "bevel",
+        "name": "circle",
         "offset": "0,0",
         "offset_map_unit_scale": MUS,
         "offset_unit": "MM",
         "outline_color": color,
-        "outline_style": "no",
+        "outline_style": "solid",
         "outline_width": "0",
+        "outline_width_map_unit_scale": MUS,
         "outline_width_unit": "MM",
-        "style": "solid",
+        "scale_method": "diameter",
+        "size": DOT_SIZE,
+        "size_map_unit_scale": MUS,
+        "size_unit": "MM",
+        "vertical_anchor_point": "1",
     }
 
 
-def build_generator(code, expression, sub_name, sub_kind, sub_options,
-                    sub_dd=None):
-    """A GeometryGenerator layer wrapping a single sub-symbol layer.
+def build_ring(code, ring, expression, colour_expr, static_rgb, sym_name):
+    """A GeometryGenerator wrapping a MarkerLine wrapping one dot.
 
-    The option set is exactly the three keys QgsGeometryGeneratorSymbolLayer
-    round-trips - SymbolType, geometryModifier, units - matching the
-    generator already on Vein - Shear.
+    The option set on the generator is exactly the three keys
+    QgsGeometryGeneratorSymbolLayer round-trips - SymbolType,
+    geometryModifier, units - matching the generator already on Vein - Shear.
     """
-    sym_type = "Line" if sub_kind == "SimpleLine" else "Fill"
     layer = ET.Element("layer", {
-        "id": layer_id("gen", code), "class": "GeometryGenerator",
+        "id": layer_id("ring%d" % ring, code), "class": "GeometryGenerator",
         "locked": "0", "pass": "0", "enabled": "1"})
     opts = ET.SubElement(layer, "Option", {"type": "Map"})
-    for name, value in (("SymbolType", sym_type),
+    for name, value in (("SymbolType", "Line"),
                         ("geometryModifier", expression),
                         ("units", "MM")):
         ET.SubElement(opts, "Option",
@@ -659,27 +759,39 @@ def build_generator(code, expression, sub_name, sub_kind, sub_options,
     layer.append(empty_dd())
     # Static enabled="1" stays, so a dd evaluation failure falls back to
     # DRAWING rather than to silence.
-    set_dd(layer, "enabled", SELVEDGE_ON)
+    set_dd(layer, "enabled", RING_ON[ring])
 
     sym = ET.SubElement(layer, "symbol", {
-        "name": sub_name, "type": sym_type.lower(), "alpha": "1",
+        "name": sym_name, "type": "line", "alpha": "1", "clip_to_extent": "1",
+        "force_rhr": "0", "frame_rate": "10", "is_animated": "0"})
+    sym.append(empty_dd())
+    ml = ET.SubElement(sym, "layer", {
+        "id": layer_id("dots%d" % ring, code), "class": "MarkerLine",
+        "locked": "0", "pass": "0", "enabled": "1"})
+    ml_opts = ET.SubElement(ml, "Option", {"type": "Map"})
+    for name, value in sorted(marker_line_opts(DOT_PHASE[ring]).items()):
+        ET.SubElement(ml_opts, "Option",
+                      {"name": name, "type": "QString", "value": value})
+    ml.append(empty_dd())
+
+    dot_sym = ET.SubElement(ml, "symbol", {
+        "name": "%s@0" % sym_name, "type": "marker", "alpha": "1",
         "clip_to_extent": "1", "force_rhr": "0", "frame_rate": "10",
         "is_animated": "0"})
-    sym.append(empty_dd())
-    sub = ET.SubElement(sym, "layer", {
-        "id": layer_id("stroke", code), "class": sub_kind,
+    dot_sym.append(empty_dd())
+    dot = ET.SubElement(dot_sym, "layer", {
+        "id": layer_id("dot%d" % ring, code), "class": "SimpleMarker",
         "locked": "0", "pass": "0", "enabled": "1"})
-    sub_opts = ET.SubElement(sub, "Option", {"type": "Map"})
-    for name, value in sorted(sub_options.items()):
-        ET.SubElement(sub_opts, "Option",
+    dot_opt = ET.SubElement(dot, "Option", {"type": "Map"})
+    for name, value in sorted(dot_opts(static_rgb).items()):
+        ET.SubElement(dot_opt, "Option",
                       {"name": name, "type": "QString", "value": value})
-    # No Weight ramp here on purpose: inject_weight_scaling.py rebuilds
-    # outlineWidth from the current static line_width and would overwrite
-    # anything authored here.  Run it after this script.
-    sub.append(empty_dd())
-    if sub_dd:
-        for key, expr in sub_dd.items():
-            set_dd(sub, key, expr)
+    dot.append(empty_dd())
+    # The static colour above is the feature's own; this overrides it per
+    # feature from the recorded mineral.  Both are set, so a dd evaluation
+    # failure still draws something sensible.
+    set_dd(dot, "fillColor", colour_expr)
+    set_dd(dot, "outlineColor", colour_expr)
     return layer
 
 
@@ -744,47 +856,67 @@ def backbone(sym_el, code):
     return best
 
 
-def lw_expression(half_mm, clearance):
-    """Paired offset curves, both sides, in paper mm.
+def _num(v):
+    return ("%.4f" % v).rstrip("0").rstrip(".") or "0"
+
+
+def lw_expression(half_mm, clearance, ring):
+    """One ring of the stipple: paired offset curves, both sides, paper mm.
 
     The offset carries the same Weight and Width_cm factors the backbone
-    stroke does, so the WHITE GAP between vein edge and halo is the
-    constant, not the offset.
+    stroke does, so the WHITE GAP between vein edge and ring 1 stays
+    constant however thick the vein is drawn.  Rings then step outward at a
+    fixed spacing, which is what makes a wide selvedge visibly reach
+    further into the wallrock than a narrow one.
 
     array_filter is not decoration: offset_curve() returns null on a
     degenerate or zero-length line, and an unguarded null inside
     collect_geometries takes down the whole symbol layer - every feature -
     not just that one.
     """
-    off = ("(%s * (%s) * (%s) + (%s) + %s)"
-           % (round(half_mm, 4), WEIGHT_F, DETAIL_WIDTH_FACTOR, LW_GAP,
-              _num(clearance)))
+    step = LW_GAP + clearance + (ring - 1) * RING_SPACING
+    off = ("(%s * (%s) * (%s) + %s)"
+           % (round(half_mm, 4), WEIGHT_F, DETAIL_WIDTH_FACTOR, _num(step)))
     return ("CASE WHEN %s THEN collect_geometries(array_filter(array("
             "offset_curve($geometry, %s), offset_curve($geometry, 0 - %s)), "
             "not is_empty_or_null(@element))) ELSE NULL END"
-            % (SELVEDGE_ON, off, off))
+            % (RING_ON[ring], off, off))
 
 
-def bm_expression():
-    """A band hemming the inside of the polygon edge, in paper mm.
+def bm_expression(ring):
+    """One ring OUTSIDE the polygon boundary, in paper mm.
 
-    buffer(poly, -d) on a polygon narrower than 2d returns EMPTY, and
-    difference(poly, empty) returns the WHOLE polygon - so without the
-    guard every small vein pod would flood solid in the band colour.  The
-    area test kills the near-degenerate case where a sliver of core
-    survives and the 'band' is almost the whole shape.  Both return NULL,
-    which draws nothing: a polygon too small to carry a band should not
-    pretend to.
+    Outward, so there is nothing to degenerate: the inward band this
+    replaced collapsed on any pod narrower than twice the band, and
+    difference(poly, empty) then handed back the WHOLE polygon, flooding it.
+    A positive buffer always grows.  Geologically it is also the truer
+    statement - a selvedge is altered wallrock, outside the vein.
+
+    The only guard left is against a null/empty geometry, which buffer()
+    would propagate.
     """
-    return ("CASE WHEN %s THEN with_variable('core', "
-            "buffer($geometry, 0 - (%s)), "
-            "CASE WHEN is_empty_or_null(@core) OR area(@core) < 0.5 THEN NULL "
-            "ELSE difference($geometry, @core) END) ELSE NULL END"
-            % (SELVEDGE_ON, BM_BAND))
+    off = BM_GAP + (ring - 1) * RING_SPACING
+    return ("CASE WHEN %s AND NOT is_empty_or_null($geometry) "
+            "THEN boundary(buffer($geometry, %s)) ELSE NULL END"
+            % (RING_ON[ring], _num(off)))
 
 
-def _num(v):
-    return ("%.4f" % v).rstrip("0").rstrip(".") or "0"
+def strip_round1(sym_el, code):
+    """Remove the round-1 single solid halo/band layer, if present.
+
+    Round 1 authored one generator per symbol under the id layer_id("gen",
+    code).  This script is idempotent by uuid5 id, so without this the old
+    solid halo would simply survive alongside the new rings - two different
+    selvedges on the same vein.
+    """
+    dropped = 0
+    for lyr in list(sym_el.findall("layer")):
+        if lyr.get("class") != "GeometryGenerator":
+            continue
+        if lyr.get("id") == layer_id("gen", code):
+            sym_el.remove(lyr)
+            dropped += 1
+    return dropped
 
 
 def convert_linework(qml, code):
@@ -796,21 +928,26 @@ def convert_linework(qml, code):
     sym_name = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
     s, e = symbol_block(qml, sym_name)
     sym_el = ET.fromstring(qml[s:e])
-    if layer_id("gen", code) in {l.get("id") for l in sym_el.findall("layer")}:
+    have = {l.get("id") for l in sym_el.findall("layer")}
+    if {layer_id("ring%d" % r, code) for r in RINGS} <= have:
         return qml, False
 
+    strip_round1(sym_el, code)
     width_pt, colour = backbone(sym_el, code)
-    gen = build_generator(
-        code,
-        lw_expression(width_pt * MM_PER_PT / 2.0, LW_CLEARANCE.get(code, 0.0)),
-        "@%s@%d" % (sym_name, len(sym_el.findall("layer"))),
-        "SimpleLine",
-        line_opts(rgba(colour, alpha=HALO_ALPHA), HALO_WIDTH_PT),
-        sub_dd={"outlineStyle": CONFIDENCE_DASH},
-    )
-    # Bottom of the stack, so the backbone and its markers draw on top -
-    # the position the Vein - Shear wave already occupies.
-    insert_layer(sym_el, gen, 0)
+    own = rgba(colour, alpha="255")
+    colour_expr = selvedge_colour_expr(rgb_only(own))
+    n = len(sym_el.findall("layer"))
+    for k, ring in enumerate(RINGS):
+        gen = build_ring(
+            code, ring,
+            lw_expression(width_pt * MM_PER_PT / 2.0,
+                          LW_CLEARANCE.get(code, 0.0), ring),
+            colour_expr, own, "@%s@%d" % (sym_name, n + k))
+        # Bottom of the stack, so the backbone and its markers draw on top -
+        # the position the Vein - Shear wave already occupies.  Rings go in
+        # in order, so ring 1 sits innermost in the stack as well as on the
+        # map.
+        insert_layer(sym_el, gen, k)
     return qml[:s] + ET.tostring(sym_el, encoding="unicode") + qml[e:], True
 
 
@@ -822,25 +959,28 @@ def convert_basemap(qml, code):
     sym_name = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
     s, e = symbol_block(qml, sym_name)
     sym_el = ET.fromstring(qml[s:e])
-    if layer_id("gen", code) in {l.get("id") for l in sym_el.findall("layer")}:
+    have = {l.get("id") for l in sym_el.findall("layer")}
+    if {layer_id("ring%d" % r, code) for r in RINGS} <= have:
         return qml, False
 
+    strip_round1(sym_el, code)
     fill = None
     for lyr in sym_el.findall("layer"):
         if lyr.get("class") == "SimpleFill":
             fill = direct_opts(lyr).get("color")
             break
     if fill is None:
-        bail("%r: no SimpleFill to take the band colour from" % code)
-
-    gen = build_generator(
-        code, bm_expression(),
-        "@%s@%d" % (sym_name, len(sym_el.findall("layer"))),
-        "SimpleFill",
-        fill_opts(rgba(fill.get("value"), alpha="255", scale=BAND_DARKEN)),
-    )
-    # Above the class fill, below the ContactType boundary line.
-    insert_layer(sym_el, gen, 1)
+        bail("%r: no SimpleFill to take the fallback dot colour from" % code)
+    own = rgba(fill.get("value"), alpha="255", scale=BAND_DARKEN)
+    colour_expr = selvedge_colour_expr(rgb_only(own))
+    n = len(sym_el.findall("layer"))
+    for k, ring in enumerate(RINGS):
+        gen = build_ring(code, ring, bm_expression(ring), colour_expr, own,
+                         "@%s@%d" % (sym_name, n + k))
+        # Above the class fill, below the ContactType boundary line.  A
+        # <symbol> also carries a <data_defined_properties> child, so this
+        # index counts <layer> elements - see insert_layer().
+        insert_layer(sym_el, gen, 1 + k)
     return qml[:s] + ET.tostring(sym_el, encoding="unicode") + qml[e:], True
 
 
@@ -864,6 +1004,21 @@ def apply_symbology(qml, layer, codes, convert):
 
 
 # ---------------------------------------------------------------------------
+
+def weight_scaling_skip_ids():
+    """Stipple dot layer ids, for inject_weight_scaling to step over.
+
+    The dots are a TEXTURE standing for the alteration halo, not part of the
+    vein's own line weight, so they must not carry the Weight x Width_cm
+    ramp: under it a Minor hairline vein's selvedge shrinks to invisible
+    (x0.275) and a Major thick vein's swells into touching blobs (x3).  The
+    ring OFFSET still scales - that is what keeps the stipple clear of the
+    stroke - but the dot itself stays the size it was drawn.
+    """
+    return {layer_id("dot%d" % r, c)
+            for r in RINGS
+            for c in list(LW_VEIN_CODES) + list(VEIN_LITHS)}
+
 
 def count_generators(qml):
     return sum(1 for l in ET.fromstring(qml).iter("layer")
@@ -934,7 +1089,7 @@ def main():
     print("integrity_check:", cur.fetchone()[0])
 
     for layer, spec, codes, n_cats, attr in (
-            (LW, LW_SPEC, LW_VEIN_CODES, 137, "Type"),
+            (LW, LW_SPEC, LW_VEIN_CODES, 135, "Type"),
             (BM, BM_SPEC, list(VEIN_LITHS), 284, "Lithology1")):
         cols = [r[1] for r in cur.execute('PRAGMA table_info("%s")' % layer)]
         cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?",
@@ -973,46 +1128,66 @@ def main():
         assert len(renderer.find("categories")) == n_cats, \
             (layer, len(renderer.find("categories")))
 
-        # Stack position, per symbol: bottom on Linework so the backbone
-        # draws over the halo, one up on Basemap so the band sits ON the
-        # class fill rather than under it.  A generator drawn under an
-        # opaque fill is invisible and nothing else would catch it.
-        want_pos = 0 if layer == LW else 1
-        ids = {layer_id("gen", c) for c in codes}
+        # Stack position, per symbol.  Rings sit at the bottom on Linework so
+        # the backbone and its markers draw over them, and one up on Basemap
+        # so they sit ON the class fill rather than under it - a generator
+        # drawn under an opaque fill is invisible, and in round 1 nothing
+        # else caught that.  A <symbol> also carries a
+        # <data_defined_properties> child, which is why these are positions
+        # among <layer> elements, not raw child indexes.
+        base_pos = 0 if layer == LW else 1
+        ring_id = {layer_id("ring%d" % r, c): r for c in codes for r in RINGS}
         for sym in renderer.find("symbols"):
-            layers = sym.findall("layer")
-            for pos, lyr in enumerate(layers):
-                if lyr.get("id") in ids:
-                    assert pos == want_pos,                         "%s: selvedge generator at stack position %d, "                         "expected %d - it would be drawn over"                         % (layer, pos, want_pos)
+            for pos, lyr in enumerate(sym.findall("layer")):
+                r = ring_id.get(lyr.get("id"))
+                if r is None:
+                    continue
+                want_pos = base_pos + RINGS.index(r)
+                assert pos == want_pos, \
+                    "%s: ring %d at stack position %d, expected %d - it " \
+                    "would be drawn over" % (layer, r, pos, want_pos)
 
         seen = 0
         for lyr in root.iter("layer"):
             if lyr.get("class") != "GeometryGenerator":
                 continue
-            if lyr.get("id") not in ids:
+            r = ring_id.get(lyr.get("id"))
+            if r is None:
                 continue
             seen += 1
             o = direct_opts(lyr)
             assert o["units"].get("value") == "MM", layer
-            assert o["SymbolType"].get("value") == (
-                "Line" if layer == LW else "Fill"), layer
-            assert get_dd(lyr, "enabled") == SELVEDGE_ON, \
-                "%s: generator has no dd enabled" % layer
-        assert seen == len(codes), (layer, seen, len(codes))
+            assert o["SymbolType"].get("value") == "Line", layer
+            assert get_dd(lyr, "enabled") == RING_ON[r], \
+                "%s: ring %d has the wrong dd enabled" % (layer, r)
+            dots = lyr.find("symbol/layer")
+            assert dots is not None and dots.get("class") == "MarkerLine", \
+                "%s: ring %d is not a MarkerLine" % (layer, r)
+            dot = dots.find("symbol/layer")
+            assert dot is not None and dot.get("class") == "SimpleMarker", \
+                "%s: ring %d has no dot" % (layer, r)
+            assert "SelvedgeMineral" in (get_dd(dot, "fillColor") or ""), \
+                "%s: ring %d dot is not coloured by mineral" % (layer, r)
+        assert seen == len(codes) * len(RINGS), \
+            (layer, seen, len(codes) * len(RINGS))
+        # Round 1's single solid halo must be gone, not merely outnumbered.
+        old = {layer_id("gen", c) for c in codes}
+        assert not any(l.get("id") in old for l in root.iter("layer")), \
+            "%s: a round-1 solid selvedge survived alongside the rings" % layer
         # Every layer must own a dd block, or inject_weight_scaling will
         # rewrite its neighbour's with the wrong statics.
         for sym in renderer.find("symbols"):
             for lyr in sym.iter("layer"):
                 assert lyr.find("data_defined_properties") is not None, \
                     "%s: layer %s has no dd block" % (layer, lyr.get("id"))
-        print("round-trip ok: %s - 3 fields, label tag, %d selvedge generators "
+        print("round-trip ok: %s - 3 fields, label tag, %d selvedge rings "
               "(%d generators total, was %d)"
               % (layer, seen, count_generators(ET.tostring(root, encoding="unicode")),
                  before_gg[layer]))
 
     con.close()
     print("\nNOW RUN: python scripts/inject_weight_scaling.py"
-          "   (ramps the halo stroke to Weight x Width_cm)")
+          "   (ramps the stipple dots to Weight x Width_cm)")
     print('THEN:    "C:\\OSGeo4W\\bin\\python-qgis-ltr.bat" '
           "scripts/inject_basemap_lith_patterns.py   (re-bakes the Patterns gpkg)")
 

@@ -23,8 +23,12 @@ Harry's review of the 1:5000 render sheet (2026-08-17) settled four things:
      style name a family does not have can resolve to a DIFFERENT family
      altogether, whereas fontItalic alone gives the synthetic oblique.
 
-  4. Long lines repeat their label every 60 mm. Naming a fault once is a
-     limitation, not a style.
+  4. Long lines repeat their label every 200 mm of PAGE, held in MAP UNITS
+     so the repeat tracks the mapping scale rather than the zoom. A
+     millimetre repeat is paper-at-the-current-render-scale, which QGIS
+     does not tie to the reference scale, so zooming in kept adding labels
+     to lines that are not actually long. Naming a fault once is a
+     limitation, not a style; naming it every time you lean in is noise.
 
 And two defects found on the way:
 
@@ -62,7 +66,12 @@ LITH_SIZE = "5.5"
 LITH_COLOUR = ("26,26,26,255,rgb:0.10196078431372549,"
                "0.10196078431372549,0.10196078431372549,1")
 ANNO_SIZE = "6"
-REPEAT_MM = "60"
+# 200 mm on the page at the baked reference scale, expressed in MAP UNITS -
+# = script_setmapping.linework_repeat_for_scale(5000). Millimetres would be
+# paper-at-the-current-render-scale, which QGIS does not tie to the reference
+# scale, so zooming in would keep adding labels to a short line. Set Mapping
+# Scale rewrites this per project; keep the two in step.
+REPEAT_MU = "1000"
 
 # The label expression's own markup, before and after the weight split.
 DIV = "'<div>'"
@@ -89,7 +98,8 @@ LAYERS = {
         text={"fontFamily": FONT, "namedStyle": "",
               "fontSize": ANNO_SIZE, "fontItalic": "1"},
         mask={"maskEnabled": "0", "maskedSymbolLayers": ""},
-        placement={"repeatDistance": REPEAT_MM, "repeatDistanceUnits": "MM"},
+        placement={"repeatDistance": REPEAT_MU,
+                   "repeatDistanceUnits": "MapUnit"},
     ),
     "3 - Overlay": dict(
         labeling="simple",
@@ -309,7 +319,7 @@ def main():
     verify(cur)
     print(f"round-trip ok: {FONT} throughout, units {LITH_SIZE} pt with a "
           f"semibold code, annotation {ANNO_SIZE} pt italic, no halo or mask, "
-          f"lines repeat every {REPEAT_MM} mm")
+          f"lines repeat every {REPEAT_MU} map units")
     con.close()
 
 

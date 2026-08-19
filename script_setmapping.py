@@ -804,7 +804,8 @@ class LayerConfigurator:
 
     def configure_labeling(self, layers_dict, scale_value):
         """Configure scale-dependent labeling: rebuild the Field Notebook
-        rule-based labeling, rescale the Overlay label distances in place."""
+        rule-based labeling, rescale the Linework label repeat and the Overlay
+        label distances in place."""
         layer = self.get_layer(layers_dict.get("FieldNotebook"))
         if layer:
             layer.setLabeling(build_structural_labeling(scale_value))
@@ -816,6 +817,14 @@ class LayerConfigurator:
             QgsMessageLog.logMessage(f"[Label] Regolith Notes sit beside their point; only the Fallback rule draws a leader", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
             QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
+        linework = self.get_layer(layers_dict.get("Linework"))
+        if linework:
+            if is_lgs_linework_labeling(linework.labeling()):
+                rescale_linework_label_repeat(linework, scale_value)
+                QgsMessageLog.logMessage(f"[Label] Rescaled Linework label repeat to {linework_repeat_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            else:
+                QgsMessageLog.logMessage(f"[Label] {linework.name()} labeling is not the LGS Linework style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
         overlay = self.get_layer(layers_dict.get("Overlay"))
         if overlay:
@@ -840,6 +849,27 @@ def callout_dist_for_scale(scale_value):
     return scale_value * CALLOUT_DIST_FACTOR
 
 
+# How far a long line runs before it repeats its label: 200 mm on the page,
+# in ground metres per unit of scale denominator. 1000 m at 1:5000, 200 m at
+# 1:1000, 20 m at 1:100 - roughly two thirds of an A4 landscape sheet at any
+# mapping scale.
+#
+# The point of expressing it in GROUND units is that QGIS does NOT scale a
+# repeatDistance given in millimetres by the renderer's reference scale: it
+# is paper-at-the-current-render-scale, so zooming in makes more labels
+# appear and a short vein sprouts repeats. In map units the count depends on
+# how long the line actually is, which is the thing a geologist means.
+#
+# Mirrored by the baked template value in scripts/inject_label_cartography.py
+# (REPEAT_MU = 5000 * this).
+LINEWORK_REPEAT_FACTOR = 0.2
+
+
+def linework_repeat_for_scale(scale_value):
+    """Map-unit label repeat distance for a mapping scale."""
+    return scale_value * LINEWORK_REPEAT_FACTOR
+
+
 def is_lgs_overlay_labeling(labeling):
     """True if labeling is the LGS Overlay simple labeling shaped by
     scripts/inject_overlay_label_placement.py (Horizontal placement with a
@@ -851,6 +881,34 @@ def is_lgs_overlay_labeling(labeling):
         return False
     callout = settings.callout()
     return callout is not None and callout.enabled()
+
+
+def is_lgs_linework_labeling(labeling):
+    """True if labeling is the LGS Linework simple labeling shaped by
+    scripts/inject_label_cartography.py (Curved placement over the vein/detail
+    label expression) - the guard that keeps rescaling off hand-customized
+    styles, same role as is_lgs_overlay_labeling."""
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+    settings = labeling.settings()
+    if settings.placement != Qgis.LabelPlacement.Curved:
+        return False
+    return bool(settings.isExpression)
+
+
+def rescale_linework_label_repeat(layer, scale_value):
+    """Rescale the Linework label repeat distance to a mapping scale.
+
+    Edits the existing simple labeling by copy - never rebuilds - so the
+    auxiliary-storage dd bindings (manual label moves), fonts, the label
+    expression and the placement flags all survive.
+    """
+    settings = QgsPalLayerSettings(layer.labeling().settings())
+    settings.repeatDistance = linework_repeat_for_scale(scale_value)
+    settings.repeatDistanceUnit = Qgis.RenderUnit.MapUnits
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    layer.setLabelsEnabled(True)
+    layer.triggerRepaint()
 
 
 def rescale_overlay_label_distance(layer, scale_value):
