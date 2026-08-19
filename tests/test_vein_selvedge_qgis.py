@@ -569,12 +569,13 @@ def test_labels(tmp_gpkg):
         Category="Veins", Type="Vein - Quartz", VeinGen="V2", Width_cm=7.0,
         Mineral1="Qz", Mineral1Pct=10, Mineral2="Py", Selvedge_cm=3.0,
         SelvedgeMineral="Bt"))
-    check(got == "V2 7cm Qz10%-Py slv 3cm Bt",
-          "Linework vein tag composes generation-first: %r" % got)
+    check(got == "V2 7cm Qz(10%)-Py, Slv: 3cm Bt",
+          "Linework vein tag composes generation-first, with the selvedge as "
+          "its own named group: %r" % got)
 
     got = eval_label(lw_expr, lw, LINE, dict(
         Category="Veins", Type="Vein", VeinGen="V1", SelvedgeMineral="Ser"))
-    check(got == "V1 slv Ser",
+    check(got == "V1, Slv: Ser",
           "a selvedge mineral with no measured width still labels: %r" % got)
 
     # The gate is not belt-and-braces: a stray Selvedge_cm on a fault would
@@ -586,7 +587,7 @@ def test_labels(tmp_gpkg):
 
     got = eval_label(bm_expr, bm, POLY, dict(
         Lithology1="VQ", VeinGen="V2", Selvedge_cm=3.0, SelvedgeMineral="Bt"))
-    check("V2 slv 3cm Bt" in got and "font-weight:400" in got,
+    check("V2, Slv: 3cm Bt" in got and "font-weight:400" in got,
           "Basemap vein tag rides in the light span: %r" % got)
     got = eval_label(bm_expr, bm, POLY, dict(
         Lithology1="FGR", VeinGen="V2", Selvedge_cm=3.0))

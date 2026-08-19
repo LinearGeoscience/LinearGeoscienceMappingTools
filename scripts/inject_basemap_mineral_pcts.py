@@ -56,9 +56,15 @@ SPEC = [
 
 
 def mineral_token(m, p):
-    """'Gn(5%)' - mineral code with its optional percentage attached."""
+    """'Gn(5%)' - mineral code with its optional percentage attached.
+
+    coalesce(...) > 0 rather than IS NOT NULL: a zero is not a reading, and
+    'Qtz(0%)' on the map is worse than plain 'Qtz'.  Linework has always
+    guarded this (inject_linework_mineral_pcts.mineral_piece); Basemap did
+    not, which is why a recorded 0 used to print here.
+    """
     return ("coalesce(\"%s\",'') || CASE WHEN coalesce(\"%s\",'') != '' AND "
-            "\"%s\" IS NOT NULL THEN '(' || \"%s\" || '%%)' ELSE '' END"
+            "coalesce(\"%s\", 0) > 0 THEN '(' || \"%s\" || '%%)' ELSE '' END"
             % (m, m, p, p))
 
 

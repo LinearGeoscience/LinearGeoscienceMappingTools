@@ -100,11 +100,30 @@ PCT_FACTOR = ("CASE WHEN coalesce(\"Percent\", 0) <= 0 THEN 1 "
               "WHEN \"Percent\" < 20 THEN 0.866 "
               "ELSE 0.775 END")
 
-OLD_LABEL_TAIL = " ELSE concat("
+# The ELSE branch this splices in front of.  inject_label_grammar.py
+# rewrote it from a raw 3-way concat (which emitted trailing blank
+# lines) to a joined array, so the anchor moved with it.
+OLD_LABEL_TAIL = " ELSE array_to_string(array_remove_all(array("
+# The subtype chain every Overlay branch shares.  It lives here because this
+# is the only script that owns an Overlay label branch; inject_label_grammar
+# imports it so the branches cannot say the same thing two ways.  Chaining
+# all three matters: SubType2/SubType3 are offered on the form for every
+# Type, and this branch used to read SubType1 and silently drop the rest.
+# coalesce EACH one first: array_remove_all removes empty STRINGS, not
+# NULLs, and an unset SubType2 is NULL - leave it and array_to_string keeps
+# the separator, so 'Shear Zone' renders as 'Shear Zone--'.
+SUBTYPES = ("array_to_string(array_remove_all(array("
+            "coalesce(\"SubType1\",''), coalesce(\"SubType2\",''), "
+            "coalesce(\"SubType3\",'')), ''), '-')")
+
+# 'Stringer Zone, Gn(12%)' - the mineral is its own group after a comma and
+# its percentage is bracketed onto it, matching the Linework and Basemap
+# mineral tokens.  It used to be space-concatenated ('Stringer Zone Gn 12%'),
+# which read as three unrelated words.
 NEW_LABEL_BRANCH = (
-    "WHEN \"Type\" = 'Mineralisation' THEN \"SubType1\" || "
-    "coalesce(' ' || nullif(\"Mineral1\",''), '') || "
-    "CASE WHEN coalesce(\"Percent\", 0) > 0 THEN ' ' || \"Percent\" || '%' "
+    "WHEN \"Type\" = 'Mineralisation' THEN " + SUBTYPES + " || "
+    "coalesce(', ' || nullif(\"Mineral1\",''), '') || "
+    "CASE WHEN coalesce(\"Percent\", 0) > 0 THEN '(' || \"Percent\" || '%)' "
     "ELSE '' END")
 # The same branch before the zero guard - recognised only so a re-run does
 # not inject a duplicate on a template that predates

@@ -56,6 +56,20 @@ _EXPECTED = {
          'AND coalesce({q}Mineral3Pct{q}, 0) {gt} 0 THEN'.format(q=_Q, gt=_GT),
          1),
     ],
+    '4 - Basemap': [
+        # Basemap kept 'IS NOT NULL' long after Linework was guarded, so a
+        # recorded 0 printed 'Qtz(0%)'.  Six mineral slots, two lithologies.
+        ('Lith mineral % label gates',
+         'AND {q}Lith1Mineral1Pct{q} IS NOT NULL THEN'.format(q=_Q),
+         'AND coalesce({q}Lith1Mineral1Pct{q}, 0) {gt} 0 THEN'.format(
+             q=_Q, gt=_GT),
+         1),
+        ('Lith2 mineral % label gates',
+         'AND {q}Lith2Mineral3Pct{q} IS NOT NULL THEN'.format(q=_Q),
+         'AND coalesce({q}Lith2Mineral3Pct{q}, 0) {gt} 0 THEN'.format(
+             q=_Q, gt=_GT),
+         1),
+    ],
     '3 - Overlay': [
         ('Percent density ramp',
          'CASE WHEN {q}Percent{q} IS NULL THEN 1'.format(q=_Q),

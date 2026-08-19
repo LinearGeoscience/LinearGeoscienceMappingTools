@@ -60,13 +60,22 @@ OLD_PERCENT_TEXT = ("CASE WHEN \"Percent\" IS NULL THEN '' "
 
 
 def mineral_piece(n):
-    # coalesce(...) > 0 rather than IS NOT NULL: a percentage of zero is not
-    # a reading, and 'ga0%' on the map is worse than plain 'ga' (same guard
-    # as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+    """'Qz(60%)' - the mineral code with its percentage bracketed onto it.
+
+    Bracketed, not glued: a bare 'Qz60%' next to a vein width reads as two
+    unrelated numbers, and the whole point of the label grammar is that a
+    value is attached to the thing it measures.  Identical in shape to
+    inject_basemap_mineral_pcts.mineral_token, so the two layers say the
+    same thing the same way.
+
+    coalesce(...) > 0 rather than IS NOT NULL: a percentage of zero is not
+    a reading, and 'Qz(0%)' on the map is worse than plain 'Qz' (same guard
+    as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+    """
     return ("coalesce(\"Mineral{n}\",'') || "
             "CASE WHEN coalesce(\"Mineral{n}\",'') != '' "
             "AND coalesce(\"Mineral{n}Pct\", 0) > 0 "
-            "THEN \"Mineral{n}Pct\" || '%' ELSE '' END").format(n=n)
+            "THEN '(' || \"Mineral{n}Pct\" || '%)' ELSE '' END").format(n=n)
 
 
 NEW_MINERALS_TEXT = (

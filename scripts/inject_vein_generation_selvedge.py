@@ -57,11 +57,17 @@ Run order matters:
                                       for us.  Do not author that ramp here.
     inject_basemap_lith_patterns.py   re-bakes LGS_MappingTemplate_Patterns.gpkg
 
-If inject_basemap_mineral_pcts.py ever has to run again, replay:
+inject_label_grammar.py joins the Linework label's groups and owns that
+assembly; the fragments here (LW_GEN_TEXT, LW_SLV_TEXT) are embedded in it
+verbatim, so this script no-ops once it has run.
+
+If inject_basemap_mineral_pcts.py ever has to run again - it rewrites the
+Basemap label wholesale, so it is the one injector a no-op sweep must skip -
+replay:
     inject_basemap_mineral_pcts -> inject_confidence_system ->
-    inject_label_cartography -> inject_vein_generation_selvedge ->
-    inject_weight_scaling -> inject_label_size_scaling ->
-    inject_basemap_lith_patterns
+    inject_label_grammar -> inject_vein_generation_selvedge ->
+    inject_label_cartography -> inject_weight_scaling ->
+    inject_label_size_scaling -> inject_basemap_lith_patterns
 
 styleSLD is deliberately left alone: SLD cannot express a geometry
 generator, and no category or colour changes here (same reasoning as
@@ -84,6 +90,7 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import inject_basemap_mineral_pcts as _basemap  # noqa: E402
 from inject_weight_scaling import DETAIL_WIDTH_FACTOR, FACTORS  # noqa: E402
 
 LW = "2 - Linework"
@@ -252,7 +259,11 @@ def auto_width_text(field):
 
 
 def slv_text(gate):
-    """'slv 3cm Bt', or '' when there is no selvedge on this feature.
+    """'Slv: 3cm Bt', or '' when there is no selvedge on this feature.
+
+    A named group, because the vein already carries a width of its own and
+    two bare measurements in a row cannot be told apart - which is exactly
+    what '10cm Brt slv 10cm Afs' did.
 
     The gate is not belt-and-braces.  On Linework the selvedge sits inside
     the detail-scope branch of the label, which also covers dykes, faults
@@ -260,7 +271,7 @@ def slv_text(gate):
     or import would print a selvedge the symbology never draws.  A label
     must not promise ink that cannot appear.
     """
-    return ("CASE WHEN NOT (%s AND %s) THEN '' ELSE 'slv' || "
+    return ("CASE WHEN NOT (%s AND %s) THEN '' ELSE 'Slv:' || "
             "coalesce(' ' || nullif(%s, ''), '') || "
             "coalesce(' ' || \"SelvedgeMineral\", '') END"
             % (gate, SELVEDGE_ON, auto_width_text("Selvedge_cm")))
@@ -276,16 +287,29 @@ LW_GEN_TEXT = ("CASE WHEN %s AND coalesce(\"VeinGen\",'') != '' "
 LW_HEAD = 'array_remove_all(array(CASE WHEN coalesce("Width_cm", 0)'
 LW_TAIL = 'coalesce("Label",\'\')'
 
-# Basemap: sits straight after the lithology code and its Confidence '?', in
-# the light span so it does not compete with the semibold unit code.  The
-# span string MUST be the font-weight:400 variant - the bare
+# The vein tag goes AFTER the Lith1 modifier span, so a vein reads
+# 'VQ (Qtz(90%), Bnd), V2, Slv: 5cm Ser' rather than wedging the vein data
+# between the unit code and the unit's own modifiers.  SPAN1 is unique in
+# the expression - SPAN2 reads the Lith2 fields - so it is a safe anchor.
+#
+# The tag's own span string MUST be the font-weight:400 variant - the bare
 # 'font-style:italic;font-size:70%;' is what inject_label_cartography counts.
-BM_ANCHOR = ('"Lithology1" || CASE WHEN "Confidence" = \'Queried\' '
-             "THEN '?' ELSE '' END ||")
+# That same rewrite is why the anchor has to be recognised in EITHER weight,
+# depending on whether cartography has run yet.
+CART_SPAN = "font-style:italic;font-size:70%;"
+CART_SPAN_LIGHT = "font-style:italic;font-weight:400;font-size:70%;"
+
+
+def bm_anchor(expr):
+    plain = _basemap.SPAN1 + " ||"
+    for cand in (plain, plain.replace(CART_SPAN, CART_SPAN_LIGHT)):
+        if expr.count(cand) == 1:
+            return cand
+    return None
 BM_TAG = (
     "CASE WHEN (%s) AND (coalesce(\"VeinGen\",'') != '' OR %s) THEN "
-    "' <span style=\"font-style:italic;font-weight:400;font-size:70%%;\">' || "
-    "array_to_string(array_remove_all(array(coalesce(\"VeinGen\",''), %s), ''), ' ') "
+    "'<span style=\"font-style:italic;font-weight:400;font-size:70%%;\">, ' || "
+    "array_to_string(array_remove_all(array(coalesce(\"VeinGen\",''), %s), ''), ', ') "
     "|| '</span>' ELSE '' END" % (BM_VEINS, SELVEDGE_ON, BM_SLV_TEXT))
 
 # --- Field specs -----------------------------------------------------------
@@ -586,11 +610,12 @@ def splice_label(qml, layer):
         if BM_TAG in expr:
             print("  label: already applied")
             return qml, False
-        if expr.count(BM_ANCHOR) != 1:
-            bail("%s: label anchor appears %d times, expected 1 - has "
-                 "inject_basemap_mineral_pcts.py or inject_confidence_system.py "
-                 "been re-run since?" % (layer, expr.count(BM_ANCHOR)))
-        new = expr.replace(BM_ANCHOR, "%s %s ||" % (BM_ANCHOR, BM_TAG))
+        anchor = bm_anchor(expr)
+        if anchor is None:
+            bail("%s: the Lith1 modifier span is not in the label exactly "
+                 "once, in either weight - has inject_basemap_mineral_pcts.py "
+                 "been re-run since?" % layer)
+        new = expr.replace(anchor, "%s %s ||" % (anchor, BM_TAG))
 
     ts.set("fieldName", new)
     print("  label: vein tag spliced in")
