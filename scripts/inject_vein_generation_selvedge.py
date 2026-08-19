@@ -23,7 +23,7 @@ THE SELVEDGE IS DRAWN, as a stipple.  A selvedge is a diffuse alteration
 halo and a solid line says the opposite - it reads as a second contact - so
 each vein wears up to three rings of fine dots, phased against each other so
 they interleave rather than line up.  Rings step OUTWARD as the recorded
-width grows (ring 1 always, ring 2 past 2 cm, ring 3 past 10 cm), so a wide
+width grows (ring 1 always, ring 2 past 10 cm, ring 3 past a metre), so a wide
 selvedge visibly reaches further into the wallrock than a narrow one.  On
 Linework the rings are offset curves either side of the vein; on Basemap
 they are buffers OUTSIDE the polygon, because that is where altered wallrock
@@ -135,9 +135,13 @@ LW_VEIN_CODES = [
 # --- The stipple -----------------------------------------------------------
 # A selvedge is a diffuse alteration halo, and a solid line says the opposite
 # - it reads as a second contact.  So it is drawn as rings of fine dots that
-# step OUTWARD as the recorded width grows: ring 1 always, ring 2 past 2 cm,
-# ring 3 past 10 cm.  The thresholds are the tiers the old solid halo already
-# used for its gap.
+# step OUTWARD as the recorded width grows: ring 1 always, ring 2 past
+# 10 cm, ring 3 past a metre.
+#
+# The tiers are set against what a SELVEDGE does, not what a vein does.  They
+# started life as the vein-width tiers (2 cm / 10 cm) and saturated far too
+# early - a 10 cm alteration halo and a 3 m one drew identically, collapsing
+# the top two thirds of the real range into one step.
 #
 # Three authored layers rather than one generator emitting every ring,
 # because the interleave has to come from somewhere: offset_along_line is a
@@ -148,8 +152,8 @@ RINGS = (1, 2, 3)
 RING_SPACING = 1.0           # paper-mm between successive rings
 RING_ON = {
     1: SELVEDGE_ON,
-    2: "%s AND coalesce(\"Selvedge_cm\", 0) > 2" % SELVEDGE_ON,
-    3: "%s AND coalesce(\"Selvedge_cm\", 0) > 10" % SELVEDGE_ON,
+    2: "%s AND coalesce(\"Selvedge_cm\", 0) > 10" % SELVEDGE_ON,
+    3: "%s AND coalesce(\"Selvedge_cm\", 0) > 100" % SELVEDGE_ON,
 }
 
 DOT_INTERVAL = 2.2           # paper-mm between dots along a ring
@@ -948,6 +952,43 @@ def strip_round1(sym_el, code):
     return dropped
 
 
+def rings_current(sym_el, code, expr_for):
+    """True if the symbol's rings say exactly what we would author now.
+
+    Identity alone is NOT enough.  This script is idempotent by uuid5 layer
+    id, so a plain "are the ring ids present?" test makes any change to a
+    CONSTANT a silent no-op: edit RING_ON and re-run, and the old thresholds
+    stay baked while the script cheerfully reports "already applied".  That
+    is how the tier change nearly shipped as nothing at all.
+
+    RING_ON reaches three places per ring - the data-defined `enabled`, and
+    the geometryModifier's own CASE for the line and the polygon - so all
+    three are compared.
+    """
+    for ring in RINGS:
+        lyr = next((l for l in sym_el.findall("layer")
+                    if l.get("id") == layer_id("ring%d" % ring, code)), None)
+        if lyr is None:
+            return False
+        opts = direct_opts(lyr)
+        if "geometryModifier" not in opts:
+            return False
+        if opts["geometryModifier"].get("value") != expr_for(ring):
+            return False
+        if get_dd(lyr, "enabled") != RING_ON[ring]:
+            return False
+    return True
+
+
+def strip_rings(sym_el, code):
+    """Drop this symbol's ring generators so they can be re-authored."""
+    for lyr in list(sym_el.findall("layer")):
+        if lyr.get("class") != "GeometryGenerator":
+            continue
+        if lyr.get("id") in {layer_id("ring%d" % r, code) for r in RINGS}:
+            sym_el.remove(lyr)
+
+
 def convert_linework(qml, code):
     """Returns (qml, changed).  Idempotent: matched by uuid5 id, not style."""
     cm = re.search(r'<category[^>]*value=%s[^>]*/>' % re.escape(quoteattr(code)),
@@ -957,21 +998,23 @@ def convert_linework(qml, code):
     sym_name = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
     s, e = symbol_block(qml, sym_name)
     sym_el = ET.fromstring(qml[s:e])
-    have = {l.get("id") for l in sym_el.findall("layer")}
-    if {layer_id("ring%d" % r, code) for r in RINGS} <= have:
+    width_pt, colour = backbone(sym_el, code)
+
+    def expr_for(ring):
+        return lw_expression(width_pt * MM_PER_PT / 2.0,
+                             LW_CLEARANCE.get(code, 0.0), ring)
+
+    if rings_current(sym_el, code, expr_for):
         return qml, False
 
     strip_round1(sym_el, code)
-    width_pt, colour = backbone(sym_el, code)
+    strip_rings(sym_el, code)
     own = rgba(colour, alpha="255")
     colour_expr = selvedge_colour_expr(rgb_only(own))
     n = len(sym_el.findall("layer"))
     for k, ring in enumerate(RINGS):
-        gen = build_ring(
-            code, ring,
-            lw_expression(width_pt * MM_PER_PT / 2.0,
-                          LW_CLEARANCE.get(code, 0.0), ring),
-            colour_expr, own, "@%s@%d" % (sym_name, n + k))
+        gen = build_ring(code, ring, expr_for(ring), colour_expr, own,
+                         "@%s@%d" % (sym_name, n + k))
         # Bottom of the stack, so the backbone and its markers draw on top -
         # the position the Vein - Shear wave already occupies.  Rings go in
         # in order, so ring 1 sits innermost in the stack as well as on the
@@ -988,11 +1031,11 @@ def convert_basemap(qml, code):
     sym_name = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
     s, e = symbol_block(qml, sym_name)
     sym_el = ET.fromstring(qml[s:e])
-    have = {l.get("id") for l in sym_el.findall("layer")}
-    if {layer_id("ring%d" % r, code) for r in RINGS} <= have:
+    if rings_current(sym_el, code, bm_expression):
         return qml, False
 
     strip_round1(sym_el, code)
+    strip_rings(sym_el, code)
     fill = None
     for lyr in sym_el.findall("layer"):
         if lyr.get("class") == "SimpleFill":

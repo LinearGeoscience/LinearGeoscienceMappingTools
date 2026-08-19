@@ -334,7 +334,8 @@ def test_expressions():
                       "%s ring %d on %s draws nothing with no selvedge "
                       "recorded" % (layer, ring, name))
 
-                on, err = evaluate(expr, wkt, {"Selvedge_cm": 30.0,
+                # Above the top tier, so every ring is switched on.
+                on, err = evaluate(expr, wkt, {"Selvedge_cm": 150.0,
                                                "Weight": "Moderate"})
                 if not check(err is None, "%s ring %d on %s: %s"
                              % (layer, ring, name, err)):
@@ -461,11 +462,12 @@ def test_render(tmp_gpkg):
     seed(lw, mm_line(40), base)
     bare = ink(render(lw, REF_SCALE, project))
     steps = []
-    for slv in (1.0, 5.0, 30.0):
+    # One value inside each tier: 1 ring to 10 cm, 2 past it, 3 past a metre.
+    for slv in (5.0, 30.0, 150.0):
         seed(lw, mm_line(40), dict(base, Selvedge_cm=slv))
         steps.append(ink(render(lw, REF_SCALE, project)) - bare)
-    print("    stipple ink by tier: 1cm=%d  5cm=%d  30cm=%d" % tuple(steps))
-    check(steps[0] > 0, "a 1 cm selvedge puts a ring down (%d px)" % steps[0])
+    print("    stipple ink by tier: 5cm=%d  30cm=%d  150cm=%d" % tuple(steps))
+    check(steps[0] > 0, "a 5 cm selvedge puts a ring down (%d px)" % steps[0])
     check(steps[1] > steps[0] and steps[2] > steps[1],
           "each width tier adds a ring (%s)" % (steps,))
 
@@ -487,7 +489,7 @@ def test_render(tmp_gpkg):
         lw.renderer().setReferenceScale(scale)
         seed(lw, mm_line(40, scale), base)
         off = ink(render(lw, scale, project))
-        seed(lw, mm_line(40, scale), dict(base, Selvedge_cm=30.0))
+        seed(lw, mm_line(40, scale), dict(base, Selvedge_cm=150.0))
         extra[scale] = ink(render(lw, scale, project)) - off
     lw.renderer().setReferenceScale(REF_SCALE)
     print("    stipple ink by scale: "
@@ -498,7 +500,7 @@ def test_render(tmp_gpkg):
           "1:20000 (%d..%d px) - this is what proves units=MM" % (lo, hi))
 
     for mineral, rgb in (("Chl", (86, 138, 94)), ("Hem", (176, 72, 58))):
-        seed(lw, mm_line(40), dict(base, Selvedge_cm=30.0,
+        seed(lw, mm_line(40), dict(base, Selvedge_cm=150.0,
                                    SelvedgeMineral=mineral))
         got = near(render(lw, REF_SCALE, project),
                    composite(rgb, _inj.DOT_ALPHA))
@@ -508,7 +510,7 @@ def test_render(tmp_gpkg):
     seed(lw, mm_line(40), dict(base, Type="Vein Set / Sheeted"))
     off = ink(render(lw, REF_SCALE, project))
     seed(lw, mm_line(40), dict(base, Type="Vein Set / Sheeted",
-                               Selvedge_cm=30.0))
+                               Selvedge_cm=150.0))
     check(ink(render(lw, REF_SCALE, project)) == off,
           "Vein Set / Sheeted is untouched by a recorded selvedge")
 
@@ -520,7 +522,7 @@ def test_render(tmp_gpkg):
                              ("1 mm pod", mm_box(1, 1), 10)):
         seed(bm, wkt, dict(Lithology1="VQ"))
         off = ink(render(bm, REF_SCALE, project))
-        seed(bm, wkt, dict(Lithology1="VQ", Selvedge_cm=30.0,
+        seed(bm, wkt, dict(Lithology1="VQ", Selvedge_cm=150.0,
                            SelvedgeMineral="Chl"))
         img = render(bm, REF_SCALE, project)
         got = near(img, composite((86, 138, 94), _inj.DOT_ALPHA))
