@@ -19,6 +19,7 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 
 from ..utils.path_utils import normalize_project_file_paths, ensure_relative_to_project, clean_csv_uri_to_path
 from ..utils.qgis_utils import (
+    clean_layer_name,
     convert_to_geopackage,
     copy_raster_layer,
     convert_raster_to_geotiff,
@@ -112,11 +113,25 @@ class OfflineConverter(QObject):
         self.exported_layers = {}
         self.failed_layers = []  # Track failed layer exports with reasons
         self.converted_layers = []  # Track rasters converted from unsupported formats
+        self._used_gpkg_names = set()  # cleaned names already written this run
         self._cancelled = False
 
     def cancel(self):
         """Cancel the export process."""
         self._cancelled = True
+
+    def _unique_gpkg_name(self, layer_name: str) -> str:
+        """Resolve a per-run unique cleaned name, so two layers whose
+        names clean to the same string never overwrite each other's
+        GeoPackage."""
+        base = clean_layer_name(layer_name)
+        out_name = base
+        suffix = 2
+        while out_name.lower() in self._used_gpkg_names:
+            out_name = f'{base[:60]}_{suffix}'
+            suffix += 1
+        self._used_gpkg_names.add(out_name.lower())
+        return out_name
 
     def _read_spline_params(self):
         """Desktop Map Cleaning spline settings, baked into the sidecar
@@ -151,6 +166,8 @@ class OfflineConverter(QObject):
             True if successful, False otherwise
         """
         try:
+            self._used_gpkg_names.clear()
+
             # Create export directory if it doesn't exist
             self.export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -449,12 +466,15 @@ class OfflineConverter(QObject):
 
                     self.log_message.emit(f"  → Converting '{layer.name()}' to GeoPackage ({reason})")
                     self.log_message.emit(f"     {layer_info}")
-                    new_path = convert_to_geopackage(layer, self.export_dir)
+                    new_path = convert_to_geopackage(
+                        layer, self.export_dir,
+                        self._unique_gpkg_name(layer.name()))
                     if new_path:
                         self.exported_layers[layer.id()] = {
                             'original_source': layer.source(),
                             'new_source': str(new_path),
-                            'provider': 'ogr'
+                            'provider': 'ogr',
+                            'converted': True
                         }
                         self.log_message.emit(f"  ✓ Converted to: {new_path.name}")
                         if layer.isSpatial():
@@ -788,9 +808,26 @@ class OfflineConverter(QObject):
                         # Get just the filename for the new source
                         new_source_path = Path(layer_info['new_source'])
 
-                        # If the original source had layer specification (e.g., for GPKG)
-                        # preserve it
-                        if '|' in layer_info['original_source']:
+                        if layer_info.get('converted', False):
+                            # The data now lives in a single-table GeoPackage
+                            # written by us — the provider element must say
+                            # so, or the device hands the .gpkg to the old
+                            # provider (delimitedtext/memory/...) and the
+                            # layer arrives invalid: a geometry-less table
+                            # with no styling. Set the text only; the
+                            # element carries an encoding attribute.
+                            provider_el = maplayer.find('provider')
+                            if provider_el is not None:
+                                provider_el.text = 'ogr'
+                            # The original source has no |layername= to
+                            # inherit, so name the table explicitly rather
+                            # than relying on the filename coincidence.
+                            datasource.text = (
+                                f"./{new_source_path.name}"
+                                f"|layername={new_source_path.stem}")
+                        # If the original source had layer specification
+                        # (e.g., for GPKG) preserve it
+                        elif '|' in layer_info['original_source']:
                             original_parts = layer_info['original_source'].split('|', 1)
                             if len(original_parts) > 1:
                                 # Never bake an active Z filter into the

@@ -13,6 +13,7 @@ from qgis.core import (
     Qgis,
     QgsVectorFileWriter,
 )
+from qgis.PyQt.QtXml import QDomDocument
 
 import shutil
 
@@ -124,6 +125,43 @@ def is_layer_exportable(layer: QgsMapLayer) -> bool:
     return True
 
 
+def _transfer_style(source_layer, target_layer):
+    """Copy the complete style from source to target.
+
+    Uses exportNamedStyle/importNamedStyle (carries symbology, labels,
+    opacity, scale-dependent visibility, field config, diagrams). Falls
+    back to cloning renderer + labeling if the import fails.
+    """
+    doc = QDomDocument('qgis')
+    source_layer.exportNamedStyle(doc)
+    ok, _err = target_layer.importNamedStyle(doc)
+    if ok:
+        return True
+
+    renderer = source_layer.renderer()
+    if renderer:
+        try:
+            target_layer.setRenderer(renderer.clone())
+        except TypeError:
+            pass
+    if (getattr(source_layer, 'labelsEnabled', None)
+            and source_layer.labelsEnabled() and source_layer.labeling()):
+        try:
+            target_layer.setLabeling(source_layer.labeling().clone())
+            target_layer.setLabelsEnabled(True)
+        except Exception:
+            pass
+    return False
+
+
+def _save_style_to_db(layer, style_name, description):
+    """Save the layer's current style into the datasource layer_styles table."""
+    if hasattr(layer, 'saveStyleToDatabaseV2'):
+        layer.saveStyleToDatabaseV2(style_name, description, True, '')
+    else:  # deprecated in QGIS 4.x, only form on 3.40 LTR
+        layer.saveStyleToDatabase(style_name, description, True, '')
+
+
 def convert_to_geopackage(layer: QgsVectorLayer, output_dir: Path, layer_name: str = None) -> Optional[Path]:
     """
     Convert a vector layer to GeoPackage format, preserving styling.
@@ -149,6 +187,20 @@ def convert_to_geopackage(layer: QgsVectorLayer, output_dir: Path, layer_name: s
     options = QgsVectorFileWriter.SaveVectorOptions()
     options.driverName = 'GPKG'
     options.fileEncoding = 'UTF-8'
+    options.layerName = clean_name
+
+    # A source field named 'fid' would become the GPKG primary key; if its
+    # values are duplicated or NULL the insert fails with a UNIQUE
+    # constraint error. Rename the key column so 'fid' stays an ordinary
+    # attribute and the key auto-increments.
+    field_names = {f.name().lower() for f in layer.fields()}
+    if 'fid' in field_names:
+        fid_col = 'fid_gpkg'
+        counter = 2
+        while fid_col in field_names:
+            fid_col = f'fid_gpkg_{counter}'
+            counter += 1
+        options.layerOptions = [f'FID={fid_col}']
 
     # Write the layer data and geometry to GeoPackage
     # Use project transform context to respect project-level datum transforms
@@ -175,22 +227,14 @@ def convert_to_geopackage(layer: QgsVectorLayer, output_dir: Path, layer_name: s
         temp_layer = QgsVectorLayer(gpkg_uri, clean_name, "ogr")
 
         if temp_layer.isValid():
-            # Copy the style from original layer to the new GeoPackage layer
-            # This includes symbology, labels, diagrams, etc.
-            temp_layer.importNamedStyle(layer)
+            transferred = _transfer_style(layer, temp_layer)
+            # Embed the style in the .gpkg itself (layer_styles table) so
+            # the file carries its own symbology as a fallback.
+            _save_style_to_db(temp_layer, clean_name, "")
 
-            # Save the style directly into the GeoPackage database
-            # This embeds the style in the .gpkg file itself
-            success, msg = temp_layer.saveStyleToDatabase(
-                clean_name,  # Style name
-                "",  # Description
-                True,  # Use as default
-                ""  # UI file path (not needed)
-            )
-
-            if not success:
+            if not transferred:
                 QgsMessageLog.logMessage(
-                    f"Warning: Could not save style to GeoPackage for {layer.name()}: {msg}",
+                    f"Warning: Style import fell back to renderer clone for {layer.name()}",
                     "LGS QField Exporter",
                     Qgis.MessageLevel.Warning
                 )
