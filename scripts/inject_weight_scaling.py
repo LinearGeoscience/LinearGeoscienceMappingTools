@@ -1,15 +1,19 @@
 """Inject per-feature Weight scaling into the template's Linework/Overlay symbology.
 
-Adds data-defined overrides so the "Weight" field (Major / Moderate / Minor)
+Adds data-defined overrides so the "Weight" field (Incipient / Minor /
+Moderate / Major / Regional - five tiers since 27 Aug 2026, was three)
 scales every stroke width and marker/SVG size in a symbol:
 
-    <static value> * CASE WHEN "Weight" = 'Major' THEN 1.5
-                          WHEN "Weight" = 'Minor' THEN 0.5
+    <static value> * CASE WHEN "Weight" = 'Regional' THEN 2.25
+                          WHEN "Weight" = 'Major'    THEN 1.5
+                          WHEN "Weight" = 'Minor'    THEN 0.5
+                          WHEN "Weight" = 'Incipient' THEN 0.3
                           ELSE 1 END
 
 Moderate (or NULL) renders at the symbol's authored size; intervals, offsets
 and dash patterns are deliberately NOT scaled (matches the pre-Weight
-Major/Minor symbol convention).
+Major/Minor symbol convention).  The tier list itself lives in the Weight
+ValueMap widget, authored by inject_weight_five_tiers.py.
 
 Weight is the ONLY thing that scales the drawn stroke. Linework
 expressions used to also carry a recorded-width factor (a 5-step
@@ -44,7 +48,19 @@ import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 
-FACTORS = {"Major": "1.5", "Minor": "0.5"}  # Moderate/NULL -> 1 (ELSE branch)
+# Branch order = dict order (descending tier); Moderate/NULL -> 1 (ELSE).
+# Steps are roughly x1.5-1.7 per tier ("balanced" span, user choice).
+FACTORS = {"Regional": "2.25", "Major": "1.5",
+           "Minor": "0.5", "Incipient": "0.3"}
+
+
+def weight_case(factors):
+    """The one CASE text every Weight ramp bakes - selvedge imports this
+    too, so the stroke expressions and the ring offsets stay byte-identical
+    and the baked-count tests can count them together."""
+    branches = " ".join(f"WHEN \"Weight\" = '{k}' THEN {v}"
+                        for k, v in factors.items())
+    return f"CASE {branches} ELSE 1 END"
 
 # static option name -> dd collection key, per symbol layer class
 SCALED_PROPS = {
@@ -67,8 +83,10 @@ INTENSITY_WASH_ALPHA = {"1": "7", "2": "21", "3": "36", "4": "50", "5": "64"}
 INTENSITY_WASH_ALPHA_DEFAULT = "20"  # Intensity NULL = authored static alpha
 
 # Structure-zone Weight ramp: Major is deliberately subtle (the old Moderate look),
-# Moderate/Minor progressively lighter from there.
-OVERLAY_ZONE_FACTORS = {"Major": "1.32", "Minor": "0.65"}
+# Moderate/Minor progressively lighter from there; Regional/Incipient extend
+# the same gentle curve outward.
+OVERLAY_ZONE_FACTORS = {"Regional": "1.7", "Major": "1.32",
+                        "Minor": "0.65", "Incipient": "0.45"}
 
 INTENSITY_PROPS = {
     "PointPatternFill": {"distance_x": "distanceX", "distance_y": "distanceY"},
@@ -107,8 +125,7 @@ def weight_expression(dd_key, base):
             return None
     except ValueError:
         return None
-    return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {FACTORS['Major']} "
-            f"WHEN \"Weight\" = 'Minor' THEN {FACTORS['Minor']} ELSE 1 END")
+    return f"{base} * {weight_case(FACTORS)}"
 
 
 def zone_weight_expression(dd_key, base):
@@ -117,8 +134,7 @@ def zone_weight_expression(dd_key, base):
             return None
     except ValueError:
         return None
-    return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {OVERLAY_ZONE_FACTORS['Major']} "
-            f"WHEN \"Weight\" = 'Minor' THEN {OVERLAY_ZONE_FACTORS['Minor']} ELSE 1 END")
+    return f"{base} * {weight_case(OVERLAY_ZONE_FACTORS)}"
 
 
 def intensity_expression(dd_key, base):

@@ -120,7 +120,8 @@ class TestCodeDomains(unittest.TestCase):
         self.assertEqual(confidence.source_kind, 'ValueMap')
         self.assertEqual(confidence.codes, ['Observed', 'Inferred', 'Queried'])
         weight = self.model.layers['2 - Linework'].domain('Weight')
-        self.assertEqual(weight.codes, ['Major', 'Moderate', 'Minor'])
+        self.assertEqual(weight.codes,
+                         ['Regional', 'Major', 'Moderate', 'Minor', 'Incipient'])
 
 
 class TestParentBackfillIsSafe(unittest.TestCase):

@@ -91,7 +91,7 @@ from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inject_basemap_mineral_pcts as _basemap  # noqa: E402
-from inject_weight_scaling import FACTORS  # noqa: E402
+from inject_weight_scaling import FACTORS, weight_case  # noqa: E402
 
 LW = "2 - Linework"
 BM = "4 - Basemap"
@@ -181,9 +181,9 @@ LW_GAP = 0.55
 # vein pod cannot degenerate the way an inward buffer did.
 BM_GAP = 0.7
 
-WEIGHT_F = ("CASE WHEN \"Weight\" = 'Major' THEN %s "
-            "WHEN \"Weight\" = 'Minor' THEN %s ELSE 1 END"
-            % (FACTORS["Major"], FACTORS["Minor"]))
+# Byte-identical to the stroke expressions' CASE, whatever the tier set:
+# the baked-count tests count both together.
+WEIGHT_F = weight_case(FACTORS)
 
 # --- Selvedge mineral -> colour --------------------------------------------
 # Extends the paper convention in inject_overlay_mineralisation.MINERAL_RGB,

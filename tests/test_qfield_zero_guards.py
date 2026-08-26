@@ -174,11 +174,10 @@ class TestInjectorConstantsAgree(unittest.TestCase):
         self._assert_baked('"Width_cm" <= 0.5 THEN 0.55', self.linework,
                            'removed Width_cm stroke ramp (first tier)', 0)
         # The Weight tier itself must stay baked on every stroke/marker
-        # override and both offset curves of the selvedge rings.
-        weight_case = ("CASE WHEN \"Weight\" = 'Major' THEN %s "
-                       "WHEN \"Weight\" = 'Minor' THEN %s ELSE 1 END"
-                       % (module.FACTORS['Major'], module.FACTORS['Minor']))
-        self._assert_baked(weight_case, self.linework,
+        # override and both offset curves of the selvedge rings.  Built
+        # via the shared weight_case() so tier additions (five tiers
+        # since 27 Aug 2026) keep this in step automatically.
+        self._assert_baked(module.weight_case(module.FACTORS), self.linework,
                            'inject_weight_scaling.FACTORS weight tier', 288)
 
     def test_label_size_scaling_gate(self):
