@@ -92,7 +92,7 @@ DEFAULT_RGB = "96,110,125"   # neutral blue-grey (unset / other minerals)
 
 # 0 counts as UNRECORDED (middle step), not as "0%": coalesce(...) <= 0
 # rather than IS NULL, so a stray 0 cannot render the sparsest stipple tier
-# (same guard as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+# (same guard as inject_label_size_scaling.WIDTH_F).
 PCT_FACTOR = ("CASE WHEN coalesce(\"Percent\", 0) <= 0 THEN 1 "
               "WHEN \"Percent\" < 2 THEN 1.732 "
               "WHEN \"Percent\" < 5 THEN 1.225 "

@@ -190,16 +190,16 @@ def main():
     print("renderer_compat:")
     for tag, layer in (("live", orig), ("patterns", pat)):
         classes = renderer_compat.renderer_classes(layer.renderer())
-        check(len(classes) == 284,
-              "%s: %d classes (expected 284)" % (tag, len(classes)))
+        check(len(classes) == 287,
+              "%s: %d classes (expected 287)" % (tag, len(classes)))
         check(renderer_compat.class_attribute(layer.renderer()) == "Lithology1",
               "%s: class attribute resolves to Lithology1" % tag)
         check(renderer_compat.PATTERN_RULE_LABEL not in [v for v, _s in classes],
               "%s: texture rule is not exposed as a class" % tag)
     removed, kept, new = renderer_compat.prune_classes(pat.renderer(),
                                                        lambda v: False)
-    check(removed == 284 and kept == 0,
-          "pruning everything removes all 284 classes (got %d/%d)" % (removed, kept))
+    check(removed == 287 and kept == 0,
+          "pruning everything removes all 287 classes (got %d/%d)" % (removed, kept))
     if new is not None:
         survivors = [r for r in new.rootRule().children()
                      if renderer_compat.is_pattern_rule(r)]

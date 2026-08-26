@@ -11,15 +11,14 @@ Moderate (or NULL) renders at the symbol's authored size; intervals, offsets
 and dash patterns are deliberately NOT scaled (matches the pre-Weight
 Major/Minor symbol convention).
 
-Linework expressions additionally carry the recorded-width factor (see
-DETAIL_WIDTH_FACTOR): any detail-scope feature (veins, dykes/sills/
-pegmatite, faults, shears) with a recorded Width_cm scales in 5 steps
-(x0.55 hairline .. x2 thick lodes), multiplying with the Weight tier.
-NULL width sits mid-ramp at the authored thickness (factor 1), so an
-explicitly thin feature (<=2 cm) renders THINNER than one whose width
-was never recorded - the Aug 2026 fix: the old ramp mapped 0.5-2 cm to
-1.0, indistinguishable from "unknown". All other categories, and
-features with no width, get factor 1.
+Weight is the ONLY thing that scales the drawn stroke. Linework
+expressions used to also carry a recorded-width factor (a 5-step
+DETAIL_WIDTH_FACTOR ramp, x0.55 hairline .. x2 thick lodes, off
+Width_cm) - removed 27 Aug 2026 at the user's request: recording a
+width on a line must not change its drawn thickness. Width_cm remains
+a data field, still prints in the label (inject_linework_vein_fields
+WIDTH_TEXT) and still nudges label size (inject_label_size_scaling
+WIDTH_F); the stroke no longer reads it.
 
 Scope: every symbol in the "2 - Linework" renderer; only the Structure zone
 symbols in "3 - Overlay" (infrastructure untouched).
@@ -46,30 +45,6 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 
 FACTORS = {"Major": "1.5", "Minor": "0.5"}  # Moderate/NULL -> 1 (ELSE branch)
-
-# Recorded-width factor (Linework only): Width_cm scales the drawn stroke in
-# 5 steps, multiplying with the Weight tier.  Gated per-feature on the detail
-# scope (veins + Lithology dykes/sills/pegmatite + faults/shears - kept in
-# step with inject_linework_detail_scope.DETAIL_VIS) so the same
-# renderer-wide expression is a no-op elsewhere.  NULL width renders at the
-# authored thickness (factor 1, mid-ramp): explicit thin widths sit BELOW it.
-#
-# 0 counts as UNRECORDED, not as "0 cm wide": coalesce(...) > 0 rather than
-# IS NOT NULL.  A width of zero is meaningless on a mapped line, and a stray
-# 0 (a QField spinbox, an attribute copy that lost a NULL) would otherwise
-# drop the feature to the 0.55x hairline tier - see the same guard in
-# inject_label_size_scaling.WIDTH_F and inject_linework_vein_fields.WIDTH_TEXT.
-DETAIL_WIDTH_FACTOR = (
-    "CASE WHEN (\"Category\" IN ('Veins','Lithology') "
-    "OR \"Type\" LIKE 'Fault%' OR \"Type\" LIKE 'Shear%' "
-    "OR \"Type\" IN ('Shear Zone Boundary','Detachment')) "
-    "AND coalesce(\"Width_cm\", 0) > 0 THEN "
-    "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.55 "
-    "WHEN \"Width_cm\" <= 2 THEN 0.75 "
-    "WHEN \"Width_cm\" <= 5 THEN 1.15 "
-    "WHEN \"Width_cm\" <= 10 THEN 1.5 "
-    "ELSE 2 END) ELSE 1 END"
-)
 
 # static option name -> dd collection key, per symbol layer class
 SCALED_PROPS = {
@@ -115,9 +90,9 @@ def skip_ids():
     """Layer ids that own their size and must not be ramped.
 
     Imported late and defensively: inject_vein_generation_selvedge imports
-    DETAIL_WIDTH_FACTOR from THIS module at import time, so the dependency
-    only works in this direction and only once this module is fully loaded.
-    A missing module just means nothing to skip.
+    FACTORS from THIS module at import time, so the dependency only works
+    in this direction and only once this module is fully loaded.  A
+    missing module just means nothing to skip.
     """
     try:
         import inject_vein_generation_selvedge as selvedge
@@ -133,8 +108,7 @@ def weight_expression(dd_key, base):
     except ValueError:
         return None
     return (f"{base} * CASE WHEN \"Weight\" = 'Major' THEN {FACTORS['Major']} "
-            f"WHEN \"Weight\" = 'Minor' THEN {FACTORS['Minor']} ELSE 1 END"
-            f" * ({DETAIL_WIDTH_FACTOR})")
+            f"WHEN \"Weight\" = 'Minor' THEN {FACTORS['Minor']} ELSE 1 END")
 
 
 def zone_weight_expression(dd_key, base):

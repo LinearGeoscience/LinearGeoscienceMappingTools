@@ -128,7 +128,7 @@ def _proto(spec, bucket):
 _proto([
     ("M", "ZM ZMB ZMD ZMG ZMAM ZCS"),
     ("U", "ZU ZU-A ZU-CA ZU-P ZU-T ZU-TA ZU-TCB"),
-    ("S", "ZS ZSAS ZSBS ZSPE ZSQT ZSST ZGT ZQM ZBXSI"),
+    ("S", "ZS ZSAS ZSBS ZSPE ZSQT ZSST ZGT ZQM ZBXS ZBXSI"),
     ("F", "ZF"),
     ("I", "ZI"),
 ], SHEARED)
@@ -182,6 +182,11 @@ META_SATURATION_CEIL = 0.62
 # so instead of a dark ground it gets the pale fill the rock actually has.
 LIGHTNESS_NUDGE = {
     "FGRL": +0.05,
+    # ZBXS Silica Breccia sits one slot from ZBXSI Silica Flood Breccia in
+    # the sheared-S breccia group; the slot step alone leaves the pair under
+    # MIN_FILL_DE, so the plain breccia is pushed paler - which also reads
+    # right: a silica breccia is the leached, bleached one.
+    "ZBXS": +0.07,
 }
 
 

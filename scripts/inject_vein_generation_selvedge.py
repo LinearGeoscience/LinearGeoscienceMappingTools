@@ -91,7 +91,7 @@ from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import inject_basemap_mineral_pcts as _basemap  # noqa: E402
-from inject_weight_scaling import DETAIL_WIDTH_FACTOR, FACTORS  # noqa: E402
+from inject_weight_scaling import FACTORS  # noqa: E402
 
 LW = "2 - Linework"
 BM = "4 - Basemap"
@@ -896,11 +896,14 @@ def _num(v):
 def lw_expression(half_mm, clearance, ring):
     """One ring of the stipple: paired offset curves, both sides, paper mm.
 
-    The offset carries the same Weight and Width_cm factors the backbone
-    stroke does, so the WHITE GAP between vein edge and ring 1 stays
-    constant however thick the vein is drawn.  Rings then step outward at a
-    fixed spacing, which is what makes a wide selvedge visibly reach
-    further into the wallrock than a narrow one.
+    The offset carries the same Weight factor the backbone stroke does, so
+    the WHITE GAP between vein edge and ring 1 stays constant however thick
+    the vein is drawn.  (The backbone also carried a Width_cm ramp until
+    27 Aug 2026 - removed from both in the same pass: recorded width no
+    longer changes drawn thickness, so tracking it here would only drift
+    the gap.)  Rings then step outward at a fixed spacing, which is what
+    makes a wide selvedge visibly reach further into the wallrock than a
+    narrow one.
 
     array_filter is not decoration: offset_curve() returns null on a
     degenerate or zero-length line, and an unguarded null inside
@@ -908,8 +911,8 @@ def lw_expression(half_mm, clearance, ring):
     not just that one.
     """
     step = LW_GAP + clearance + (ring - 1) * RING_SPACING
-    off = ("(%s * (%s) * (%s) + %s)"
-           % (round(half_mm, 4), WEIGHT_F, DETAIL_WIDTH_FACTOR, _num(step)))
+    off = ("(%s * (%s) + %s)"
+           % (round(half_mm, 4), WEIGHT_F, _num(step)))
     return ("CASE WHEN %s THEN collect_geometries(array_filter(array("
             "offset_curve($geometry, %s), offset_curve($geometry, 0 - %s)), "
             "not is_empty_or_null(@element))) ELSE NULL END"
@@ -1162,7 +1165,9 @@ def main():
 
     for layer, spec, codes, n_cats, attr in (
             (LW, LW_SPEC, LW_VEIN_CODES, 135, "Type"),
-            (BM, BM_SPEC, list(VEIN_LITHS), 284, "Lithology1")):
+            # 287 = 286 codes + NULL (was 284 before ZBXS/SSTS/SSLS,
+            # inject_lith_codes_2026_08).
+            (BM, BM_SPEC, list(VEIN_LITHS), 287, "Lithology1")):
         cols = [r[1] for r in cur.execute('PRAGMA table_info("%s")' % layer)]
         cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?",
                     (layer,))
@@ -1259,7 +1264,7 @@ def main():
 
     con.close()
     print("\nNOW RUN: python scripts/inject_weight_scaling.py"
-          "   (ramps the stipple dots to Weight x Width_cm)")
+          "   (re-ramps any rebuilt symbol layers to the Weight tier)")
     print('THEN:    "C:\\OSGeo4W\\bin\\python-qgis-ltr.bat" '
           "scripts/inject_basemap_lith_patterns.py   (re-bakes the Patterns gpkg)")
 

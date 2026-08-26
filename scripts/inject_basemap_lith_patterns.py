@@ -83,7 +83,7 @@ LITH_FILLS = os.path.join(PATTERN_DIR, "lith_fills.tsv")
 
 LAYER = "4 - Basemap"
 FIELD = "Lithology1"
-EXPECT_CATS = 284          # 283 codes + the NULL / all-other-values class
+EXPECT_CATS = 287          # 286 codes + the NULL / all-other-values class
 REFERENCE_SCALE = 5000
 # Texture off when zoomed out past this. The ratio, not the number, is the
 # thing that is right: paper-unit sizes scale by referenceScale/mapScale, so

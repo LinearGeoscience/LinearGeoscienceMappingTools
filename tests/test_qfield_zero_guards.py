@@ -3,11 +3,15 @@ Tests for the zero-value guards baked into the mapping template.
 
 A numeric field of 0 must render exactly like a field that was never
 filled in.  Without the guard a stray 0 lands in the EXTREME end of every
-ramp - Width_cm = 0 draws the 0.55x hairline stroke and labels '0mm',
+ramp - Width_cm = 0 shrinks the label to 0.7x and prints '0mm',
 Percent = 0 draws the sparsest Overlay stipple - which is how a lost NULL
 turns into a visibly wrong map.  scripts/inject_zero_value_guards.py bakes
 the guard in; these tests make sure it stays baked and that the injector
 constants that would re-bake it agree.
+
+Width_cm also drove a 0.55x-2x STROKE ramp until 27 Aug 2026, when it was
+removed at the user's request (drawn thickness is Weight-only now); the
+weight-scaling test below asserts the removal stays removed.
 
 Reads the GeoPackage with sqlite3 only, no QGIS import, in the style of
 tests/test_qfield_sidecar.py.
@@ -34,10 +38,12 @@ _LE = '&lt;='
 # layer -> [(what, unguarded form that must be GONE, guarded form, min count)]
 _EXPECTED = {
     '2 - Linework': [
-        ('Width_cm ramp gate',
+        # The only Width_cm ramp left is the label-size one (WIDTH_F);
+        # the 239 stroke/size occurrences went with the stroke ramp.
+        ('Width_cm label-size ramp gate',
          'AND {q}Width_cm{q} IS NOT NULL THEN'.format(q=_Q),
          'AND coalesce({q}Width_cm{q}, 0) {gt} 0 THEN'.format(q=_Q, gt=_GT),
-         240),
+         1),
         ('Width_cm label text',
          'CASE WHEN {q}Width_cm{q} IS NULL THEN'.format(q=_Q),
          'CASE WHEN coalesce({q}Width_cm{q}, 0) {le} 0 THEN'.format(
@@ -154,16 +160,26 @@ class TestInjectorConstantsAgree(unittest.TestCase):
             'the baked styling.\n%s'
             % (what, blob.count(expr), count, expr))
 
-    def test_weight_scaling_gate(self):
-        # 234 stroke/marker overrides, plus 54 from the vein selvedge: each
-        # of the 9 vein symbols carries 3 stipple rings, and each ring spends
-        # the ramp twice sizing its two offset curves
-        # (inject_vein_generation_selvedge.lw_expression). The dots
-        # themselves are deliberately NOT ramped - see
-        # inject_vein_generation_selvedge.weight_scaling_skip_ids.
+    def test_weight_scaling_width_decoupled(self):
+        # The Width_cm stroke ramp (DETAIL_WIDTH_FACTOR, x0.55 hairline ..
+        # x2 thick lodes, 288 baked occurrences at its height) was removed
+        # 27 Aug 2026: recording a width must not change drawn thickness.
+        # Weight is the only stroke scaler now; Width_cm survives in the
+        # label pipeline alone (WIDTH_F font-size ramp + WIDTH_TEXT text).
         module = _load('inject_weight_scaling.py')
-        self._assert_baked(module.DETAIL_WIDTH_FACTOR, self.linework,
-                           'inject_weight_scaling.DETAIL_WIDTH_FACTOR', 288)
+        self.assertFalse(
+            hasattr(module, 'DETAIL_WIDTH_FACTOR'),
+            'DETAIL_WIDTH_FACTOR is back in inject_weight_scaling - the '
+            'stroke ramp must stay removed')
+        self._assert_baked('"Width_cm" <= 0.5 THEN 0.55', self.linework,
+                           'removed Width_cm stroke ramp (first tier)', 0)
+        # The Weight tier itself must stay baked on every stroke/marker
+        # override and both offset curves of the selvedge rings.
+        weight_case = ("CASE WHEN \"Weight\" = 'Major' THEN %s "
+                       "WHEN \"Weight\" = 'Minor' THEN %s ELSE 1 END"
+                       % (module.FACTORS['Major'], module.FACTORS['Minor']))
+        self._assert_baked(weight_case, self.linework,
+                           'inject_weight_scaling.FACTORS weight tier', 288)
 
     def test_label_size_scaling_gate(self):
         module = _load('inject_label_size_scaling.py')

@@ -171,12 +171,14 @@ SPS	sandstone	Lithology	Psammite	arenaceous	auto	-
 SQT	quartzite	Lithology	Quartzite	quartz arenite / metaquartzite	quartz	-
 SSH	shale	Lithology	Shale	argillaceous	auto	-
 SSL	siltstone	Lithology	Siltstone	silt grade	auto	-
+SSLS	siltstone	Lithology	Sandy Siltstone	silt grade, arenaceous component	auto	-
 SST	sandstone	Lithology	Sandstone	arenaceous	auto	sandstone
 SSTF	sandstone	Lithology	Feldspathic Sandstone	arenaceous	auto	sandstone
 SSTL	sandstone	Lithology	Lithic Sandstone	arenaceous	auto	sandstone
 SSTM	sandstone	Lithology	Micaceous Sandstone	arenaceous	mica	sandstone
 SSTP	sandstone	Lithology	Sandstone, Pebbly	clast-supported / pebbly	auto	-
 SSTQ	sandstone	Lithology	Quartz Sandstone	arenaceous	auto	sandstone
+SSTS	sandstone	Lithology	Silty Sandstone	arenaceous, silt component	auto	sandstone
 SSTR	stromatolite	Lithology	Stromatolitic Carbonate	carbonate	carbonate	-
 STB	greywacke	Lithology	Turbidite	poorly sorted / graded	auto	-
 STI	conglomerate	Lithology	Tillite	clast-supported / pebbly	auto	-
@@ -220,6 +222,7 @@ VS	crosshatch	Lithology	Shear Vein	vein fill	auto	vein
 VSTW	crosshatch	Lithology	Stockwork	vein fill	auto	-
 VT	crosshatch	Lithology	Extension Vein	vein fill	auto	vein
 VX	breccia	Lithology	Breccia Vein	breccia vein	auto	-
+ZBXS	breccia	Lithology	Silica Breccia	silica breccia	auto	-
 ZBXSI	breccia	Lithology	Silica Flood Breccia	silica flood breccia	auto	-
 ZCS	schist	Lithology	Chlorite Schist	schist: named after the protolith but it is a schist	talc	-
 ZF	schist	Lithology	Felsic Schist	schist: named after the protolith but it is a schist	auto	-

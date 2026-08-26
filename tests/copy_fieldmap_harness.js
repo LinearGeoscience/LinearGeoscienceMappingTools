@@ -63,8 +63,9 @@ check('text is NOT empty', isEmptyValue('Qz') === false)
 // valueIsAmbiguous picks out exactly the values that could be a disguised
 // NULL; featureNulls then settles each one with a '"F" IS NULL'
 // evaluation. Getting this list wrong is what let a blank Width_cm be
-// copied as 0 and drawn at the 0.55x hairline tier
-// (scripts/inject_weight_scaling.py DETAIL_WIDTH_FACTOR).
+// copied as 0 and drawn at the 0.55x hairline tier (a stroke ramp since
+// removed; the label-size ramp in scripts/inject_label_size_scaling.py
+// WIDTH_F still shows why a stamped 0 must stay distinguishable).
 check('0 is ambiguous', valueIsAmbiguous(0) === true)
 check('-0 is ambiguous', valueIsAmbiguous(-0) === true)
 check('NaN is ambiguous', valueIsAmbiguous(NaN) === true)

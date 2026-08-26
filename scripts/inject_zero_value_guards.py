@@ -6,7 +6,8 @@ in, but wrong for a stray 0: on a mapped line a width of zero, or a mineral
 percentage of zero, is not a reading - it is noise.  Today a 0 lands in the
 EXTREME end of every ramp:
 
-    Width_cm  = 0  ->  0.55x stroke (the hairline tier), 0.7x label, '0mm'
+    Width_cm  = 0  ->  0.7x label, '0mm' (and, until the stroke-width ramp
+                       was removed on 27 Aug 2026, the 0.55x hairline tier)
     Percent   = 0  ->  the sparsest Overlay stipple tier, ' 0%' label
     MineralNPct = 0 ->  'ga0%' on the Linework label
 
@@ -62,9 +63,11 @@ def gate(field):
 # Counts are asserted, never assumed: a mismatch aborts before any write.
 EDITS = {
     "2 - Linework": [
-        # 239 symbol outlineWidth/size dd props + 1 label Size dd prop.
-        ("Width_cm ramp gate (stroke + label size)",
-         gate("Width_cm")[0], gate("Width_cm")[1], 240),
+        # Was 240 (239 symbol outlineWidth/size dd props + 1 label Size dd
+        # prop) until 27 Aug 2026, when the Width_cm stroke ramp was removed
+        # from inject_weight_scaling: only the label-size ramp remains.
+        ("Width_cm ramp gate (label size)",
+         gate("Width_cm")[0], gate("Width_cm")[1], 1),
         # Label text: '' for unrecorded, so 0 stops rendering as '0mm'.
         ("Width_cm label text",
          "CASE WHEN {q}Width_cm{q} IS NULL THEN".format(q=Q),

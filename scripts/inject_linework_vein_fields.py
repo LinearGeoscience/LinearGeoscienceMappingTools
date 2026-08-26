@@ -55,7 +55,7 @@ SPEC = [
 
 # 0 renders as no width at all rather than '0mm' - a width of zero is
 # meaningless on a mapped line, so it reads as unrecorded (same guard as
-# inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+# inject_label_size_scaling.WIDTH_F).
 WIDTH_TEXT = (
     "CASE WHEN coalesce(\"Width_cm\", 0) <= 0 THEN '' "
     "WHEN \"Width_cm\" >= 100 THEN round(\"Width_cm\"/100.0, 2) || 'm' "

@@ -158,7 +158,7 @@ RSPU	#ffeed6	#d8be9a
 S	#67a2c7	#3a80ac
 SAK	#e7dab1	#cbad4f
 SBS	#7a8288	#5e6468
-SBX	#d2ceb1	#afa561
+SBX	#cfc9ab	#afa15f
 SCA	#78a7d3	#5e85a0
 SCG	#c1b796	#a49154
 SCGFM	#5d68c3	#828bd4
@@ -173,7 +173,7 @@ SCT	#bbc4ca	#879fb0
 SCTB	#c5ccd2	#9fa4a9
 SDM	#98b4de	#628ed0
 SDO	#78a7d3	#5e85a0
-SDOSL	#71a5d0	#59839d
+SDOSL	#6ea3c9	#578198
 SEV	#e3e0d3	#bcb490
 SGT	#fcedc1	#d9be70
 SGW	#71a5d0	#3b82bd
@@ -189,7 +189,8 @@ SPR	#71a5d0	#3b82bd
 SPS	#71a5d0	#3b82bd
 SQT	#78a7d3	#5c85a7
 SSH	#848a92	#5c6a7d
-SSL	#e3e3e3	#c0b2b2
+SSL	#dedede	#bfb0b0
+SSLS	#dbd7c4	#b8ad7b
 SST	#eee8c7	#c8bc77
 SSTF	#8eaeda	#5a8acc
 SSTL	#eee8c7	#c8bc77
@@ -197,6 +198,7 @@ SSTM	#efebd0	#c8bea2
 SSTP	#7fa9d5	#4685c6
 SSTQ	#8eaeda	#5a8acc
 SSTR	#78a7d3	#5e85a0
+SSTS	#e4dbc0	#c3af73
 STB	#7fa9d5	#4685c6
 STI	#a0b8e0	#6c92d2
 STU	#7fa9d5	#4685c6
@@ -260,7 +262,8 @@ VS	#f98775	#ee492f
 VSTW	#f86c63	#e82013
 VT	#f98775	#ee492f
 VX	#f75050	#d51111
-ZBXSI	#7b9cc0	#4b7aae
+ZBXS	#8cacc9	#5689b8
+ZBXSI	#819fc4	#4f7db5
 ZCS	#628789	#8da8a6
 ZF	#eea5b7	#e36e8b
 ZGT	#578eaa	#5e697e

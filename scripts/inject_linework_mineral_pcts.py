@@ -70,7 +70,7 @@ def mineral_piece(n):
 
     coalesce(...) > 0 rather than IS NOT NULL: a percentage of zero is not
     a reading, and 'Qz(0%)' on the map is worse than plain 'Qz' (same guard
-    as inject_weight_scaling.DETAIL_WIDTH_FACTOR).
+    as inject_label_size_scaling.WIDTH_F).
     """
     return ("coalesce(\"Mineral{n}\",'') || "
             "CASE WHEN coalesce(\"Mineral{n}\",'') != '' "

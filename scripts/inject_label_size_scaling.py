@@ -39,8 +39,10 @@ WEIGHT_F = ("CASE WHEN \"Weight\" = 'Major' THEN 1.15 "
             "WHEN \"Weight\" = 'Minor' THEN 0.8 ELSE 1 END")
 
 # 0 counts as UNRECORDED, not "0 cm wide" - same guard as
-# inject_weight_scaling.DETAIL_WIDTH_FACTOR, so a stray 0 cannot shrink the
-# label to 0.7x.
+# inject_linework_vein_fields.WIDTH_TEXT, so a stray 0 cannot shrink the
+# label to 0.7x.  (This label-size ramp is the ONLY ramp Width_cm still
+# drives: the stroke-width twin it once had in inject_weight_scaling was
+# removed 27 Aug 2026 - drawn thickness is Weight-only.)
 WIDTH_F = (
     "CASE WHEN " + DETAIL_GATE + " AND coalesce(\"Width_cm\", 0) > 0 THEN "
     "(CASE WHEN \"Width_cm\" <= 0.5 THEN 0.7 "
