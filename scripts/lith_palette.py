@@ -389,7 +389,11 @@ def build(deepen=()):
             # desaturates any mid-lightness saturated colour - it turned the
             # user's HGG Granite Gneiss terracotta #d96a4e into #c57662 - which
             # silently breaks the rule this module exists to enforce: a colour
-            # the template already decided is kept EXACTLY.
+            # the template already decided is kept EXACTLY. The Transported
+            # Cover grey ladder (inject_basemap_cover_recolour.py) depends on
+            # this path: every cover code carries a UNIQUE anchor precisely so
+            # it arrives here untouched - no slots, no muting - and the live
+            # and patterns templates agree byte for byte.
             out[code] = tuple(anchor)
             continue
 

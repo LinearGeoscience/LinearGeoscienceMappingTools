@@ -334,6 +334,18 @@ MIN_INK_DE = 30.0
 # whereas flipping this is visible in the diff and cannot be half-done.
 IDENTICAL_ABORTS = True
 
+# The Transported Cover / bedrock boundary is a COLOUR boundary. distinct()
+# passes any pair whose tiles differ without ever comparing colour, which is
+# how all 21 cover codes sat on the sandstone cream unflagged - TCO rendered
+# as SST, byte-for-byte on TALL. On a SHARED tile a cross-type pair must now
+# separate on fill alone; across different tiles near pairs are only
+# reported, because a pale-grey cover family cannot be dE 7 from every
+# neutral bedrock code (SSL, SCT) and there the tile genuinely separates.
+# Same flip-to-enforce convention as IDENTICAL_ABORTS above.
+COVER_COLOUR_ABORTS = True
+COVER_TYPE = "Transported Cover"
+COVER_ADVISORY_DE = 5.0
+
 
 def _hue_gap(a, b):
     """Smallest angle between two colours' hues, in degrees."""
@@ -760,6 +772,38 @@ def main():
                  "different textures, or declare them a `variety` group in "
                  "lith_textures.tsv if that is genuinely acceptable"
                  % len(identical))
+
+    # ---- cover vs bedrock: enforce the type boundary in colour -----------
+    cover = [c for c in all_codes if type_of.get(c) == COVER_TYPE]
+    bedrock = [c for c in all_codes if type_of.get(c) != COVER_TYPE]
+    cover_clashes, cover_near = [], []
+    for a in cover:
+        for b in bedrock:
+            de = delta_e(fill_of[a], fill_of[b])
+            if tex_map[a][0] == tex_map[b][0]:
+                if de < MIN_FILL_DE:
+                    cover_clashes.append((de, a, b, tex_map[a][0]))
+            elif de < COVER_ADVISORY_DE:
+                cover_near.append((de, a, b, tex_map[b][0]))
+    print("cover/bedrock: %d same-tile pairs under dE %.0f, %d cross-tile "
+          "pairs under dE %.0f (advisory, tile separates)"
+          % (len(cover_clashes), MIN_FILL_DE,
+             len(cover_near), COVER_ADVISORY_DE))
+    for de, a, b, t in sorted(cover_near)[:8]:
+        print("     near %-8s / %-8s  bedrock tile %-14s fill dE %.1f"
+              % (a, b, t, de))
+    if cover_clashes:
+        for de, a, b, t in sorted(cover_clashes)[:12]:
+            print("   COVER CLASH %-8s / %-8s  tile %-14s fill dE %.1f"
+                  % (a, b, t, de))
+        if not COVER_COLOUR_ABORTS:
+            print("   ^ report-only: set COVER_COLOUR_ABORTS = True to "
+                  "enforce")
+        else:
+            bail("%d cover codes share a tile AND a colour with bedrock - "
+                 "move the cover anchor in the live template "
+                 "(inject_basemap_cover_recolour.py is the precedent)"
+                 % len(cover_clashes))
 
     svg_expr = case_expr(by_texture, lambda t: b64(tiles[t]), b64(tiles[BLANK]))
     col_expr = case_expr(by_colour, lambda h: h, hexof((0x13, 0x13, 0x13)))
