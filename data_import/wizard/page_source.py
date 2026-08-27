@@ -377,7 +377,28 @@ class SourcePage(QWizardPage):
         state.analysis_destination_path = state.destination_path
 
         if state.destination_kind == 'project':
-            state.target_model = domain.read_project_model(project)
+            # Work out which GeoPackage the project's mapping layers live in
+            # before reading anything. The old path — first gpkg wins — sent
+            # the whole import into whichever unrelated file happened to sort
+            # ahead of the mapping one. The import's own source file never
+            # qualifies as its destination.
+            exclude = [state.source_path] if state.source_kind == 'gpkg' else []
+            resolved, problem = domain.resolve_project_destination(
+                project, exclude)
+            if problem:
+                raise IOError(problem)
+            # Overwrites the pin above: in project mode the destination edit
+            # box is disabled and may hold stale text from an earlier choice.
+            state.analysis_destination_path = resolved
+
+            def _same(path):
+                return path and (os.path.normcase(os.path.abspath(path))
+                                 == os.path.normcase(os.path.abspath(resolved)))
+
+            state.target_model = domain.read_project_model(project, layers=[
+                layer for layer in project.mapLayers().values()
+                if layer.type() == Qgis.LayerType.Vector
+                and _same(domain.gpkg_path_of(layer))])
             if not state.target_model.layers:
                 raise IOError('the open project has no mapping layers')
         else:

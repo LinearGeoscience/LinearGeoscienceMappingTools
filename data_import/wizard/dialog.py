@@ -99,7 +99,9 @@ class WizardState(object):
 
     def destination_label(self):
         if self.destination_kind == 'project':
-            return 'this project'
+            resolved = os.path.basename(self.analysis_destination_path or '')
+            return ('this project ({0})'.format(resolved) if resolved
+                    else 'this project')
         return os.path.basename(self.destination_path) or self.destination_path
 
     def source_label(self):
@@ -161,9 +163,16 @@ class ImportWizard(QWizard):
                 os.path.basename(destination_path))
         else:
             target_model = state.target_model     # captured on the main thread
+            # The path was resolved from the mapping layers and pinned on the
+            # main thread (page_source); the model's own path is only a
+            # fallback. The label names the file so the review page shows
+            # where the features will actually land.
+            resolved = (state.analysis_destination_path
+                        or (target_model.path if target_model else ''))
             destination = plan_module.DestinationRef(
-                'project', target_model.path if target_model else '',
-                'this project')
+                'project', resolved,
+                'this project ({0})'.format(os.path.basename(resolved))
+                if resolved else 'this project')
 
         note(25, 'Reading the source...')
         source_model = state.source_model

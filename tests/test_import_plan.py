@@ -139,6 +139,41 @@ class TestValidation(unittest.TestCase):
                             for finding in report.errors))
 
 
+class TestProjectDestination(unittest.TestCase):
+    """Project mode resolves to a real file and gets the same guards.
+
+    The guards used to be gated on kind == 'gpkg', which let a project-mode
+    import silently target its own source file — or nothing at all.
+    """
+
+    def _plan(self, destination, source_path=''):
+        template = import_loader.template_model()
+        source = test_import_match.legacy_source()
+        source.path = source_path
+        return plan_module.build_plan(source, template, destination,
+                                      counts_for, profile={})
+
+    def _validate(self, plan):
+        for item in plan.included():
+            for resolution in item.undecided():
+                resolution.leave_blank()
+        return plan.validate()
+
+    def test_importing_a_file_into_itself_blocks_in_project_mode(self):
+        path = 'C:/somewhere/Mapping.gpkg'
+        destination = plan_module.DestinationRef('project', path,
+                                                 'this project (Mapping.gpkg)')
+        report = self._validate(self._plan(destination, source_path=path))
+        self.assertTrue(any('same file' in finding.title
+                            for finding in report.errors))
+
+    def test_an_unresolved_destination_path_blocks(self):
+        destination = plan_module.DestinationRef('project', '', 'this project')
+        report = self._validate(self._plan(destination))
+        self.assertTrue(any('which GeoPackage to write to' in finding.title
+                            for finding in report.errors))
+
+
 class TestNewCodes(unittest.TestCase):
 
     def setUp(self):

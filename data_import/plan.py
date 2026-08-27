@@ -325,7 +325,14 @@ class ImportPlan(object):
                        'Choose at least one layer on the Layers step.')
             return report
 
-        if (self.destination.kind == 'gpkg' and self.source_model.path
+        if not self.destination.path:
+            report.add(ERROR,
+                       'Could not work out which GeoPackage to write to',
+                       'Choose "A GeoPackage file" as the destination.')
+
+        # Either kind: in project mode the destination resolves to a file
+        # too, and importing a file into itself is never right.
+        if (self.source_model.path
                 and _same_file(self.destination.path, self.source_model.path)):
             report.add(ERROR, 'Source and destination are the same file',
                        self.destination.path)

@@ -61,8 +61,10 @@ except ImportError:  # flat execution inside QGIS
 # same job, same lock-retry behaviour, same pruning of old copies.
 try:
     from ..mining_import.gpkg import backup as _backup_file
+    from ..lgs_layers import gpkg_feature_layers
 except ImportError:
     from mining_import.gpkg import backup as _backup_file
+    from lgs_layers import gpkg_feature_layers
 
 
 BATCH_SIZE = 500
@@ -281,6 +283,19 @@ def run_import(plan, snapshots, progress_cb=None, transform_context=None):
     if not gpkg_path or not os.path.exists(gpkg_path):
         result.failed = True
         result.message = 'Destination GeoPackage not found: {0}'.format(gpkg_path)
+        return result
+
+    # A destination that lacks the target tables is the wrong file — one
+    # clear refusal here, before a backup of it appears on disk, beats four
+    # "could not open for writing" errors after.
+    existing = {fold(name) for name in gpkg_feature_layers(gpkg_path)}
+    missing = [item.target_layer for item in plan.included()
+               if fold(item.target_layer) not in existing]
+    if missing:
+        result.failed = True
+        result.message = ('"{0}" does not contain {1} — is this the right '
+                          'mapping GeoPackage?'.format(
+                              gpkg_path, ', '.join(missing)))
         return result
 
     if plan.options.backup:

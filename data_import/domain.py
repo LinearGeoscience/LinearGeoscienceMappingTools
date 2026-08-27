@@ -25,9 +25,11 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
 try:
-    from ..lgs_layers import CANONICAL_LAYERS, base_name, has_ordinal, same_layer
+    from ..lgs_layers import (CANONICAL_LAYERS, base_name, has_ordinal,
+                              is_canonical, same_layer)
 except ImportError:  # flat execution / pure test loader
-    from lgs_layers import CANONICAL_LAYERS, base_name, has_ordinal, same_layer
+    from lgs_layers import (CANONICAL_LAYERS, base_name, has_ordinal,
+                            is_canonical, same_layer)
 
 
 # Non-spatial tables that are plumbing, never importable content.
@@ -877,7 +879,7 @@ def _build_domain(connection, field_name, widget, attribute_tables, raw_tables):
 
 # ── project reader ────────────────────────────────────────────────────
 
-def read_project_model(project=None, layers=None):
+def read_project_model(project=None, layers=None, problems=None):
     """Build a MappingModel from layers loaded in QGIS.
 
     Used when the destination is the open project rather than a file, and when
@@ -885,6 +887,9 @@ def read_project_model(project=None, layers=None):
     for any layer backed by a GeoPackage so the file's own lookup tables come
     along; otherwise the model is layer-only (no code domains), which is the
     right answer for a PostGIS source.
+
+    A GeoPackage that cannot be read is skipped; pass a `problems` list to
+    hear about it rather than have the skip stay silent.
     """
     from qgis.core import QgsProject, Qgis
 
@@ -903,7 +908,9 @@ def read_project_model(project=None, layers=None):
     for path in gpkg_paths:
         try:
             file_model = read_gpkg_model(path)
-        except IOError:
+        except IOError as error:
+            if problems is not None:
+                problems.append('{0}: {1}'.format(path, error))
             continue
         if not merged.path:
             merged.path = path
@@ -921,6 +928,46 @@ def read_project_model(project=None, layers=None):
             continue
         merged.layers.setdefault(layer.name(), _spec_from_qgs_layer(layer))
     return merged
+
+
+def resolve_project_destination(project=None, exclude_paths=()):
+    """The one GeoPackage behind the project's mapping layers, or why not.
+
+    Returns (path, ''), or ('', problem). Only the canonical mapping layers
+    vote — a lookup table or a user's own layer never decides where an import
+    lands — and an ambiguous vote is refused rather than guessed: an export
+    loaded for a look-around carries the same four table names as the real
+    project file, and a silent wrong pick writes the import into it.
+    `exclude_paths` removes known non-candidates (the import's own source).
+    """
+    from qgis.core import QgsProject, Qgis
+
+    def _key(path):
+        return os.path.normcase(os.path.abspath(path))
+
+    excluded = {_key(p) for p in exclude_paths if p}
+    project = project or QgsProject.instance()
+
+    candidates = OrderedDict()
+    for layer in project.mapLayers().values():
+        if layer.type() != Qgis.LayerType.Vector:
+            continue
+        if not (is_canonical(layer.name())
+                or is_canonical(layer_table_name(layer))):
+            continue
+        path = gpkg_path_of(layer)
+        if path and _key(path) not in excluded:
+            candidates.setdefault(_key(path), path)
+
+    if not candidates:
+        return '', ('No GeoPackage-backed mapping layers are loaded in this '
+                    'project.')
+    if len(candidates) > 1:
+        return '', ('The mapping layers come from more than one GeoPackage:\n'
+                    + '\n'.join(candidates.values())
+                    + '\nChoose "A GeoPackage file" as the destination '
+                      'instead.')
+    return next(iter(candidates.values())), ''
 
 
 def gpkg_path_of(layer):
