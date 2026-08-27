@@ -64,7 +64,8 @@ class TestWriteSidecar(unittest.TestCase):
                           'opacity': 'true', 'clipping': 'true',
                           'spline': 'true', 'reshape': 'true',
                           'reverse': 'true', 'copyattrs': 'true',
-                          'merge': 'true', 'recenterhold': 'true'})
+                          'merge': 'true', 'recenterhold': 'true',
+                          'modetoggle': 'true'})
         # Data lines ship empty in source; the exporter fills them.
         self.assertEqual(_data_values(source),
                          {'opacitylayers': '[]',
@@ -74,7 +75,8 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_all_flag_combinations(self):
         names = ('zfilter', 'scale', 'opacity', 'clipping', 'spline',
-                 'reshape', 'reverse', 'copyattrs', 'merge', 'recenterhold')
+                 'reshape', 'reverse', 'copyattrs', 'merge', 'recenterhold',
+                 'modetoggle')
         for combo in itertools.product((True, False), repeat=len(names)):
             kwargs = dict(zip(names, combo))
             path, text = self._write(**kwargs)
@@ -88,18 +90,18 @@ class TestWriteSidecar(unittest.TestCase):
 
     def test_only_flag_and_build_lines_differ_from_source(self):
         # opacity_layers/spline_params=None rewrite those data lines to [] —
-        # identical to source — so only the ten flag lines and the build
+        # identical to source — so only the eleven flag lines and the build
         # stamp (always filled, that is its whole point) may differ.
         _path, text = self._write(zfilter=False, scale=False, opacity=False,
                                   clipping=False, spline=False,
                                   reshape=False, reverse=False,
                                   copyattrs=False, merge=False,
-                                  recenterhold=False)
+                                  recenterhold=False, modetoggle=False)
         with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
             source = fh.read()
         diff = [(a, b) for a, b in zip(source.splitlines(), text.splitlines())
                 if a != b]
-        self.assertEqual(len(diff), 11, diff)
+        self.assertEqual(len(diff), 12, diff)
         self.assertTrue(
             all('LGS-EXPORT-FLAG' in a or 'LGS-EXPORT-DATA:build' in a
                 for a, _b in diff), diff)
@@ -114,7 +116,7 @@ class TestWriteSidecar(unittest.TestCase):
                                    clipping=False, spline=False,
                                    reshape=False, reverse=False,
                                    copyattrs=False, merge=False,
-                                   recenterhold=False)
+                                   recenterhold=False, modetoggle=False)
         stamp_on = json.loads(_data_values(all_on)['build'])
         stamp_off = json.loads(_data_values(all_off)['build'])
         self.assertEqual(stamp_on, stamp_off)
@@ -241,7 +243,14 @@ class TestWriteSidecar(unittest.TestCase):
                        # Freehand recenter hold (v23):
                        'featureRecenterHold', 'holdPill',
                        'initRecenterHold', 'setRecenterHold',
-                       'FreehandRecenterScreenFraction'):
+                       'FreehandRecenterScreenFraction',
+                       # v24: active-layer copy lock, mode-toggle pill,
+                       # stylus freehand reshape:
+                       'copyLayerIsLgs', 'featureModeToggle', 'modePill',
+                       'initModeToggle', 'toggleMapMode',
+                       'toggleDigitizeMode', 'reshapeStrokeAppend',
+                       'reshapeStrokeBegin', 'reshapeStrokeEnd',
+                       'reshapeUndoStack', 'PointerDevice.Stylus'):
             self.assertIn(needle, text, needle)
 
 

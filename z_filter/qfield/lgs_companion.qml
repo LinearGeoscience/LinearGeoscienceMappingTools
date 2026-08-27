@@ -114,8 +114,13 @@
  * 7. RESHAPE — "→ Reshape" pill: multi-polygon reshape on the ACTIVE
  *    layer (port of map_cleaning/tools/reshape_spline_tool.py — keep
  *    the semantics in sync). Optionally tap polygons first to limit
- *    the targets (clip-style picks), then tap out a line and confirm:
- *    every targeted polygon the line crosses is reshaped via
+ *    the targets (clip-style picks), then draw the line and confirm:
+ *    tap out points one by one, or draw FREEHAND with the stylus —
+ *    QField's own freehand device gate (a DragHandler that never
+ *    accepts TouchScreen), so a finger drag still pans while the pen
+ *    draws; the stroke is thinned live to the spline minimum node
+ *    spacing and undoes as ONE action. Every targeted polygon the
+ *    line crosses is reshaped via
  *    GeometryUtils.reshapeFromRubberband — the same native op QField's
  *    own single-feature reshape editor uses, applied per feature in
  *    one edit session. The line draws on the plugin's OWN
@@ -154,18 +159,18 @@
  *    gating as Reshape. Requires QField 4.x.
  *
  * 9. COPY ATTRIBUTES — "» Copy" pill: stamp one feature's attributes
- *    onto others, including across layers (e.g. Basemap lithology,
- *    minerals and modal percents onto Field Notebook points). Tap the
- *    source, then tap targets — the source stays armed so several
- *    features can be stamped in a row; the first stamp of a session
- *    opens a field panel with a checkbox per field (untick = never
- *    copied this session, keyed by SOURCE field name so choices hold
- *    across layers; reopenable via the banner's Fields… button),
- *    later stamps apply instantly with the ticked set. Same-layer
- *    copies transfer every content field by
- *    name; cross-layer copies use a declarative pair map
- *    (copyFieldMapFor) plus the shared Comments/Confidence whitelist,
- *    each pair kept only when both ends exist in the live schemas.
+ *    onto others. Locked to the ACTIVE layer since v24 — both taps
+ *    resolve against the layer selected in the legend (same lock as
+ *    Reshape), and entering refuses with a toast when no LGS layer is
+ *    active, so a stray tap can never pick up a feature from another
+ *    layer. Tap the source, then tap targets — the source stays armed
+ *    so several features can be stamped in a row; the first stamp of
+ *    a session opens a field panel with a checkbox per field (untick
+ *    = never copied this session, keyed by SOURCE field name;
+ *    reopenable via the banner's Fields… button), later stamps apply
+ *    instantly with the ticked set. Every non-skipped content field
+ *    shared by source and target transfers by name (the cross-layer
+ *    pair map copyFieldMapFor is dormant while the lock stands).
  *    Only NON-EMPTY source values are written — a copy never blanks
  *    target data — and identity/housekeeping fields never transfer
  *    (fid, UUID, Date&Time, Geologist, Photo*, Sample*, derived
@@ -209,6 +214,15 @@
  *    Unlocking restores the stock value. QSettings persists across
  *    restarts, so the hold stays locked until toggled off; the pill
  *    re-detects the sentinel at startup.
+ *
+ * 12. MODE TOGGLE — Browse/Digitise pill (v24): flips QField between
+ *    browse and digitize without opening the side dashboard. Visible
+ *    in BOTH modes (like Hold; hidden only while a sidecar tool is
+ *    mid-flow), showing the current mode ('✏ Draw' inverted while
+ *    digitizing, '🔍 Browse' otherwise). Rides QField's own
+ *    stateMachine item for display and its toggleDigitizeMode signal
+ *    for the flip — QField's handler refuses to leave digitize
+ *    mid-feature with its own toast, a guard kept on purpose.
  */
 
 import QtQuick
@@ -233,6 +247,7 @@ Item {
   readonly property bool featureCopyAttrs: true // LGS-EXPORT-FLAG:copyattrs
   readonly property bool featureMerge: true // LGS-EXPORT-FLAG:merge
   readonly property bool featureRecenterHold: true // LGS-EXPORT-FLAG:recenterhold
+  readonly property bool featureModeToggle: true // LGS-EXPORT-FLAG:modetoggle
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1282,7 +1297,7 @@ Item {
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
         featureSpline || featureReshape || featureReverse ||
-        featureRecenterHold)
+        featureRecenterHold || featureModeToggle)
       attachOverlay()
     startupTimer.start()
   }
@@ -1314,6 +1329,8 @@ Item {
         plugin.initMerge()
       if (plugin.featureRecenterHold)
         plugin.initRecenterHold()
+      if (plugin.featureModeToggle)
+        plugin.initModeToggle()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -2236,6 +2253,40 @@ Item {
       TapHandler {
         gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.setRecenterHold(!plugin.recenterHoldActive)
+      }
+    }
+
+    Rectangle {
+      id: modePill
+      // Like the Hold pill, visible in BOTH browse and digitize — the
+      // whole point is flipping modes without opening the side menu.
+      // Hidden only while a sidecar tool is mid-flow.
+      visible: plugin.featureModeToggle &&
+               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.reverseStep === 0 && plugin.copyStep === 0 &&
+               plugin.mergeStep === 0
+      anchors.verticalCenter: parent.verticalCenter
+      width: modePillText.contentWidth + 24
+      height: modePillText.contentHeight + 12
+      radius: height / 2
+      // Inverted while digitizing — same active-state language as the
+      // spline and hold pills.
+      color: plugin.mapModeState === 'digitize' ? '#E6FFFFFF' : '#99000000'
+
+      Text {
+        id: modePillText
+        anchors.centerIn: parent
+        font.pixelSize: 14
+        color: plugin.mapModeState === 'digitize' ? 'black' : 'white'
+        // Emoji on purpose — see the hold pill. Measure/3d render the
+        // browse face; a tap still lands in digitize via QField.
+        text: plugin.mapModeState === 'digitize'
+            ? qsTr('✏ Draw') : qsTr('🔍 Browse')
+      }
+
+      TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: plugin.toggleMapMode()
       }
     }
   }
@@ -4713,6 +4764,25 @@ Item {
     return out
   }
 
+  // Freehand stroke gate for the reshape tool (v24): append pt to
+  // controls only when it clears minDist from the last kept point —
+  // the live-capture twin of splineDecimate's after-the-fact thinning.
+  // Returns whether it appended. Pure JS, no QML identifiers —
+  // extracted verbatim into tests/reshape_freehand_harness.js.
+  function reshapeStrokeAppend(controls, pt, minDist) {
+    if (controls.length === 0 || !(minDist > 0)) {
+      controls.push(pt)
+      return true
+    }
+    const last = controls[controls.length - 1]
+    const dx = pt.x - last.x
+    const dy = pt.y - last.y
+    if (dx * dx + dy * dy < minDist * minDist)
+      return false
+    controls.push(pt)
+    return true
+  }
+
   // Exact point equality for cache keys: NaN/undefined z equals
   // NaN/undefined z (same rules as splineCommonPrefixLength), and the
   // open-end boundary marker null only equals null.
@@ -5665,6 +5735,10 @@ Item {
   property var reshapeUndo: null       // one-level undo, session-only
   property string reshapeResultText: ''
   property var reshapeMarkerPositions: []
+  // Freehand stroke state (v24) — stylus draws, finger pans.
+  property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
+  property int reshapeStrokeStart: -1  // -1 idle, -2 ignoring this stroke
+  property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
 
   RubberbandModel {
     id: reshapeModel
@@ -5726,6 +5800,12 @@ Item {
     try {
       if (reshapeDashboard === null)
         reshapeDashboard = iface.findItemByObjectName('dashBoard')
+    } catch (error) {}
+    try {
+      // Only read for mouseAsTouchScreen — a missing item falls back to
+      // accepting the mouse for freehand (desktop convenience).
+      if (reshapeSettingsItem === null)
+        reshapeSettingsItem = iface.findItemByObjectName('qfieldSettings')
     } catch (error) {}
     updateReshapeEditingActive()
   }
@@ -5834,6 +5914,8 @@ Item {
       reshapePlan = []
       reshapeResultText = ''
       reshapeMarkerPositions = []
+      reshapeUndoStack = []
+      reshapeStrokeStart = -1
       reshapeModel.reset(true)
       reshapeStep = 1
       toast(qsTr('Tap polygons to limit reshape (optional), then draw the line'))
@@ -5858,6 +5940,8 @@ Item {
     reshapePlan = []
     reshapeResultText = ''
     reshapeMarkerPositions = []
+    reshapeUndoStack = []
+    reshapeStrokeStart = -1
   }
 
   // ----------------------------------------------------------------
@@ -5933,8 +6017,66 @@ Item {
       let next = reshapeControls.slice()
       next.push({ x: Number(pt.x), y: Number(pt.y), z: Number(pt.z) })
       reshapeControls = next
+      reshapeUndoStack = reshapeUndoStack.concat([1])
       reshapeRebuildPreview()
     } catch (error) {}
+  }
+
+  // ----------------------------------------------------------------
+  // Freehand stroke capture (v24) — stylus draws, finger pans. The
+  // DragHandler on reshapeCatcher feeds these. A clean stylus tap
+  // never activates it (dragThreshold 0 needs movement), so it falls
+  // through to the TapHandler and tap placement keeps working.
+  // ----------------------------------------------------------------
+  function reshapeStrokeBegin(pos) {
+    if (reshapeStep !== 2 || reshapeTapOnUi(pos)) {
+      reshapeStrokeStart = -2
+      return
+    }
+    reshapeStrokeStart = reshapeControls.length
+    reshapeStrokeMove(pos)
+  }
+
+  function reshapeStrokeMove(pos) {
+    if (reshapeStrokeStart < 0 || reshapeStep !== 2)
+      return
+    try {
+      const pt = canvas.mapSettings.screenToCoordinate(
+          Qt.point(pos.x, pos.y))
+      // fh marks stroke interiors: no white marker dot each (a stroke
+      // would spawn hundreds) — the endpoints are untagged on release
+      // so they keep theirs. The spline math never reads the tag.
+      const node = { x: Number(pt.x), y: Number(pt.y), z: Number(pt.z),
+                     fh: true }
+      let next = reshapeControls.slice()
+      if (!reshapeStrokeAppend(next, node, splineMinNodeMapUnits()))
+        return
+      reshapeControls = next
+      // Throttle, not debounce — restarting on every move would starve
+      // the preview for the whole stroke (see splineScheduleRebuild).
+      if (!reshapeStrokeTimer.running)
+        reshapeStrokeTimer.start()
+    } catch (error) {}
+  }
+
+  function reshapeStrokeEnd() {
+    const start = reshapeStrokeStart
+    reshapeStrokeStart = -1
+    if (start < 0 || reshapeStep !== 2)
+      return
+    const added = reshapeControls.length - start
+    if (added <= 0)
+      return
+    let next = reshapeControls.slice()
+    for (const i of [start, next.length - 1]) {
+      const node = Object.assign({}, next[i])
+      delete node.fh
+      next[i] = node
+    }
+    reshapeControls = next
+    // The whole stroke undoes as ONE action.
+    reshapeUndoStack = reshapeUndoStack.concat([added])
+    reshapeRebuildPreview()
   }
 
   // ----------------------------------------------------------------
@@ -5966,13 +6108,27 @@ Item {
   function reshapeUndoVertex() {
     if (reshapeControls.length === 0)
       return
-    reshapeControls = reshapeControls.slice(0, reshapeControls.length - 1)
+    // Pop one ACTION, not one point — a freehand stroke pushed its
+    // whole point count as a single stack entry (v24).
+    let n = 1
+    if (reshapeUndoStack.length > 0) {
+      const stack = reshapeUndoStack.slice()
+      n = Number(stack.pop())
+      reshapeUndoStack = stack
+    }
+    if (!(n >= 1))
+      n = 1
+    if (n > reshapeControls.length)
+      n = reshapeControls.length
+    reshapeControls = reshapeControls.slice(0, reshapeControls.length - n)
     reshapeRebuildPreview()
   }
 
   function reshapeBackToPicks() {
     reshapeControls = []
     reshapeMarkerPositions = []
+    reshapeUndoStack = []
+    reshapeStrokeStart = -1
     try {
       reshapeModel.reset(true)
     } catch (error) {}
@@ -6213,6 +6369,9 @@ Item {
     const out = []
     try {
       for (let i = 0; i < reshapeControls.length; i++) {
+        // Freehand stroke interiors carry no dot — hundreds per stroke.
+        if (reshapeControls[i].fh === true)
+          continue
         const p = scaleSettings.coordinateToScreen(GeometryUtils.point(
             reshapeControls[i].x, reshapeControls[i].y))
         out.push({ x: Number(p.x), y: Number(p.y) })
@@ -6231,6 +6390,15 @@ Item {
     interval: 40
     repeat: false
     onTriggered: plugin.updateReshapeMarkers()
+  }
+
+  Timer {
+    // Live freehand-stroke preview, same 40 ms cadence — the stroke's
+    // final rebuild comes unthrottled from reshapeStrokeEnd.
+    id: reshapeStrokeTimer
+    interval: 40
+    repeat: false
+    onTriggered: plugin.reshapeRebuildPreview()
   }
 
   Connections {
@@ -6260,6 +6428,10 @@ Item {
         plugin.exitReverseMode()
         plugin.toast(qsTr('Reverse cancelled — digitizing started'))
       }
+      // Mode changes ride the same signal — a cheap resync in case the
+      // startup find of the state machine came up empty.
+      if (plugin.featureModeToggle)
+        plugin.initModeToggle()
     }
   }
 
@@ -6302,6 +6474,36 @@ Item {
         plugin.handleReshapeTap(eventPoint.position)
       }
     }
+
+    DragHandler {
+      // Stylus freehand (v24) — the exact device gate of QField's own
+      // freehand digitizing: TouchScreen is never accepted, so a
+      // finger drag still pans the canvas underneath; the mouse draws
+      // on desktop unless the user runs it as a touchscreen.
+      // dragThreshold 0 means a clean stylus tap never activates this
+      // handler and falls through to the TapHandler above — inherent
+      // tap/stroke dedupe. grabPermissions omits CanTakeOverFromItems
+      // so banner Buttons keep their stylus taps.
+      enabled: plugin.reshapeStep === 2
+      acceptedDevices: plugin.reshapeSettingsItem !== null &&
+                       plugin.reshapeSettingsItem.mouseAsTouchScreen
+          ? PointerDevice.Stylus
+          : PointerDevice.Stylus | PointerDevice.Mouse
+      grabPermissions: PointerHandler.CanTakeOverFromHandlersOfSameType |
+                       PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                       PointerHandler.ApprovesTakeOverByAnything
+      dragThreshold: 0
+      onActiveChanged: {
+        if (active)
+          plugin.reshapeStrokeBegin(centroid.position)
+        else
+          plugin.reshapeStrokeEnd()
+      }
+      onCentroidChanged: {
+        if (active)
+          plugin.reshapeStrokeMove(centroid.position)
+      }
+    }
   }
 
   Rectangle {
@@ -6340,7 +6542,7 @@ Item {
         text: plugin.reshapeStep === 1
             ? qsTr('Tap polygons to limit the reshape, or draw straight away — with no picks every polygon the line crosses is reshaped')
             : plugin.reshapeStep === 2
-              ? qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes')
+              ? qsTr('Tap along the new edge, or draw it with the stylus (finger pans) — the line must enter and exit each polygon it reshapes')
               : plugin.reshapeResultText
       }
 
@@ -6407,6 +6609,7 @@ Item {
           leftPadding: 14
           rightPadding: 14
           contentItem: Text {
+            // One action per press: a tapped point OR a whole stroke.
             text: qsTr('Undo point')
             color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
             font.pixelSize: 14
@@ -6922,14 +7125,17 @@ Item {
   }
 
   // ================================================================
-  // COPY ATTRIBUTES (v21) — stamp one feature's attributes onto
-  // others, cross-layer aware. Tap the source, then tap targets; the
-  // source stays armed for rapid multi-stamping. Only non-empty
-  // source values are written; the target keeps its own geometry,
-  // UUID and housekeeping fields.
+  // COPY ATTRIBUTES (v21, active-layer-only since v24) — stamp one
+  // feature's attributes onto others. Tap the source, then tap
+  // targets; the source stays armed for rapid multi-stamping. Only
+  // non-empty source values are written; the target keeps its own
+  // geometry, UUID and housekeeping fields. Both taps resolve against
+  // the ACTIVE layer only — a stray tap can no longer pick up a
+  // feature from a layer the geologist is not working in.
   // ================================================================
 
   property int copyStep: 0           // 0=off, 1=pick source, 2=stamp targets
+  property var copyLayer: null       // the active layer, locked on entry (v24)
   property var copySourceLayer: null
   property var copySourceFeature: null
   property string copySourceLabel: ''
@@ -6983,6 +7189,10 @@ Item {
   }
 
   function copyFieldMapFor(srcLayerName, dstLayerName) {
+    // Dormant since v24: the UI locks both taps to the active layer, so
+    // only the same-layer identity branch of buildCopyPairs is reachable.
+    // Kept verbatim (with its harness extraction) in case cross-layer
+    // stamping returns.
     // Declarative cross-layer pair map, keyed 'src>dst' by BASE name (no
     // "N - " ordinal). Keying on identity rather than numbering means the map
     // survives a layer renumbering and works against pre-swap project
@@ -7086,10 +7296,8 @@ Item {
   }
 
   function candidateCopyLayers() {
-    // Points and lines first — findHitInLayers returns the first layer
-    // with a hit, so polygons would otherwise swallow every tap. This order is
-    // by GEOMETRY, not by the layer numbering, and happens to coincide with it
-    // now that Linework is 2.
+    // Since v24 this is only an availability probe (does any LGS layer
+    // exist?) — taps resolve against the locked active layer instead.
     let layers = []
     for (const name of ['1 - FieldNotebook', '2 - Linework',
                         '3 - Overlay', '4 - Basemap']) {
@@ -7106,6 +7314,21 @@ Item {
     } catch (error) {
       return ''
     }
+  }
+
+  function copyLayerIsLgs(layer) {
+    // Identity compare against the canonical lookups — layerByName
+    // already falls back through legacyLayerNames, so pre-swap
+    // GeoPackages resolve too.
+    if (layer === null || layer === undefined)
+      return false
+    for (const name of layerNames) {
+      try {
+        if (layerByName(name) === layer)
+          return true
+      } catch (error) {}
+    }
+    return false
   }
 
   // ----------------------------------------------------------------
@@ -7126,6 +7349,19 @@ Item {
         toast(qsTr('Copy unavailable — no LGS layers found'))
         return
       }
+      // v24: both taps are locked to the ACTIVE layer, mirroring the
+      // reshape tool. No fallback sweep — a wrong-layer pick defeats
+      // the point of the lock.
+      const activeLayer = reshapeActiveLayer()
+      if (activeLayer === null) {
+        toast(qsTr('Copy unavailable — no active layer (tap one in the legend)'))
+        return
+      }
+      if (!copyLayerIsLgs(activeLayer)) {
+        toast(qsTr('Select an LGS layer first — copy works on the active layer'))
+        return
+      }
+      copyLayer = activeLayer
       copyCatcher.parent = canvas
       copyCatcher.anchors.fill = canvas
       copyBanner.parent = canvas
@@ -7145,7 +7381,8 @@ Item {
       copyDialogEntries = []
       copyDialogChecks = {}
       copyStep = 1
-      toast(qsTr('Tap the feature to copy FROM'))
+      toast(qsTr('Tap the feature to copy FROM (%1)')
+            .arg(copyLayerLabel(copyLayer)))
     } catch (error) {
       toast(qsTr('Copy unavailable'))
     }
@@ -7157,6 +7394,7 @@ Item {
         copySourceLayer.removeSelection()
     } catch (error) {}
     copyStep = 0
+    copyLayer = null
     copySourceLayer = null
     copySourceFeature = null
     copySourceLabel = ''
@@ -7209,8 +7447,9 @@ Item {
       if (copyTapOnUi(pos))
         return
       // The iterator honours the layer subsetString, so an active Z
-      // filter means only VISIBLE features are tappable.
-      const hit = findHitInLayers(candidateCopyLayers(), pos)
+      // filter means only VISIBLE features are tappable. Locked to the
+      // active layer since v24 — one call site covers both taps.
+      const hit = findHitInLayers([copyLayer], pos)
       if (hit === null) {
         toast(qsTr('No feature here'))
         return
@@ -7531,7 +7770,8 @@ Item {
         font.pixelSize: 14
         color: 'white'
         text: plugin.copyStep === 1
-            ? qsTr('Tap the feature to copy FROM')
+            ? qsTr('Tap the feature to copy FROM · %1')
+                  .arg(plugin.copyLayerLabel(plugin.copyLayer))
             : qsTr('Tap features to copy TO — the source stays armed. Only non-empty source values are written.')
       }
 
@@ -8437,5 +8677,59 @@ Item {
     recenterHoldActive = on
     toast(on ? qsTr('Map hold ON — drawing will not recentre the map')
              : qsTr('Map hold off — QField recentring restored'))
+  }
+
+  // ================================================================
+  // MODE TOGGLE (v24) — an always-visible Browse/Digitise pill, so
+  // the geologist can flip modes without opening the side dashboard.
+  // Rides QField's own state machine (objectName 'stateMachine',
+  // states browse/digitize/measure/3d) and its toggleDigitizeMode
+  // signal — chosen over changeMode('...') because QField's handler
+  // refuses to leave digitize mid-feature and says so with its own
+  // toast, a guard worth keeping.
+  // ================================================================
+
+  property var modeStateMachine: null
+  property string mapModeState: 'browse'
+
+  function initModeToggle() {
+    // Lazy find, same pattern as splineLocator / reshapeDashboard —
+    // idempotent, so the rubberband Connections above can re-probe.
+    try {
+      if (modeStateMachine === null)
+        modeStateMachine = iface.findItemByObjectName('stateMachine')
+    } catch (error) {}
+    refreshMapModeState()
+  }
+
+  function refreshMapModeState() {
+    // Unreadable (older/newer QField) counts as browse — the pill then
+    // still toggles correctly, it just may not show the armed face.
+    let state = 'browse'
+    try {
+      if (modeStateMachine !== null && modeStateMachine !== undefined &&
+          modeStateMachine.state !== undefined)
+        state = String(modeStateMachine.state)
+    } catch (error) {}
+    mapModeState = state
+  }
+
+  function toggleMapMode() {
+    try {
+      mainWindow.toggleDigitizeMode()
+    } catch (error) {
+      toast(qsTr('Could not switch mode'))
+    }
+    refreshMapModeState()
+  }
+
+  Connections {
+    // A null target is legal and inert, so this is safe before (or
+    // without) a successful initModeToggle find.
+    target: plugin.modeStateMachine
+    ignoreUnknownSignals: true
+    function onStateChanged() {
+      plugin.refreshMapModeState()
+    }
   }
 }
