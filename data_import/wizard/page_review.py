@@ -58,8 +58,12 @@ class ReviewPage(QWizardPage):
         self.uuid_check = QCheckBox(
             'Give features without a UUID a new one')
         self.uuid_check.setChecked(True)
+        self.repeated_check = QCheckBox(
+            'Import repeated UUIDs as features of their own (duplicated in '
+            'the field)')
+        self.repeated_check.setChecked(True)
         for widget in (self.backup_check, self.duplicates_check,
-                       self.uuid_check):
+                       self.uuid_check, self.repeated_check):
             options_layout.addWidget(widget)
             widget.toggled.connect(self._apply_options)
         layout.addWidget(options)
@@ -84,8 +88,6 @@ class ReviewPage(QWizardPage):
         if plan is None:
             return
         self._apply_options()
-        self.summary_label.setText(self._summary_html(plan))
-        self.findings_label.setText(self._findings_html(plan.validate()))
         self.saved_label.setText('')
 
     def _apply_options(self, *_args):
@@ -95,6 +97,11 @@ class ReviewPage(QWizardPage):
         plan.options.backup = self.backup_check.isChecked()
         plan.options.skip_duplicate_uuids = self.duplicates_check.isChecked()
         plan.options.generate_missing_uuids = self.uuid_check.isChecked()
+        plan.options.import_repeated_uuids = self.repeated_check.isChecked()
+        # The counts and the findings both read the options, so they are
+        # re-rendered here rather than only when the page opens.
+        self.summary_label.setText(self._summary_html(plan))
+        self.findings_label.setText(self._findings_html(plan.validate()))
 
     def isComplete(self):
         plan = self.wizard_ref.state.plan
@@ -115,11 +122,16 @@ class ReviewPage(QWizardPage):
                                                     summary['features']))
         lines = [headline + ':', '<ul>']
         for item in plan.included():
+            parts = []
+            if item.already_present or item.repeated_in_source:
+                parts.append('{0:,} new'.format(plan.expected_new_for(item)))
             if item.already_present:
-                detail = '{0:,} new, {1:,} already there'.format(
-                    item.expected_new, item.already_present)
-            else:
-                detail = '{0:,} features'.format(item.feature_count)
+                parts.append('{0:,} already there'.format(item.already_present))
+            if item.repeated_in_source:
+                parts.append('{0:,} repeated in the source'.format(
+                    item.repeated_in_source))
+            detail = (', '.join(parts) if parts
+                      else '{0:,} features'.format(item.feature_count))
             lines.append('<li>{0} → <b>{1}</b> ({2})</li>'.format(
                 item.source.label, item.target_layer, detail))
         lines.append('</ul>')

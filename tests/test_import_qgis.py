@@ -46,7 +46,8 @@ from qgis.core import (  # noqa: E402
 )
 from qgis.PyQt.QtCore import QMetaType  # noqa: E402
 
-from data_import import domain, execute, plan as plan_module, scan  # noqa: E402
+from data_import import (domain, execute, metadata,  # noqa: E402
+                         plan as plan_module, scan)
 
 TEMPLATE = os.path.join(REPO_ROOT, 'Template', 'LGS_MappingTemplate.gpkg')
 
@@ -531,7 +532,8 @@ class TestAppendWorkflow(unittest.TestCase):
             where = scan.date_filter_expression(_f, names)
             counted = scan.gpkg_value_counts(source, table, ['UUID'],
                                              where=where)['UUID']
-            return set(counted.counts), counted.empty
+            return (set(counted.counts), counted.empty,
+                    sum(n - 1 for n in counted.counts.values() if n > 1))
 
         def destination_uuids(layer_name):
             return scan.gpkg_column_set(self.master, layer_name, 'UUID')
@@ -626,6 +628,109 @@ class TestAppendWorkflow(unittest.TestCase):
         self.assertTrue(all(self._uuids()))
         warnings = ' '.join(f.title for f in built.validate().warnings)
         self.assertIn('have no UUID', warnings)
+
+
+class TestDuplicatedFeatures(TestAppendWorkflow):
+    """A feature duplicated in QGIS or QField carries the original's UUID.
+
+    Duplicating is how a geologist adds a feature that shares most of its
+    attributes, so the copy is real data. It used to be dropped as "already
+    there"; now it lands under a UUID of its own — and, the part worth
+    testing hardest, importing the same file twice still adds nothing.
+    """
+
+    def _repeated_count(self, result):
+        return sum(layer.repeated_new_uuid for layer in result.layers)
+
+    def test_a_duplicated_feature_lands_under_its_own_uuid(self):
+        source = self._export('dupes.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0),
+                               ('uuid-002', 1)])
+        built, result = self._import(source)
+        self.assertEqual(result.total_added, 3)
+        self.assertEqual(self._repeated_count(result), 1)
+        uuids = self._uuids()
+        self.assertEqual(len(uuids), 3)
+        self.assertEqual(len(set(uuids)), 3, 'the copy kept a borrowed UUID')
+        self.assertIn('uuid-001', uuids)
+        self.assertIn('uuid-002', uuids)
+        warnings = ' '.join(f.title for f in built.validate().warnings)
+        self.assertIn('share a UUID', warnings)
+
+    def test_importing_the_same_file_again_adds_nothing(self):
+        source = self._export('dupes.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0),
+                               ('uuid-002', 1)])
+        self._import(source)
+        before = self._uuids()
+        _built, result = self._import(source)
+        self.assertEqual(result.total_added, 0)
+        self.assertEqual(self._repeated_count(result), 0)
+        self.assertEqual(self._uuids(), before)
+
+    def test_a_copy_added_since_the_last_run_still_comes_in(self):
+        first = self._export('week1.gpkg',
+                             [('uuid-001', 0), ('uuid-001', 0)])
+        self._import(first)
+        self.assertEqual(len(self._uuids()), 2)
+
+        # The geologist duplicated it once more out in the field.
+        second = self._export('week2.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0),
+                               ('uuid-001', 0)])
+        _built, result = self._import(second)
+        self.assertEqual(result.total_added, 1)
+        self.assertEqual(self._repeated_count(result), 1)
+        self.assertEqual(len(set(self._uuids())), 3)
+
+    def test_the_ledger_remembers_how_many_copies_came_in(self):
+        source = self._export('dupes.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0),
+                               ('uuid-001', 0)])
+        self._import(source)
+        tracker = metadata.UUIDTracker(self.master)
+        self.assertEqual(
+            tracker.copy_count('1 - FieldNotebook', 'uuid-001'), 2)
+
+    def test_turning_the_option_off_keeps_only_the_original(self):
+        source = self._export('dupes.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0)])
+        target = domain.read_gpkg_model(self.master)
+        source_model = domain.read_gpkg_model(source)
+        built = plan_module.build_plan(
+            source_model, target,
+            plan_module.DestinationRef('gpkg', self.master, 'master'),
+            lambda table, fields: scan.gpkg_value_counts(source, table, fields))
+        built.options.backup = False
+        built.options.import_repeated_uuids = False
+        for item in built.included():
+            for resolution in item.undecided():
+                resolution.leave_blank()
+        result = execute.run_import(built, execute.prepare_sources(built))
+        self.assertEqual(result.total_added, 1)
+        self.assertEqual(
+            sum(layer.repeated_skipped for layer in result.layers), 1)
+        self.assertEqual(self._uuids(), ['uuid-001'])
+
+    def test_without_the_ledger_the_copy_is_held_back_and_said_so(self):
+        source = self._export('dupes.gpkg',
+                              [('uuid-001', 0), ('uuid-001', 0)])
+        target = domain.read_gpkg_model(self.master)
+        source_model = domain.read_gpkg_model(source)
+        built = plan_module.build_plan(
+            source_model, target,
+            plan_module.DestinationRef('gpkg', self.master, 'master'),
+            lambda table, fields: scan.gpkg_value_counts(source, table, fields))
+        built.options.backup = False
+        built.options.use_uuid_tracker = False
+        for item in built.included():
+            for resolution in item.undecided():
+                resolution.leave_blank()
+        result = execute.run_import(built, execute.prepare_sources(built))
+        self.assertEqual(result.total_added, 1)
+        problems = ' '.join(error for layer in result.layers
+                            for error in layer.errors)
+        self.assertIn('import ledger is unavailable', problems)
 
 
 def _suite():

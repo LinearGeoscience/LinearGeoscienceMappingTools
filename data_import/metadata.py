@@ -166,6 +166,8 @@ class UUIDTracker:
                         data['version'] = '1.0'
                     if 'layers' not in data:
                         data['layers'] = {}
+                    if 'copy_counts' not in data:
+                        data['copy_counts'] = {}
                     return data
             except (json.JSONDecodeError, IOError) as e:
                 _log_message(f"Warning: Could not load UUID tracking file: {e}", _LOG_WARNING)
@@ -177,7 +179,13 @@ class UUIDTracker:
             'created': datetime.now(timezone.utc).isoformat(),
             'last_updated': datetime.now(timezone.utc).isoformat(),
             'master_gpkg': os.path.basename(self.master_gpkg_path),
-            'layers': {}  # {layer_name: {uuid: {timestamp, batch_id, date_field_value}}}
+            'layers': {},  # {layer_name: {uuid: {timestamp, batch_id, date_field_value}}}
+            # {layer_name: {source_uuid: how many copies of it have been
+            # imported}}. A feature duplicated in the field shares its
+            # original's UUID, so the copies are counted rather than named:
+            # they land under fresh UUIDs the source knows nothing about, and
+            # this is what stops the next run importing them all over again.
+            'copy_counts': {}
         }
 
     def save(self):
@@ -228,6 +236,27 @@ class UUIDTracker:
                     'date_value': date_values.get(uuid) if date_values else None
                 }
 
+        self.save()
+
+    def copy_count(self, layer_name: str, uuid: str) -> int:
+        """How many copies of `uuid` past the first have already been imported.
+
+        Copies are features duplicated in QGIS or QField, which carry the
+        original's UUID. They are imported under new UUIDs, so the source
+        value is the only thing both runs can agree on; counting how many have
+        been through is what makes a second run of the same file a no-op.
+        """
+        return int(self.data.get('copy_counts', {})
+                   .get(layer_name, {}).get(uuid, 0))
+
+    def add_copies(self, layer_name: str, counts: Dict[str, int]):
+        """Record `{source_uuid: copies imported this run}` for a layer."""
+        if not counts:
+            return
+        buckets = self.data.setdefault('copy_counts', {})
+        layer = buckets.setdefault(layer_name, {})
+        for uuid, count in counts.items():
+            layer[uuid] = int(layer.get(uuid, 0)) + int(count)
         self.save()
 
     def is_duplicate(self, layer_name: str, uuid: str) -> bool:

@@ -76,6 +76,7 @@ class WizardState(object):
         self.analysis_destination_path = ''
         self.counts_provider = None
         self.source_uuids_provider = None
+        self.destination_uuids_provider = None
         self.source_refs = {}
         self.layer_snapshots = {}
 
@@ -211,6 +212,9 @@ class ImportWizard(QWizard):
             destination_uuids_for=destination_uuids)
 
         built.options.date_filter = state.date_filter
+        # Kept so re-pointing a layer on the Layers page can redo its estimate
+        # against the new destination rather than keep the old one's numbers.
+        state.destination_uuids_provider = destination_uuids
 
         note(95, 'Done.')
         return source_model, target_model, built
@@ -235,6 +239,12 @@ class ImportWizard(QWizard):
         target_spec = state.target_model.layers.get(layer_import.target_layer)
         if source_spec is None or target_spec is None:
             return
+
+        # The old target's "already there" and "repeated" counts say nothing
+        # about the new one.
+        plan_module.estimate_new(
+            layer_import, source_spec, target_spec,
+            state.source_uuids_provider, state.destination_uuids_provider)
 
         layer_import.field_plan = match_fields.match_fields(source_spec,
                                                             target_spec)
