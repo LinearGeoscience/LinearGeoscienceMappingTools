@@ -13,7 +13,8 @@ from qgis.core import (
     QgsRasterLayer,
     QgsMessageLog,
     Qgis,
-    QgsLayerTreeLayer
+    QgsLayerTreeLayer,
+    QgsLayerTreeGroup
 )
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
@@ -158,6 +159,61 @@ class OfflineConverter(QObject):
         except Exception:
             return [0.5, 0.1, 200]  # mirror map_cleaning/core/utils.py
 
+    def _collect_opacity_groups(self):
+        """Layer-tree folders as [{"name", "layers"}] for the sidecar.
+
+        QML cannot walk the project layer tree, so the folder rows of the
+        opacity panel are resolved here and baked in. Membership is by
+        layer NAME (what the sidecar's layerByName resolves) and is
+        restricted to layers this export actually shipped, so a folder
+        never offers rows for something the device does not have.
+
+        Nested groups each get their own entry, named by their path so
+        two "Imagery" folders under different parents stay distinct. A
+        group carries its descendants' layers, so a parent folder sets
+        everything beneath it. Folders with fewer than two exported
+        layers are dropped - the layers' own rows already cover them.
+        """
+        exported = set(self._raster_layer_names) | set(
+            self._vector_layer_names)
+        if not exported:
+            return []
+        entries = []
+
+        def walk(node, path, seq):
+            """-> the exported layer names at or below node.
+
+            A group's own entry can only be built once its children have
+            been walked, so each group takes a sequence number on the way
+            IN and the entries are sorted by it afterwards - that keeps
+            the rows in the reading order of the legend rather than the
+            deepest-first order the recursion unwinds in.
+            """
+            names = []
+            for child in node.children():
+                if isinstance(child, QgsLayerTreeLayer):
+                    layer = child.layer()
+                    if layer is not None and layer.name() in exported:
+                        names.append(layer.name())
+                elif isinstance(child, QgsLayerTreeGroup):
+                    seq[0] += 1
+                    order = seq[0]
+                    sub_path = path + [child.name() or "Group"]
+                    sub_names = walk(child, sub_path, seq)
+                    if len(sub_names) > 1:
+                        entries.append((order, {
+                            "name": " / ".join(sub_path),
+                            "layers": sub_names}))
+                    names.extend(sub_names)
+            return names
+
+        try:
+            walk(self.project.layerTreeRoot(), [], [0])
+        except Exception:
+            return []
+        return [entry for _order, entry in sorted(entries,
+                                                  key=lambda e: e[0])]
+
     def export(self) -> bool:
         """
         Export the project for QField.
@@ -245,6 +301,7 @@ class OfflineConverter(QObject):
                         merge=self.include_merge_plugin,
                         opacity_layers=self._raster_layer_names,
                         vector_layers=self._vector_layer_names,
+                        opacity_groups=self._collect_opacity_groups(),
                         spline_params=self._read_spline_params())
                     features = ", ".join(
                         name for name, on in

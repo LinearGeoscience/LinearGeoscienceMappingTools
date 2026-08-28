@@ -70,6 +70,7 @@ class TestWriteSidecar(unittest.TestCase):
         self.assertEqual(_data_values(source),
                          {'opacitylayers': '[]',
                           'vectoropacitylayers': '[]',
+                          'opacitygroups': '[]',
                           'splineparams': '[]',
                           'build': '[]'})
 
@@ -250,7 +251,13 @@ class TestWriteSidecar(unittest.TestCase):
                        'initModeToggle', 'toggleMapMode',
                        'toggleDigitizeMode', 'reshapeStrokeAppend',
                        'reshapeStrokeBegin', 'reshapeStrokeEnd',
-                       'reshapeUndoStack', 'PointerDevice.Stylus'):
+                       'reshapeUndoStack', 'PointerDevice.Stylus',
+                       # v25: scrolling opacity panel, folder rows,
+                       # graded transported cover:
+                       'opacityScroll', 'opacityGrid', 'opacityGroups',
+                       'resolvedGroupEntries', 'groupOpacityCurrent',
+                       'setCoverOpacity', 'coverStepCurrent',
+                       'lgs_cover_opacity'):
             self.assertIn(needle, text, needle)
 
 

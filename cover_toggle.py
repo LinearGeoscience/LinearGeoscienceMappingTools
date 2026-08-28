@@ -1,29 +1,50 @@
 """
-Transported-cover visibility toggle for the Basemap layer.
+Transported-cover opacity control for the Basemap layer.
 
-Hides/shows every polygon whose primary type is 'Transported Cover' by
-AND-ing a subset-string clause onto "4 - Basemap" (features AND labels
-disappear, unlike renderer-category toggling). The clause always lives in
-the baseline subset, beneath any z-filter clause, so the z filter's
-stored-original bookkeeping and the QField exporter's strip both keep
-working unchanged. Semantics mirrored in z_filter/qfield/lgs_companion.qml.
+A four-step ladder, 100 / 50 / 25 / Hidden:
+
+* Hidden AND-s a subset-string clause onto "4 - Basemap", so features AND
+  labels disappear (unlike renderer-category toggling). The clause always
+  lives in the baseline subset, beneath any z-filter clause, so the z
+  filter's stored-original bookkeeping and the QField exporter's strip
+  both keep working unchanged.
+* 100/50/25 fade instead, through a data-defined symbol opacity written
+  onto every class symbol of the Basemap renderer; it reads the project
+  variable @lgs_cover_opacity, so changing the level is one variable
+  write. Labels keep drawing at full strength on a faded cover - only
+  Hidden takes them away.
+
+Both the renderer and the variable travel into QField exports verbatim,
+so the device sidecar drives the same ladder by rewriting the variable.
+Semantics mirrored in z_filter/qfield/lgs_companion.qml.
 """
 
-from qgis.core import QgsExpressionContextUtils, QgsProject
+from qgis.core import (QgsExpressionContextUtils, QgsProject, QgsProperty,
+                       QgsSymbol)
 
 from .z_filter.expression import (
     COVER_FIELD,
+    COVER_STEPS,
     ENTRY_ORIG_SUBSET_PREFIX,
     SCOPE,
     VAR_COVER_HIDDEN,
+    VAR_COVER_OPACITY,
     apply_cover_to_subset,
     combine,
+    cover_opacity_expression,
     strip_cover_subset,
     strip_z_subset_any,
 )
+from . import renderer_compat
 from .lgs_layers import BASEMAP, find_layer
 
 BASEMAP_NAME = BASEMAP
+
+# QGIS 4 scopes the symbol property enum; 3.x keeps it flat.
+try:
+    _PROP_OPACITY = QgsSymbol.Property.Opacity
+except AttributeError:  # QGIS 3.x
+    _PROP_OPACITY = QgsSymbol.PropertyOpacity
 
 
 def get_basemap_layer(project=None):
@@ -76,7 +97,86 @@ def is_cover_hidden(project=None):
     return strip_cover_subset(baseline) != baseline
 
 
-def set_cover_hidden(iface, hidden):
+def ensure_cover_opacity_dd(layer):
+    """Bake the data-defined cover opacity onto every class symbol.
+
+    Idempotent: the expression is a constant, so re-running overwrites
+    with the same thing. Runs against the LIVE renderer rather than the
+    shipped template, because existing projects were styled before this
+    tool existed and the export copies whatever the project holds.
+
+    Returns True when the property was written.
+    """
+    if layer is None:
+        return False
+    renderer = layer.renderer()
+    if renderer is None or not renderer_compat.is_supported(renderer):
+        return False
+    clone = renderer.clone()
+    prop = QgsProperty.fromExpression(cover_opacity_expression())
+    written = 0
+    for _value, symbol in renderer_compat.renderer_classes(clone):
+        if symbol is None:
+            continue
+        try:
+            symbol.setDataDefinedProperty(_PROP_OPACITY, prop)
+            written += 1
+        except (AttributeError, TypeError):
+            continue
+    if not written:
+        return False
+    layer.setRenderer(clone)
+    layer.triggerRepaint()
+    return True
+
+
+def get_cover_opacity(project=None):
+    """Current step: 0 when hidden, else the percent (default 100)."""
+    project = project or QgsProject.instance()
+    if is_cover_hidden(project):
+        return 0
+    raw = QgsExpressionContextUtils.projectScope(project).variable(
+        VAR_COVER_OPACITY)
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return 100
+    return value if value in COVER_STEPS and value else 100
+
+
+def set_cover_opacity(iface, percent):
+    """Apply one rung of the ladder. Returns success.
+
+    0 delegates to the subset-string hide; anything else lifts that hide
+    (quietly) and fades through the data-defined opacity instead.
+    """
+    if not percent:
+        return set_cover_hidden(iface, True)
+    project = QgsProject.instance()
+    layer = get_basemap_layer(project)
+    if layer is None:
+        iface.messageBar().pushWarning(
+            'Transported Cover',
+            'Layer "%s" not found in this project.' % BASEMAP_NAME)
+        return False
+    if is_cover_hidden(project) and not set_cover_hidden(iface, False,
+                                                         quiet=True):
+        return False
+    if not ensure_cover_opacity_dd(layer):
+        iface.messageBar().pushWarning(
+            'Transported Cover',
+            'Could not set a data-defined opacity on "%s" — its symbology '
+            'is not a categorized or rule-based renderer.' % BASEMAP_NAME)
+        return False
+    QgsExpressionContextUtils.setProjectVariable(
+        project, VAR_COVER_OPACITY, str(int(percent)))
+    layer.triggerRepaint()
+    iface.messageBar().pushInfo(
+        'Transported Cover', 'Transported cover at %d%%.' % int(percent))
+    return True
+
+
+def set_cover_hidden(iface, hidden, quiet=False):
     """Apply/remove the transported-cover hide clause. Returns success."""
     project = QgsProject.instance()
     bar = iface.messageBar()
@@ -119,7 +219,8 @@ def set_cover_hidden(iface, hidden):
     # Travels into QField exports so the device UI opens in the same state.
     QgsExpressionContextUtils.setProjectVariable(
         project, VAR_COVER_HIDDEN, '1' if hidden else '0')
-    bar.pushInfo('Transported Cover',
-                 'Transported cover hidden.' if hidden
-                 else 'Transported cover visible.')
+    if not quiet:
+        bar.pushInfo('Transported Cover',
+                     'Transported cover hidden.' if hidden
+                     else 'Transported cover visible.')
     return True

@@ -938,13 +938,19 @@ class LinearGeosciencePluginMain:
 
     def run_cover_toggle(self):
         from . import cover_toggle
-        # Read the live state first so the toggle self-corrects after a
+        from .z_filter.expression import COVER_STEPS
+        # Read the live state first so the cycle self-corrects after a
         # project switch or an externally changed subset.
-        hidden = not cover_toggle.is_cover_hidden()
-        if cover_toggle.set_cover_hidden(self.iface, hidden):
+        current = cover_toggle.get_cover_opacity()
+        try:
+            nxt = COVER_STEPS[(COVER_STEPS.index(current) + 1)
+                              % len(COVER_STEPS)]
+        except ValueError:
+            nxt = COVER_STEPS[0]
+        if cover_toggle.set_cover_opacity(self.iface, nxt):
             self.btn_cover.setText(
                 "Transported Cover Opacity: %s"
-                % ("Hidden" if hidden else "Visible"))
+                % ("Hidden" if not nxt else "%d%%" % nxt))
 
     def run_hardcode_data(self):
         from .hardcode_data import run

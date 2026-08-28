@@ -38,6 +38,7 @@ _FLAG_MARKERS = {
 _DATA_MARKERS = {
     "opacitylayers": "LGS-EXPORT-DATA:opacitylayers",
     "vectoropacitylayers": "LGS-EXPORT-DATA:vectoropacitylayers",
+    "opacitygroups": "LGS-EXPORT-DATA:opacitygroups",
     "splineparams": "LGS-EXPORT-DATA:splineparams",
     "build": "LGS-EXPORT-DATA:build",
 }
@@ -63,7 +64,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                   reverse=True, copyattrs=True, merge=True,
                   recenterhold=True, modetoggle=True,
                   opacity_layers=None, vector_layers=None,
-                  spline_params=None):
+                  opacity_groups=None, spline_params=None):
     """Write the companion plugin next to the exported project file.
 
     export_dir: destination folder (str or Path)
@@ -78,6 +79,9 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
         panel should act on (baked into the QML as a JSON array)
     vector_layers: names of the exported spatial vector layers for the
         opacity panel's Vectors column (same JSON-array baking)
+    opacity_groups: layer-tree folders as [{"name": str, "layers": [str]}]
+        for the opacity panel's Folder rows - QML cannot walk the project
+        layer tree, so membership is resolved here and baked in
     spline_params: [tightness, tolerance, max_segments] from the desktop
         Map Cleaning settings (empty list keeps the QML defaults)
 
@@ -108,6 +112,7 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                 f"(expected exactly 1) in {SIDECAR_SOURCE}")
     for name, value in (("opacitylayers", opacity_layers),
                         ("vectoropacitylayers", vector_layers),
+                        ("opacitygroups", opacity_groups),
                         ("splineparams", spline_params),
                         ("build", build)):
         marker = _DATA_MARKERS[name]

@@ -18,6 +18,7 @@ z_expression = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(z_expression)
 
 cover_hide_clause = z_expression.cover_hide_clause
+cover_opacity_expression = z_expression.cover_opacity_expression
 strip_cover_subset = z_expression.strip_cover_subset
 apply_cover_to_subset = z_expression.apply_cover_to_subset
 combine = z_expression.combine
@@ -33,6 +34,36 @@ class TestCoverClause(unittest.TestCase):
 
     def test_exact_text(self):
         self.assertEqual(cover_hide_clause(), EXPECTED_CLAUSE)
+
+
+class TestCoverOpacityExpression(unittest.TestCase):
+    """The data-defined symbol opacity that fades cover short of hiding it.
+
+    Baked onto the Basemap renderer by cover_toggle and driven from both
+    sides by the lgs_cover_opacity project variable, so the text has to
+    stay a valid QGIS expression in percent.
+    """
+
+    def test_exact_text(self):
+        self.assertEqual(
+            cover_opacity_expression(),
+            "if(coalesce(\"TypeLith1\", '') = 'Transported Cover', "
+            "coalesce(@lgs_cover_opacity, 100), 100)")
+
+    def test_reads_the_shared_variable_name(self):
+        self.assertIn('@' + z_expression.VAR_COVER_OPACITY,
+                      cover_opacity_expression())
+
+    def test_defaults_to_fully_opaque(self):
+        # An export whose project never set the variable must render
+        # cover unchanged, not invisible.
+        self.assertIn('coalesce(@lgs_cover_opacity, 100)',
+                      cover_opacity_expression())
+
+    def test_steps_ladder(self):
+        # The desktop button cycles this list; 0 is the subset-string
+        # hide, which is why it must stay last.
+        self.assertEqual(z_expression.COVER_STEPS, [100, 50, 25, 0])
 
 
 class TestStripCoverSubset(unittest.TestCase):

@@ -73,20 +73,25 @@ INFO_SETUP_MAPPING = """
 
 INFO_COVER_OPACITY = """
 <h1>Transported Cover Opacity</h1>
-<p>Toggles the visibility of <b>Transported Cover</b> polygons in the
+<p>Fades or hides <b>Transported Cover</b> polygons in the
 <i>'4 - Basemap'</i> layer, so the bedrock and regolith geology mapped
 beneath cover can be seen without deleting or re-styling anything.</p>
 <ul>
-<li>Hides every polygon whose <b>TypeLith1</b> is <i>'Transported Cover'</i>
-(all the T-prefixed lithology codes) by applying a layer filter — both the
-polygons <b>and their labels</b> disappear.</li>
+<li>Each press steps around a four-rung ladder:
+<b>100% &rarr; 50% &rarr; 25% &rarr; Hidden</b>, and the button label says
+where it currently sits.</li>
+<li><b>50% and 25%</b> fade every polygon whose <b>TypeLith1</b> is
+<i>'Transported Cover'</i> (all the T-prefixed lithology codes), so the
+cover reads as a wash over the geology beneath it. Their labels stay at
+full strength.</li>
+<li><b>Hidden</b> applies a layer filter instead — both the polygons
+<b>and their labels</b> disappear.</li>
 <li>Polygons with <b>no lithology type set</b> stay visible, so features
 being digitised are never hidden.</li>
 <li>Works alongside the <b>Pit/Underground Z filter</b> — the cover state
 survives applying, changing and clearing elevation levels.</li>
-<li>The state is carried into <b>QField exports</b>: the same toggle appears
-under <i>'4 - Basemap'</i> in the sidecar's Layer Opacity popup.</li>
-<li>Press the button again to show transported cover.</li>
+<li>The state is carried into <b>QField exports</b>: the same four buttons
+appear under <i>'4 - Basemap'</i> in the sidecar's Layer Opacity popup.</li>
 </ul>
 """
 

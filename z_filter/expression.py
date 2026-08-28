@@ -88,6 +88,12 @@ VAR_RASTERS = "lgs_z_rasters"
 COVER_FIELD = "TypeLith1"
 COVER_VALUE = "Transported Cover"
 VAR_COVER_HIDDEN = "lgs_cover_hidden"
+# Percent (0-100) driving the data-defined symbol opacity that fades
+# transported cover short of hiding it. Read by cover_opacity_expression()
+# baked onto the Basemap renderer, written by cover_toggle and by the
+# QField sidecar - the variable and the renderer both ride into exports.
+VAR_COVER_OPACITY = "lgs_cover_opacity"
+COVER_STEPS = [100, 50, 25, 0]
 
 DEFAULT_TOLERANCE = 5.0
 
@@ -240,6 +246,24 @@ def cover_hide_clause():
     """
     return '("%s" IS NULL OR "%s" <> \'%s\')' % (
         COVER_FIELD, COVER_FIELD, COVER_VALUE)
+
+
+def cover_opacity_expression():
+    """Data-defined symbol-opacity expression for the Basemap renderer.
+
+    Percent, per feature: transported cover follows @lgs_cover_opacity,
+    everything else stays fully opaque. Written onto every class symbol
+    (see cover_toggle) rather than onto the cover categories alone, so it
+    holds whatever the renderer classifies on and survives lithology
+    recodes. A missing variable coalesces to 100, i.e. no visible change
+    until the toggle is used.
+
+    Fully hiding cover stays a subset-string job (cover_hide_clause) -
+    opacity 0 would leave the labels drawing.
+    """
+    return ("if(coalesce(\"%s\", '') = '%s', "
+            "coalesce(@%s, 100), 100)" % (
+                COVER_FIELD, COVER_VALUE, VAR_COVER_OPACITY))
 
 
 def _cover_clause_pattern():

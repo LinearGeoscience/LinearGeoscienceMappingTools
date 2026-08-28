@@ -856,9 +856,39 @@ class ExportDialog(QDialog):
 
         return True
 
+    def _ensure_cover_opacity_style(self):
+        """Bake the data-defined transported-cover opacity onto Basemap.
+
+        Runs before the save prompt, so the expression reaches the saved
+        .qgs the converter copies. Silent on every failure path: an
+        unstyled export just means the device ladder falls back to
+        Off/100 behaviour.
+        """
+        try:
+            from ... import cover_toggle
+        except ImportError:
+            try:
+                import cover_toggle
+            except ImportError:
+                return
+        try:
+            layer = cover_toggle.get_basemap_layer(self.project)
+            if layer is not None:
+                cover_toggle.ensure_cover_opacity_dd(layer)
+        except Exception:
+            pass
+
     @pyqtSlot()
     def start_export(self):
         """Start the export process on a background thread."""
+        # The device fades transported cover by rewriting
+        # @lgs_cover_opacity, which only bites if the Basemap renderer
+        # carries the expression that reads it. Bake it before the
+        # save-check below so an export is ready for the ladder even when
+        # the desktop button was never pressed (idempotent, and invisible
+        # until the variable moves off 100). Best-effort — a styling
+        # failure must never block an export.
+        self._ensure_cover_opacity_style()
         # The converter reads the project file from disk, so it must exist
         # and be current.
         if not self.project.fileName():

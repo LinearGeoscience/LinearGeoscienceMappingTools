@@ -39,19 +39,30 @@
  * 3. LAYER OPACITY — "Opacity" pill opening a per-layer panel in two
  *    grouped columns (rasters left, vectors right; stacked on narrow
  *    screens): each layer gets a 100/50/25/Off row, plus an "All" row
- *    per column when it has several layers. The layer names are baked
- *    in at export via the LGS-EXPORT-DATA:opacitylayers (rasters) and
- *    LGS-EXPORT-DATA:vectoropacitylayers (spatial vectors — lookup
- *    tables are excluded) lines; there is no reliable way to enumerate
- *    layers from QML on the device. Per-layer values persist as a JSON
- *    object in lgs_opacity; a legacy plain number applies to rasters
- *    only (it predates vector support).
- *    The '4 - Basemap' row carries a nested "Transported cover" On/Off
- *    sub-toggle: hides polygons whose TypeLith1 is 'Transported Cover'
- *    via a subset-string clause (mirror of z_filter/expression.py
- *    cover_* helpers + cover_toggle.py — keep in sync; QML has no
- *    renderer access, so this is visibility, not true opacity). The
- *    clause always sits in the baseline subset BENEATH any z clause —
+ *    per column when it has several layers. The panel scrolls (a capped
+ *    Flickable), so a long layer list stays reachable instead of
+ *    growing the dialog past both screen edges. Above the columns sit
+ *    FOLDER rows: one per exported layer-tree group with two or more
+ *    exported members, setting every member at a tap; a folder carries
+ *    its subgroups' layers and is named by its tree path. The layer
+ *    names are baked in at export via the LGS-EXPORT-DATA:opacitylayers
+ *    (rasters) and LGS-EXPORT-DATA:vectoropacitylayers (spatial vectors
+ *    — lookup tables are excluded) lines, and the folders via
+ *    LGS-EXPORT-DATA:opacitygroups; there is no reliable way to
+ *    enumerate layers, or walk the layer tree, from QML on the device.
+ *    Per-layer values persist as a JSON object in lgs_opacity; a legacy
+ *    plain number applies to rasters only (it predates vector support).
+ *    The '4 - Basemap' row carries a nested "Transported cover"
+ *    100/50/25/Off sub-row (mirror of z_filter/expression.py cover_*
+ *    helpers + cover_toggle.py — keep in sync). Off hides polygons
+ *    whose TypeLith1 is 'Transported Cover' via a subset-string clause,
+ *    taking their labels with them; 100/50/25 instead fade the cover
+ *    symbols by writing lgs_cover_opacity, which the desktop bakes into
+ *    the Basemap renderer as a data-defined symbol opacity
+ *    (cover_opacity_expression) — QML has no renderer access of its
+ *    own, so an export that predates that bake simply renders cover
+ *    fully opaque until Off. Labels stay full-strength on a faded
+ *    cover. The hide clause always sits in the baseline subset BENEATH any z clause —
  *    toggling while the z filter owns the layer rewrites the stored
  *    lgs_z_orig_3 baseline too, so z level changes and clears keep the
  *    cover state. State shared with desktop via lgs_cover_hidden; the
@@ -252,6 +263,9 @@ Item {
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
   readonly property var vectorOpacityLayers: [] // LGS-EXPORT-DATA:vectoropacitylayers
+  // Exported layer-tree folders as [{name, layers}] — the opacity panel's
+  // folder rows. Baked by the exporter because QML cannot walk the tree.
+  readonly property var opacityGroups: [] // LGS-EXPORT-DATA:opacitygroups
   // [tightness, tolerance (map units), max segments] from desktop settings.
   readonly property var splineParams: [] // LGS-EXPORT-DATA:splineparams
   // Export timestamp + a short hash of this file, stamped by the exporter.
@@ -2423,7 +2437,9 @@ Item {
     modal: true
     title: qsTr('Layer Opacity')
     x: (mainWindow.width - width) / 2
-    y: (mainWindow.height - height) / 2
+    // Never let the title leave the screen — with enough rows the
+    // centring maths would push it past the top edge.
+    y: Math.max(20, (mainWindow.height - height) / 2)
     width: Math.min(mainWindow.width - 40,
                     opacityDialog.twoColumns ? 720 : 420)
     standardButtons: Dialog.Close
@@ -2433,6 +2449,9 @@ Item {
     // imageryOpacities so button highlights follow taps.
     property var rasterNames: []
     property var vectorNames: []
+    // [{name, layers}] — exported layer-tree folders (v25), resolved on
+    // open like the name lists.
+    property var groupEntries: []
     readonly property bool twoColumns:
         mainWindow.width >= 700 &&
         rasterNames.length > 0 && vectorNames.length > 0
@@ -2440,87 +2459,125 @@ Item {
     onAboutToShow: {
       rasterNames = plugin.resolvedImageryNames()
       vectorNames = plugin.resolvedVectorNames()
+      groupEntries = plugin.resolvedGroupEntries()
     }
 
-    GridLayout {
+    Flickable {
+      // v25: scroll instead of outgrowing the screen. The grid used to
+      // anchors.fill the dialog with no height bound, so a long layer
+      // list pushed rows past both screen edges with nothing to scroll.
+      // Same capped-Flickable idiom as the copy-attributes field panel.
+      id: opacityScroll
       anchors.fill: parent
-      columns: opacityDialog.twoColumns ? 2 : 1
-      columnSpacing: 24
-      rowSpacing: 8
+      implicitWidth: opacityGrid.implicitWidth
+      implicitHeight: Math.min(opacityGrid.implicitHeight,
+                               mainWindow.height - 160)
+      contentWidth: width
+      contentHeight: opacityGrid.implicitHeight
+      clip: true
 
-      ColumnLayout {
-        Layout.fillWidth: true
-        Layout.alignment: Qt.AlignTop
-        visible: opacityDialog.rasterNames.length > 0
-        spacing: 8
+      GridLayout {
+        id: opacityGrid
+        width: opacityScroll.width
+        columns: opacityDialog.twoColumns ? 2 : 1
+        columnSpacing: 24
+        rowSpacing: 8
 
-        Label {
+        // Folder rows (v25) — one tap sets every exported layer in a
+        // layer-tree group. Spans both columns: a folder may mix rasters
+        // and vectors.
+        ColumnLayout {
           Layout.fillWidth: true
-          elide: Text.ElideRight
-          text: qsTr('Rasters')
-          font.bold: true
-        }
-
-        // One-tap group control, shown only when there is a group.
-        RowLayout {
-          Layout.fillWidth: true
-          visible: opacityDialog.rasterNames.length > 1
-          spacing: 4
+          Layout.columnSpan: opacityDialog.twoColumns ? 2 : 1
+          visible: opacityDialog.groupEntries.length > 0
+          spacing: 8
 
           Label {
             Layout.fillWidth: true
             elide: Text.ElideRight
-            text: qsTr('All rasters')
+            text: qsTr('Folders')
+            font.bold: true
           }
 
           Repeater {
-            model: plugin.opacitySteps
+            model: opacityDialog.groupEntries
 
-            delegate: Button {
+            delegate: RowLayout {
+              id: groupOpacityRow
               required property var modelData
-              flat: true
-              topPadding: 4
-              bottomPadding: 4
-              leftPadding: 10
-              rightPadding: 10
-              text: modelData === 0 ? qsTr('Off')
-                                    : Math.round(modelData * 100)
-              background: Rectangle {
-                color: 'transparent'
-                border.color: Theme.secondaryTextColor
-                border.width: 1
-                radius: 2
+              Layout.fillWidth: true
+              spacing: 4
+
+              Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: groupOpacityRow.modelData.name
               }
-              onClicked: plugin.applyOpacityToNames(
-                             opacityDialog.rasterNames, modelData, false)
+
+              Repeater {
+                model: plugin.opacitySteps
+
+                delegate: Button {
+                  id: groupStepButton
+                  required property var modelData
+                  // Highlighted only when EVERY member sits at this step.
+                  readonly property bool current:
+                      plugin.groupOpacityCurrent(
+                          groupOpacityRow.modelData.layers, modelData)
+                  flat: true
+                  topPadding: 4
+                  bottomPadding: 4
+                  leftPadding: 10
+                  rightPadding: 10
+                  text: modelData === 0 ? qsTr('Off')
+                                        : Math.round(modelData * 100)
+                  font.bold: current
+                  background: Rectangle {
+                    color: 'transparent'
+                    border.color: groupStepButton.current
+                        ? Theme.mainColor : Theme.secondaryTextColor
+                    border.width: groupStepButton.current ? 2 : 1
+                    radius: 2
+                  }
+                  onClicked: plugin.applyOpacityToNames(
+                                 groupOpacityRow.modelData.layers, modelData,
+                                 false)
+                }
+              }
             }
           }
         }
 
-        Repeater {
-          model: opacityDialog.rasterNames
+        ColumnLayout {
+          Layout.fillWidth: true
+          Layout.alignment: Qt.AlignTop
+          visible: opacityDialog.rasterNames.length > 0
+          spacing: 8
 
-          delegate: RowLayout {
-            id: opacityRow
-            required property var modelData
+          Label {
             Layout.fillWidth: true
+            elide: Text.ElideRight
+            text: qsTr('Rasters')
+            font.bold: true
+          }
+
+          // One-tap group control, shown only when there is a group.
+          RowLayout {
+            Layout.fillWidth: true
+            visible: opacityDialog.rasterNames.length > 1
             spacing: 4
 
             Label {
               Layout.fillWidth: true
               elide: Text.ElideRight
-              text: opacityRow.modelData
+              text: qsTr('All rasters')
             }
 
             Repeater {
               model: plugin.opacitySteps
 
               delegate: Button {
-                id: stepButton
                 required property var modelData
-                readonly property bool current:
-                    Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
-                             - modelData) < 0.01
                 flat: true
                 topPadding: 4
                 bottomPadding: 4
@@ -2528,98 +2585,41 @@ Item {
                 rightPadding: 10
                 text: modelData === 0 ? qsTr('Off')
                                       : Math.round(modelData * 100)
-                font.bold: current
                 background: Rectangle {
                   color: 'transparent'
-                  border.color: stepButton.current
-                      ? Theme.mainColor : Theme.secondaryTextColor
-                  border.width: stepButton.current ? 2 : 1
+                  border.color: Theme.secondaryTextColor
+                  border.width: 1
                   radius: 2
                 }
-                onClicked: plugin.applyLayerOpacity(
-                               opacityRow.modelData, modelData, false)
+                onClicked: plugin.applyOpacityToNames(
+                               opacityDialog.rasterNames, modelData, false)
               }
             }
-          }
-        }
-      }
-
-      ColumnLayout {
-        Layout.fillWidth: true
-        Layout.alignment: Qt.AlignTop
-        visible: opacityDialog.vectorNames.length > 0
-        spacing: 8
-
-        Label {
-          Layout.fillWidth: true
-          elide: Text.ElideRight
-          text: qsTr('Vectors')
-          font.bold: true
-        }
-
-        RowLayout {
-          Layout.fillWidth: true
-          visible: opacityDialog.vectorNames.length > 1
-          spacing: 4
-
-          Label {
-            Layout.fillWidth: true
-            elide: Text.ElideRight
-            text: qsTr('All vectors')
           }
 
           Repeater {
-            model: plugin.opacitySteps
+            model: opacityDialog.rasterNames
 
-            delegate: Button {
+            delegate: RowLayout {
+              id: opacityRow
               required property var modelData
-              flat: true
-              topPadding: 4
-              bottomPadding: 4
-              leftPadding: 10
-              rightPadding: 10
-              text: modelData === 0 ? qsTr('Off')
-                                    : Math.round(modelData * 100)
-              background: Rectangle {
-                color: 'transparent'
-                border.color: Theme.secondaryTextColor
-                border.width: 1
-                radius: 2
-              }
-              onClicked: plugin.applyOpacityToNames(
-                             opacityDialog.vectorNames, modelData, false)
-            }
-          }
-        }
-
-        Repeater {
-          model: opacityDialog.vectorNames
-
-          delegate: ColumnLayout {
-            id: vectorOpacityRow
-            required property var modelData
-            Layout.fillWidth: true
-            spacing: 2
-
-            RowLayout {
               Layout.fillWidth: true
               spacing: 4
 
               Label {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                text: vectorOpacityRow.modelData
+                text: opacityRow.modelData
               }
 
               Repeater {
                 model: plugin.opacitySteps
 
                 delegate: Button {
-                  id: vectorStepButton
+                  id: stepButton
                   required property var modelData
                   readonly property bool current:
-                      Math.abs(plugin.layerOpacityValue(
-                                   vectorOpacityRow.modelData)
+                      Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
                                - modelData) < 0.01
                   flat: true
                   topPadding: 4
@@ -2631,72 +2631,162 @@ Item {
                   font.bold: current
                   background: Rectangle {
                     color: 'transparent'
-                    border.color: vectorStepButton.current
+                    border.color: stepButton.current
                         ? Theme.mainColor : Theme.secondaryTextColor
-                    border.width: vectorStepButton.current ? 2 : 1
+                    border.width: stepButton.current ? 2 : 1
                     radius: 2
                   }
                   onClicked: plugin.applyLayerOpacity(
-                                 vectorOpacityRow.modelData, modelData, false)
+                                 opacityRow.modelData, modelData, false)
                 }
               }
             }
+          }
+        }
 
-            // Transported-cover sub-toggle, nested under the Basemap row.
-            // Visibility (subset string on TypeLith1), not true opacity —
-            // QML has no renderer access.
-            RowLayout {
+        ColumnLayout {
+          Layout.fillWidth: true
+          Layout.alignment: Qt.AlignTop
+          visible: opacityDialog.vectorNames.length > 0
+          spacing: 8
+
+          Label {
+            Layout.fillWidth: true
+            elide: Text.ElideRight
+            text: qsTr('Vectors')
+            font.bold: true
+          }
+
+          RowLayout {
+            Layout.fillWidth: true
+            visible: opacityDialog.vectorNames.length > 1
+            spacing: 4
+
+            Label {
               Layout.fillWidth: true
-              spacing: 4
-              visible: vectorOpacityRow.modelData === plugin.coverLayerName &&
-                       !plugin.coverUnsupported
+              elide: Text.ElideRight
+              text: qsTr('All vectors')
+            }
 
-              Label {
+            Repeater {
+              model: plugin.opacitySteps
+
+              delegate: Button {
+                required property var modelData
+                flat: true
+                topPadding: 4
+                bottomPadding: 4
+                leftPadding: 10
+                rightPadding: 10
+                text: modelData === 0 ? qsTr('Off')
+                                      : Math.round(modelData * 100)
+                background: Rectangle {
+                  color: 'transparent'
+                  border.color: Theme.secondaryTextColor
+                  border.width: 1
+                  radius: 2
+                }
+                onClicked: plugin.applyOpacityToNames(
+                               opacityDialog.vectorNames, modelData, false)
+              }
+            }
+          }
+
+          Repeater {
+            model: opacityDialog.vectorNames
+
+            delegate: ColumnLayout {
+              id: vectorOpacityRow
+              required property var modelData
+              Layout.fillWidth: true
+              spacing: 2
+
+              RowLayout {
                 Layout.fillWidth: true
-                Layout.leftMargin: 16
-                elide: Text.ElideRight
-                text: qsTr('Transported cover')
-                color: Theme.secondaryTextColor
+                spacing: 4
+
+                Label {
+                  Layout.fillWidth: true
+                  elide: Text.ElideRight
+                  text: vectorOpacityRow.modelData
+                }
+
+                Repeater {
+                  model: plugin.opacitySteps
+
+                  delegate: Button {
+                    id: vectorStepButton
+                    required property var modelData
+                    readonly property bool current:
+                        Math.abs(plugin.layerOpacityValue(
+                                     vectorOpacityRow.modelData)
+                                 - modelData) < 0.01
+                    flat: true
+                    topPadding: 4
+                    bottomPadding: 4
+                    leftPadding: 10
+                    rightPadding: 10
+                    text: modelData === 0 ? qsTr('Off')
+                                          : Math.round(modelData * 100)
+                    font.bold: current
+                    background: Rectangle {
+                      color: 'transparent'
+                      border.color: vectorStepButton.current
+                          ? Theme.mainColor : Theme.secondaryTextColor
+                      border.width: vectorStepButton.current ? 2 : 1
+                      radius: 2
+                    }
+                    onClicked: plugin.applyLayerOpacity(
+                                   vectorOpacityRow.modelData, modelData, false)
+                  }
+                }
               }
 
-              Button {
-                id: coverOnButton
-                readonly property bool current: !plugin.coverHidden
-                flat: true
-                topPadding: 4
-                bottomPadding: 4
-                leftPadding: 10
-                rightPadding: 10
-                text: qsTr('On')
-                font.bold: current
-                background: Rectangle {
-                  color: 'transparent'
-                  border.color: coverOnButton.current
-                      ? Theme.mainColor : Theme.secondaryTextColor
-                  border.width: coverOnButton.current ? 2 : 1
-                  radius: 2
-                }
-                onClicked: plugin.setCoverHidden(false, false)
-              }
+              // Transported-cover sub-row, nested under the Basemap row.
+              // Off still hides via the subset string (features AND labels
+              // vanish); 100/50/25 fade the cover symbols through the
+              // data-defined opacity the desktop bakes onto the renderer
+              // (@lgs_cover_opacity) — QML has no renderer access itself.
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                visible: vectorOpacityRow.modelData === plugin.coverLayerName &&
+                         !plugin.coverUnsupported
 
-              Button {
-                id: coverOffButton
-                readonly property bool current: plugin.coverHidden
-                flat: true
-                topPadding: 4
-                bottomPadding: 4
-                leftPadding: 10
-                rightPadding: 10
-                text: qsTr('Off')
-                font.bold: current
-                background: Rectangle {
-                  color: 'transparent'
-                  border.color: coverOffButton.current
-                      ? Theme.mainColor : Theme.secondaryTextColor
-                  border.width: coverOffButton.current ? 2 : 1
-                  radius: 2
+                Label {
+                  Layout.fillWidth: true
+                  Layout.leftMargin: 16
+                  elide: Text.ElideRight
+                  text: qsTr('Transported cover')
+                  color: Theme.secondaryTextColor
                 }
-                onClicked: plugin.setCoverHidden(true, false)
+
+                Repeater {
+                  model: plugin.opacitySteps
+
+                  delegate: Button {
+                    id: coverStepButton
+                    required property var modelData
+                    readonly property bool current:
+                        plugin.coverStepCurrent(modelData)
+                    flat: true
+                    topPadding: 4
+                    bottomPadding: 4
+                    leftPadding: 10
+                    rightPadding: 10
+                    text: modelData === 0 ? qsTr('Off')
+                                          : Math.round(modelData * 100)
+                    font.bold: current
+                    background: Rectangle {
+                      color: 'transparent'
+                      border.color: coverStepButton.current
+                          ? Theme.mainColor : Theme.secondaryTextColor
+                      border.width: coverStepButton.current ? 2 : 1
+                      radius: 2
+                    }
+                    onClicked: plugin.setCoverOpacity(modelData)
+                  }
+                }
               }
             }
           }
@@ -2734,6 +2824,39 @@ Item {
   function layerOpacityValue(name) {
     const value = imageryOpacities[name]
     return value === undefined ? 1 : value
+  }
+
+  // Layer-tree folders (v25). QML cannot read the project's layer tree,
+  // so the exporter bakes {name, layers} entries into opacityGroups;
+  // members are resolved by name like every other lookup here. A folder
+  // whose exported membership has collapsed below two layers is not
+  // worth a row — the layers' own rows already cover it.
+  function resolvedGroupEntries() {
+    let entries = []
+    for (const group of opacityGroups) {
+      try {
+        let members = []
+        for (const name of group.layers) {
+          if (layerByName(name) !== null && !opacityUnsupported[name])
+            members.push(name)
+        }
+        if (members.length > 1)
+          entries.push({ name: String(group.name), layers: members })
+      } catch (error) {}
+    }
+    return entries
+  }
+
+  function groupOpacityCurrent(names, value) {
+    // A folder reads as sitting on a step only when EVERY member does;
+    // a mixed folder highlights nothing rather than lying about one.
+    if (!names || names.length === 0)
+      return false
+    for (const name of names) {
+      if (Math.abs(layerOpacityValue(name) - value) >= 0.01)
+        return false
+    }
+    return true
   }
 
   function applyLayerOpacity(name, value, quiet) {
@@ -2861,6 +2984,11 @@ Item {
   // — hides the dialog sub-row. QML cannot enumerate fields, so support
   // is attempt-and-verified like the z filter's subset writes.
   property bool coverUnsupported: false
+  // Percent (v25). 100/50/25 fade the cover symbols through the
+  // data-defined opacity the desktop bakes onto the Basemap renderer
+  // (it reads @lgs_cover_opacity); 0 is the subset-string hide above.
+  // Only meaningful while coverHidden is false.
+  property real coverOpacity: 100
   readonly property string coverLayerName: '4 - Basemap'
   // '4 - Basemap' is index 3 of layerNames — the z filter's stored
   // baseline for it lives under these keys (see allTargets).
@@ -2968,7 +3096,40 @@ Item {
     return true
   }
 
+  // The dialog's steps are fractions (1 / 0.5 / 0.25 / 0); the cover
+  // state is a percent plus the hidden flag.
+  function coverStepCurrent(step) {
+    if (step === 0)
+      return coverHidden
+    if (coverHidden)
+      return false
+    return Math.abs(coverOpacity - step * 100) < 0.5
+  }
+
+  function setCoverOpacity(step) {
+    if (step === 0) {
+      setCoverHidden(true, false)
+      return
+    }
+    // Coming back from hidden has to lift the subset clause first, but
+    // quietly — this tap's toast is the opacity one below.
+    if (coverHidden && !setCoverHidden(false, true))
+      return
+    const percent = Math.round(step * 100)
+    coverOpacity = percent
+    saveVar('lgs_cover_opacity', percent)
+    try {
+      const layer = layerByName(coverLayerName)
+      if (layer !== null)
+        layer.triggerRepaint()
+      iface.mapCanvas().refresh()
+    } catch (error) {}
+    toast(qsTr('Transported cover %1%').arg(percent))
+  }
+
   function restoreCoverFromProject() {
+    const stored = Number(projVar('lgs_cover_opacity', '100'))
+    coverOpacity = isFinite(stored) && stored > 0 ? stored : 100
     const saved = projVar('lgs_cover_hidden', '')
     let hidden = saved === '1'
     if (saved === '') {
