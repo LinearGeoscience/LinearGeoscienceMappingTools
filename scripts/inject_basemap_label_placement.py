@@ -10,10 +10,14 @@ switches the "4 - Basemap" simple labeling to the proven Overlay pattern
     - polygonPlacementFlags=3 + fitInPolygonOnly=1: inside placement is
       preferred and only used when the label truly fits; otherwise the
       label steps just outside the polygon...
-    - ...where the already-authored manhattan callout draws the leader
-      back to the polygon edge. dist=18.75 map units - HALF the Overlay
-      ring (script_setmapping.BASEMAP_DIST_FACTOR), because leader lines
-      on lithology labels must stay short (user decision 2026-08-29).
+    - ...where the callout draws the leader back to the polygon edge.
+      The authored callout was manhattan; it is converted to the straight
+      "simple" type because the right-angle elbow at the label end reads
+      badly (user decision 2026-08-29) - one leader look across Basemap,
+      Overlay and the FieldNotebook comments. dist=18.75 map units - HALF
+      the Overlay ring (script_setmapping.BASEMAP_DIST_FACTOR), because
+      leader lines on lithology labels must stay short (user decision
+      2026-08-29).
       maximumDistance is kept mirrored at 5x dist purely for consistency
       (inert for polygon placement). minLength 1 MM so no stub is drawn
       on inside-placed labels.
@@ -74,10 +78,15 @@ PLACEMENT_ATTRS = {
     "overlapHandling": "AllowOverlapIfRequired",
     "priority": "6",
 }
-CALLOUT_TYPE = "manhattan"          # authored; kept, only minLength changes
+CALLOUT_TYPE = "simple"             # straight leader; manhattan's elbow reads badly
+CALLOUT_FROM_TYPES = ("manhattan", CALLOUT_TYPE)
 CALLOUT_OPTS = {
     "enabled": "1",
     "minLength": "1",               # MM; no stub on inside-placed labels
+    # Same end gaps as every other leader on the map (Overlay,
+    # FieldNotebook comments).
+    "offsetFromAnchor": "0.5",
+    "offsetFromLabel": "1",
 }
 RENDERING_ATTRS = {
     "obstacle": "0",
@@ -131,8 +140,14 @@ def main():
             print(f"rendering {k} -> {v}")
 
     callout = settings.find("callout")
-    if callout is None or callout.get("type") != CALLOUT_TYPE:
-        bail(f"authored {CALLOUT_TYPE!r} <callout> not found")
+    if callout is None or callout.get("type") not in CALLOUT_FROM_TYPES:
+        bail("authored <callout> not found")
+    if callout.get("type") != CALLOUT_TYPE:
+        callout.set("type", CALLOUT_TYPE)
+        print(f"callout type -> {CALLOUT_TYPE}")
+    if settings.get("calloutType") != CALLOUT_TYPE:
+        settings.set("calloutType", CALLOUT_TYPE)
+        print(f"settings calloutType -> {CALLOUT_TYPE}")
     opts = {o.get("name"): o for o in callout.iter("Option") if o.get("name")}
     for k, v in CALLOUT_OPTS.items():
         if k not in opts:
@@ -178,6 +193,7 @@ def main():
         assert rendering.get(k) == v, f"rendering {k}={rendering.get(k)!r}, want {v!r}"
     callout = settings.find("callout")
     assert callout.get("type") == CALLOUT_TYPE
+    assert settings.get("calloutType") == CALLOUT_TYPE
     opts = {o.get("name"): o.get("value")
             for o in callout.iter("Option") if o.get("name")}
     for k, v in CALLOUT_OPTS.items():

@@ -130,6 +130,9 @@ def main():
         check(callout is not None and callout.enabled(),
               "Basemap callout enabled")
         if callout is not None:
+            check(callout.type() == "simple",
+                  "Basemap callout type %r, want 'simple' - manhattan's "
+                  "right-angle elbow reads badly" % callout.type())
             check(round(callout.minimumLength(), 4) == 1.0,
                   "Basemap callout minLength %s, want 1 MM (no stubs inside)"
                   % callout.minimumLength())
