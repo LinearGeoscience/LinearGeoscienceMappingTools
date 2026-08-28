@@ -101,7 +101,15 @@ class LayerImport(object):
         # already there.
         self.already_present = 0
         self.without_uuid = 0
+        # Features sharing a UUID with an earlier feature in the SAME source.
+        # Duplicating a line or polygon is how a geologist adds a feature that
+        # shares most of its attributes, and the copy carries the original's
+        # UUID, so these are real features wearing a borrowed identity.
+        self.repeated_in_source = 0
         self.new_estimate = None
+        # True when the comparison could not be made at all, so "no duplicates"
+        # is not the same claim as "did not look".
+        self.estimate_failed = False
         self.source = source                  # SourceRef
         self.target_layer = target_layer      # destination table name
         self.field_plan = field_plan          # match_fields.LayerFieldPlan
@@ -219,13 +227,18 @@ class ImportOptions(object):
 
     __slots__ = ('skip_duplicate_uuids', 'generate_missing_uuids', 'backup',
                  'apply_defaults', 'split_multiparts', 'stamp_batch',
-                 'date_filter', 'use_uuid_tracker')
+                 'date_filter', 'use_uuid_tracker', 'import_repeated_uuids')
 
     def __init__(self, skip_duplicate_uuids=True, generate_missing_uuids=True,
                  backup=True, apply_defaults=True, split_multiparts=True,
-                 stamp_batch=True, date_filter=None, use_uuid_tracker=True):
+                 stamp_batch=True, date_filter=None, use_uuid_tracker=True,
+                 import_repeated_uuids=True):
         self.skip_duplicate_uuids = skip_duplicate_uuids
         self.generate_missing_uuids = generate_missing_uuids
+        # A feature duplicated in QGIS or QField keeps the original's UUID.
+        # Import those copies as features in their own right, under a new UUID,
+        # rather than mistaking them for something already imported.
+        self.import_repeated_uuids = import_repeated_uuids
         self.backup = backup
         self.apply_defaults = apply_defaults
         self.split_multiparts = split_multiparts
@@ -263,14 +276,29 @@ class ImportPlan(object):
     def total_features(self):
         return sum(item.feature_count for item in self.included())
 
+    def expected_new_for(self, item):
+        """`item.expected_new`, minus the repeats if they are being skipped.
+
+        The estimate is worked out once, when the plan is built; the repeat
+        checkbox lives on the Review page and can move afterwards, so the
+        subtraction happens here rather than being baked in.
+        """
+        expected = item.expected_new
+        if not self.options.import_repeated_uuids:
+            expected -= item.repeated_in_source
+        return max(expected, 0)
+
     def total_expected_new(self):
-        return sum(item.expected_new for item in self.included())
+        return sum(self.expected_new_for(item) for item in self.included())
 
     def total_already_present(self):
         return sum(item.already_present for item in self.included())
 
     def total_without_uuid(self):
         return sum(item.without_uuid for item in self.included())
+
+    def total_repeated_in_source(self):
+        return sum(item.repeated_in_source for item in self.included())
 
     def new_codes(self):
         codes = OrderedDict()
@@ -473,6 +501,29 @@ class ImportPlan(object):
                             label, item.new_estimate, item.already_present),
                         'Existing features are matched on UUID and skipped.',
                         layer=label)
+            if item.repeated_in_source:
+                if self.options.import_repeated_uuids:
+                    detail = ('Duplicating a feature copies its UUID, so these '
+                              'are almost certainly features duplicated to map '
+                              'more ground. Each will be imported in its own '
+                              'right, under a new UUID.')
+                else:
+                    detail = ('Only the first of each will be imported. Tick '
+                              '"Import repeated UUIDs" below to bring them all '
+                              'in under new UUIDs.')
+                report.add(
+                    WARNING,
+                    '{0:,} feature(s) in {1} share a UUID with another '
+                    'feature in the source'.format(
+                        item.repeated_in_source, label),
+                    detail, layer=label)
+            if item.estimate_failed:
+                report.add(
+                    NOTE, 'Could not check {0} for features already there'.format(
+                        label),
+                    'The import still runs, and duplicates are still matched '
+                    'on UUID and skipped as it writes — only the preview of '
+                    'how many is missing.', layer=label)
             if item.without_uuid:
                 report.add(
                     WARNING,
@@ -507,6 +558,7 @@ class ImportPlan(object):
             'expected_new': self.total_expected_new(),
             'already_present': self.total_already_present(),
             'without_uuid': self.total_without_uuid(),
+            'repeated_in_source': self.total_repeated_in_source(),
             'codes_total': sum(totals.values()),
             'codes_auto': auto,
             'codes_by_status': totals,
@@ -575,7 +627,7 @@ def build_plan(source_model, target_model, destination, value_counts_for,
         if target_spec is None:
             continue
 
-        _estimate_new(item, source_spec, target_spec, source_uuids_for,
+        estimate_new(item, source_spec, target_spec, source_uuids_for,
                       destination_uuids_for)
 
         item.field_plan = match_fields.match_fields(
@@ -608,20 +660,30 @@ def build_plan(source_model, target_model, destination, value_counts_for,
                       options or ImportOptions())
 
 
-def _estimate_new(item, source_spec, target_spec, source_uuids_for,
-                  destination_uuids_for):
+def estimate_new(item, source_spec, target_spec, source_uuids_for,
+                 destination_uuids_for):
     """Work out how much of this layer is genuinely new, before writing."""
+    item.already_present = 0
+    item.without_uuid = 0
+    item.repeated_in_source = 0
+    item.new_estimate = None
+    item.estimate_failed = False
     if source_uuids_for is None or destination_uuids_for is None:
         return
     if not uuid_field_of(source_spec) or not uuid_field_of(target_spec):
         return
     try:
-        source_uuids, blank = source_uuids_for(item.source.table)
+        source_uuids, blank, repeated = source_uuids_for(item.source.table)
         existing = destination_uuids_for(item.target_layer)
     except Exception:
+        # Saying nothing here would read as "nothing already there", which is
+        # the one answer this must never invent.
+        item.estimate_failed = True
         return
     if source_uuids is None or existing is None:
         return
     item.without_uuid = blank
+    item.repeated_in_source = repeated
     item.already_present = len(source_uuids & existing)
-    item.new_estimate = len(source_uuids - existing) + blank
+    # The repeats land too, each under a UUID of its own.
+    item.new_estimate = len(source_uuids - existing) + blank + repeated

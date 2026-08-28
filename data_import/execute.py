@@ -80,6 +80,12 @@ class LayerResult(object):
         self.skipped_duplicate = 0
         self.skipped_no_geometry = 0
         self.skipped_unresolved = 0
+        # Features that shared a UUID with an earlier one in the same source —
+        # duplicated in the field — and came in under a UUID of their own.
+        self.repeated_new_uuid = 0
+        # The same, left out because the user asked for that or the ledger
+        # could not be opened.
+        self.repeated_skipped = 0
         self.split_parts = 0
         self.dropped_z = 0
         self.parent_fills = 0
@@ -95,12 +101,18 @@ class LayerResult(object):
     @property
     def skipped(self):
         return (self.skipped_duplicate + self.skipped_no_geometry
-                + self.skipped_unresolved)
+                + self.skipped_unresolved + self.repeated_skipped)
 
     def summary_line(self):
         parts = ['{0} added'.format(self.added)]
         if self.skipped_duplicate:
             parts.append('{0} already there'.format(self.skipped_duplicate))
+        if self.repeated_new_uuid:
+            parts.append('{0} duplicated in the source, given new UUIDs'.format(
+                self.repeated_new_uuid))
+        if self.repeated_skipped:
+            parts.append('{0} duplicated in the source, left out'.format(
+                self.repeated_skipped))
         if self.skipped_no_geometry:
             parts.append('{0} had no shape'.format(self.skipped_no_geometry))
         if self.skipped_unresolved:
@@ -446,7 +458,9 @@ def _import_layer(gpkg_path, plan, item, snapshot, batch_id, progress,
 
     pending = []
     written_ids = []
-    seen_uuids = set()
+    seen_uuids = {}          # source uuid -> how many features carried it
+    new_copies = {}          # source uuid -> copies imported under a new uuid
+    repeats_without_ledger = 0
     added_uuids = []
     processed = 0
 
@@ -487,10 +501,37 @@ def _import_layer(gpkg_path, plan, item, snapshot, batch_id, progress,
         raw_uuid = target_attributes.get(uuid_field) if uuid_field else None
         feature_uuid = '' if is_blank(raw_uuid) else normalise(raw_uuid)
         if uuid_field and plan.options.skip_duplicate_uuids and feature_uuid:
-            if feature_uuid in existing_uuids or feature_uuid in seen_uuids:
+            # Which copy of this UUID within the source this is: 0 is the
+            # original, 1 upwards are features duplicated in QGIS or QField,
+            # which copy the original's UUID along with everything else. The
+            # count is kept even for features being skipped, so that a copy
+            # added since the last run is still recognised as the new one.
+            source_uuid = feature_uuid
+            copy_index = seen_uuids.get(source_uuid, 0)
+            seen_uuids[source_uuid] = copy_index + 1
+            if copy_index == 0:
+                if source_uuid in existing_uuids:
+                    result.skipped_duplicate += 1
+                    continue
+            elif not plan.options.import_repeated_uuids:
+                result.repeated_skipped += 1
+                continue
+            elif tracker is None:
+                # Without the ledger there is no telling this copy from one
+                # imported last week; importing it twice is worse than late.
+                result.repeated_skipped += 1
+                repeats_without_ledger += 1
+                continue
+            elif copy_index <= tracker.copy_count(item.target_layer,
+                                                  source_uuid):
+                # This copy came in on an earlier run, under its own UUID.
                 result.skipped_duplicate += 1
                 continue
-            seen_uuids.add(feature_uuid)
+            else:
+                feature_uuid = str(uuid_module.uuid4())
+                target_attributes[uuid_field] = feature_uuid
+                result.repeated_new_uuid += 1
+                new_copies[source_uuid] = new_copies.get(source_uuid, 0) + 1
         if (uuid_field and not feature_uuid
                 and plan.options.generate_missing_uuids):
             feature_uuid = str(uuid_module.uuid4())
@@ -538,6 +579,23 @@ def _import_layer(gpkg_path, plan, item, snapshot, batch_id, progress,
                 tracker.add_uuids(item.target_layer, added_uuids, batch_id, {})
             except Exception:
                 pass
+        # Only once the features are actually in: a copy counted but not
+        # written would be skipped forever on later runs.
+        if tracker is not None and new_copies and result.added:
+            try:
+                tracker.add_copies(item.target_layer, new_copies)
+            except Exception:
+                result.errors.append(
+                    'Imported {0} duplicated feature(s) into {1}, but could '
+                    'not record them in the import ledger — importing this '
+                    'file again would add them a second time.'.format(
+                        sum(new_copies.values()), item.target_layer))
+
+    if repeats_without_ledger:
+        result.errors.append(
+            '{0} feature(s) sharing a UUID were left out: the import ledger '
+            'is unavailable, so there is no way to tell them from copies '
+            'already imported.'.format(repeats_without_ledger))
 
     return result
 

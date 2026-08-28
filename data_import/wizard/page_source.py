@@ -37,6 +37,15 @@ except ImportError:  # direct (non-package) execution inside QGIS
     from data_import.wizard import style
 
 
+def _repeated(counted):
+    """How many features share a UUID already used by an earlier one.
+
+    One feature per distinct value is the original; everything above that is a
+    copy, which is what QGIS' and QField's Duplicate leave behind.
+    """
+    return sum(count - 1 for count in counted.counts.values() if count > 1)
+
+
 class SourcePage(QWizardPage):
 
     def __init__(self, wizard):
@@ -420,13 +429,14 @@ class SourcePage(QWizardPage):
                 names = scan.gpkg_column_names(_p, table)
                 column = next((n for n in names if n.lower() == 'uuid'), '')
                 if not column:
-                    return None, 0
+                    return None, 0, 0
                 where = scan.date_filter_expression(_f, names)
                 counted = scan.gpkg_value_counts(_p, table, [column],
                                                  where=where).get(column)
                 if counted is None:
-                    return None, 0
-                return set(counted.counts), counted.empty
+                    return None, 0, 0
+                return (set(counted.counts), counted.empty,
+                        _repeated(counted))
 
             state.counts_provider = counts
             state.source_uuids_provider = source_uuids
@@ -467,16 +477,16 @@ class SourcePage(QWizardPage):
         def source_uuids(table, _sources=sources):
             entry = _sources.get(table)
             if entry is None:
-                return None, 0
+                return None, 0, 0
             feature_source, names, fids = entry
             column = next((n for n in names if n.lower() == 'uuid'), '')
             if not column:
-                return None, 0
+                return None, 0, 0
             counted = scan.feature_source_value_counts(
                 feature_source, names, [column], fids).get(column)
             if counted is None:
-                return None, 0
-            return set(counted.counts), counted.empty
+                return None, 0, 0
+            return set(counted.counts), counted.empty, _repeated(counted)
 
         state.source_uuids_provider = source_uuids
 
@@ -507,6 +517,11 @@ class SourcePage(QWizardPage):
             '{0} of {1} layer(s) matched, {2} feature(s) to bring in.'.format(
                 matched, len(built.layer_imports), summary['features']),
         ]
+        if summary.get('repeated_in_source'):
+            lines.append(
+                '{0} feature(s) share a UUID with another in the source — '
+                'likely duplicated in QGIS or QField. They come in as features '
+                'of their own.'.format(summary['repeated_in_source']))
         source_crs = source_model.primary_crs()
         target_crs = target_model.primary_crs()
         if source_crs and target_crs and source_crs != target_crs:

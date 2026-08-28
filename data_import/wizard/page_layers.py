@@ -89,14 +89,21 @@ class LayersPage(QWizardPage):
             source_spec = plan.source_model.layers.get(item.source.table)
             self.table.setItem(row, COLUMN_SOURCE,
                                style.read_only_item(item.source.label))
-            if item.already_present:
+            tips = []
+            if item.already_present or item.repeated_in_source:
                 features_text = '{0:,} new of {1:,}'.format(
-                    item.expected_new, item.feature_count)
-                features_tip = ('{0:,} are already in the destination, matched '
-                                'on UUID'.format(item.already_present))
+                    plan.expected_new_for(item), item.feature_count)
             else:
                 features_text = '{0:,}'.format(item.feature_count)
-                features_tip = ''
+            if item.already_present:
+                tips.append('{0:,} are already in the destination, matched on '
+                            'UUID'.format(item.already_present))
+            if item.repeated_in_source:
+                tips.append(
+                    '{0:,} share a UUID with another feature in this source '
+                    '(duplicated features); they come in under new '
+                    'UUIDs'.format(item.repeated_in_source))
+            features_tip = '\n'.join(tips)
             self.table.setItem(
                 row, COLUMN_FEATURES,
                 style.read_only_item(features_text, tooltip=features_tip))
@@ -183,13 +190,20 @@ class LayersPage(QWizardPage):
         included = plan.included()
         features = sum(item.feature_count for item in included)
         already = plan.total_already_present()
+        repeated = plan.total_repeated_in_source()
         if already:
             text = ('{0} layer(s) selected, {1:,} new feature(s) '
                     '({2:,} of {3:,} are already in the destination).').format(
                 len(included), plan.total_expected_new(), already, features)
+        elif repeated:
+            text = '{0} layer(s) selected, {1:,} new feature(s) of {2:,}.'.format(
+                len(included), plan.total_expected_new(), features)
         else:
             text = '{0} layer(s) selected, {1:,} feature(s).'.format(
                 len(included), features)
+        if repeated:
+            text += ('  {0:,} share a UUID with another feature in the source '
+                     '— likely duplicated.'.format(repeated))
         needs_review = sum(
             1 for item in included
             if item.layer_match is not None and item.layer_match.needs_review)

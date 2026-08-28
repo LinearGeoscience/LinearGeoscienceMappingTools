@@ -139,6 +139,73 @@ class TestValidation(unittest.TestCase):
                             for finding in report.errors))
 
 
+class TestRepeatedSourceUuids(unittest.TestCase):
+    """Features duplicated in the field share the original's UUID.
+
+    They are real features, so the importer must say so plainly rather than
+    fold them in with "already there" — that wording sent them silently to the
+    floor before.
+    """
+
+    def _plan(self, repeated=0, raises=False, import_repeats=True):
+        template = import_loader.template_model()
+        source = test_import_match.legacy_source()
+
+        def source_uuids(table, _n=repeated):
+            if raises:
+                raise IOError('the source moved')
+            return {'a', 'b', 'c'}, 0, _n
+
+        def destination_uuids(layer_name):
+            return set()
+
+        built = plan_module.build_plan(
+            source, template,
+            plan_module.DestinationRef('gpkg', 'C:/nowhere/dest.gpkg', 'dest'),
+            counts_for, source_uuids_for=source_uuids,
+            destination_uuids_for=destination_uuids)
+        built.options.import_repeated_uuids = import_repeats
+        for item in built.included():
+            for resolution in item.undecided():
+                resolution.leave_blank()
+        return built
+
+    def test_repeats_are_counted_per_layer_and_in_total(self):
+        built = self._plan(repeated=2)
+        self.assertTrue(all(item.repeated_in_source == 2
+                            for item in built.included()))
+        self.assertEqual(built.summary()['repeated_in_source'],
+                         2 * len(built.included()))
+
+    def test_they_are_flagged_as_a_warning_before_the_import_runs(self):
+        report = self._plan(repeated=2).validate()
+        titles = ' '.join(finding.title for finding in report.warnings)
+        self.assertIn('share a UUID with another feature in the source', titles)
+        details = ' '.join(finding.detail for finding in report.warnings)
+        self.assertIn('under a new UUID', details)
+
+    def test_turning_the_option_off_says_only_the_first_lands(self):
+        built = self._plan(repeated=2, import_repeats=False)
+        details = ' '.join(finding.detail
+                           for finding in built.validate().warnings)
+        self.assertIn('Only the first of each will be imported', details)
+        # ...and the count drops back out of the estimate.
+        for item in built.included():
+            self.assertEqual(built.expected_new_for(item),
+                             item.expected_new - 2)
+
+    def test_no_repeats_means_no_warning(self):
+        report = self._plan(repeated=0).validate()
+        titles = ' '.join(finding.title for finding in report.warnings)
+        self.assertNotIn('share a UUID', titles)
+
+    def test_a_failed_check_is_admitted_not_passed_off_as_clean(self):
+        built = self._plan(raises=True)
+        self.assertTrue(all(item.estimate_failed for item in built.included()))
+        titles = ' '.join(finding.title for finding in built.validate().notes)
+        self.assertIn('Could not check', titles)
+
+
 class TestProjectDestination(unittest.TestCase):
     """Project mode resolves to a real file and gets the same guards.
 
