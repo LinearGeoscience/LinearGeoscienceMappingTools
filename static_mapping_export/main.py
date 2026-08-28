@@ -30,8 +30,9 @@ import traceback
 from ..recode_workflow.remove_unused import remove_unused_categories
 from .. import renderer_compat
 from ..script_setmapping import (
-    build_structural_labeling, is_lgs_structural_labeling,
-    is_lgs_overlay_labeling, rescale_overlay_label_distance,
+    BASEMAP_DIST_FACTOR, build_structural_labeling,
+    is_lgs_structural_labeling, is_lgs_overlay_labeling,
+    rescale_overlay_label_distance,
 )
 from ..layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 from .graphics_check import find_unembedded_graphics
@@ -332,8 +333,13 @@ class LayerExporter:
                 target_layer.setLabelsEnabled(True)
                 self.log(f"  Structural label offsets regenerated for 1:{reference_scale}", "SUCCESS")
             elif is_lgs_overlay_labeling(target_layer.labeling()):
-                rescale_overlay_label_distance(target_layer, int(reference_scale))
-                self.log(f"  Overlay label distance rescaled for 1:{reference_scale}", "SUCCESS")
+                # Basemap shares the Overlay labeling shape but keeps its
+                # leaders short via a smaller ring factor.
+                factor = (BASEMAP_DIST_FACTOR
+                          if "basemap" in target_layer.name().lower() else 1.0)
+                rescale_overlay_label_distance(
+                    target_layer, int(reference_scale), factor=factor)
+                self.log(f"  Polygon label distance rescaled for 1:{reference_scale}", "SUCCESS")
 
         self._save_style_to_database(target_layer, has_renderer, has_labeling)
 

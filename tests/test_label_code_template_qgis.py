@@ -103,6 +103,7 @@ def describe(settings):
         "maxDistance": round(point.maximumDistance(), 4),
         "maxDistanceUnit": int(point.maximumDistanceUnit()),
         "overlap": int(settings.placementSettings().overlapHandling()),
+        "obstacleFactor": round(settings.obstacleSettings().factor(), 4),
         "priority": settings.priority,
         "autoWrapLength": settings.autoWrapLength,
         "callout": bool(callout is not None and callout.enabled()),

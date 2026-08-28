@@ -601,6 +601,17 @@ class LayerConfigurator:
         placement_settings.setOverlapHandling(handling)
         settings.setPlacementSettings(placement_settings)
 
+    def set_obstacle_factor(self, settings, factor):
+        """Set the labels-as-obstacles weight so it actually takes effect.
+
+        Same sip trap as set_overlap_handling: plain
+        `settings.obstacleFactor = ...` stores a Python-side attribute;
+        the real setting lives in QgsLabelObstacleSettings.
+        """
+        obstacle_settings = settings.obstacleSettings()
+        obstacle_settings.setFactor(factor)
+        settings.setObstacleSettings(obstacle_settings)
+
     def create_comment_callout(self):
         """Grey dashed leader line for the comment rules (Regolith/Fallback)."""
         callout = QgsSimpleLineCallout()
@@ -671,6 +682,10 @@ class LayerConfigurator:
         # Allow overlaps without penalty
         self.set_overlap_handling(
             settings, Qgis.LabelOverlapHandling.AllowOverlapAtNoCost)
+        # Structure lettering repels other layers' movable text harder than
+        # a default obstacle - the dip number itself never moves or hides,
+        # so everything else must make way for it.
+        self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
         props = QgsPropertyCollection()
         props.setProperty(
@@ -702,10 +717,14 @@ class LayerConfigurator:
         settings.isOffsetFromPoint = True
         settings.offsetUnits = Qgis.RenderUnit.MapUnits
 
+        # Suffixes yield only to the dip numbers in the placement ladder
+        settings.priority = 8
+
         # Suffixes are decluttered rather than drawn on top of each other
         # (matches the hand-tuned template style)
         self.set_overlap_handling(
             settings, Qgis.LabelOverlapHandling.PreventOverlap)
+        self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
         # Data-defined properties
         props = QgsPropertyCollection()
@@ -750,11 +769,13 @@ class LayerConfigurator:
         # Regolith Note text formatting
         settings.setFormat(self.create_regolith_note_text_format())
 
-        # Prioritize closer labels (cartographic placement setting)
-        settings.priority = 5  # Medium-high priority
+        # Bottom of the placement ladder: a regolith note is background
+        # annotation and gives way to every other kind of lettering.
+        settings.priority = 2
 
         self.apply_around_point_placement(
             settings, REGOLITH_RING, Qgis.RenderUnit.Points)
+        self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -785,8 +806,13 @@ class LayerConfigurator:
         settings.setFormat(self.create_fallback_text_format())
         settings.autoWrapLength = 35
 
+        # Comments ride a leader line, so they give way to the map
+        # lettering above them in the placement ladder.
+        settings.priority = 3
+
         # Dynamic engine-arranged placement with callout
         self.apply_dynamic_comment_placement(settings, x_value)
+        self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
         # Create rule - triggers when no Dip available but other fields have data
         # Excludes RegolithNote items which are handled by the dedicated Regolith Note rule
@@ -834,6 +860,17 @@ class LayerConfigurator:
             else:
                 QgsMessageLog.logMessage(f"[Label] {overlay.name()} labeling is not the LGS Overlay style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
+        basemap = self.get_layer(layers_dict.get("Basemap"))
+        if basemap:
+            # Same labeling shape as the Overlay (Horizontal + callout),
+            # scaled by BASEMAP_DIST_FACTOR so the leaders stay short.
+            if is_lgs_overlay_labeling(basemap.labeling()):
+                rescale_overlay_label_distance(basemap, scale_value,
+                                               factor=BASEMAP_DIST_FACTOR)
+                QgsMessageLog.logMessage(f"[Label] Rescaled Basemap label distance to {BASEMAP_DIST_FACTOR * callout_dist_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            else:
+                QgsMessageLog.logMessage(f"[Label] {basemap.name()} labeling is not the LGS polygon-callout style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
 
 # Nominal ring distance for the callout-bearing labels that are left -
 # the FieldNotebook Fallback rule and the Overlay outside-polygon labels.
@@ -842,6 +879,17 @@ class LayerConfigurator:
 # scripts/inject_dynamic_callouts.py and
 # scripts/inject_overlay_label_placement.py (U = 5000 * this).
 CALLOUT_DIST_FACTOR = 0.0075
+
+# Basemap lithology labels use half the Overlay ring so their manhattan
+# leaders stay short (user decision 2026-08-29); most labels fit inside
+# their polygon and draw no leader at all. Mirrored by the baked values
+# in scripts/inject_basemap_label_placement.py.
+BASEMAP_DIST_FACTOR = 0.5
+
+# Labels-as-obstacles weight for every FieldNotebook rule: structure
+# lettering repels other layers' movable text harder than a default
+# obstacle. Mirrored by scripts/inject_label_priority_ladder.py.
+OBSTACLE_FACTOR = 2.0
 
 
 def callout_dist_for_scale(scale_value):
@@ -911,17 +959,20 @@ def rescale_linework_label_repeat(layer, scale_value):
     layer.triggerRepaint()
 
 
-def rescale_overlay_label_distance(layer, scale_value):
-    """Rescale the Overlay outside-label distance to a mapping scale.
+def rescale_overlay_label_distance(layer, scale_value, factor=1.0):
+    """Rescale a polygon layer's outside-label distance to a mapping scale.
 
     Edits the existing simple labeling by copy — never rebuilds — so the
     auxiliary-storage dd bindings (manual label moves), fonts, expression
     and callout all survive. dist is the only knob PAL uses for outside
     placement on polygons; maximumDistance is kept mirrored at 5x purely
     for consistency with the injector (it is inert for polygon placement).
+
+    factor shrinks the ring per layer: Overlay uses the full ring (1.0),
+    Basemap passes BASEMAP_DIST_FACTOR so its leaders stay short.
     """
     settings = QgsPalLayerSettings(layer.labeling().settings())
-    x_value = callout_dist_for_scale(scale_value)
+    x_value = factor * callout_dist_for_scale(scale_value)
     settings.dist = x_value
     settings.distUnits = Qgis.RenderUnit.MapUnits
     point_settings = settings.pointSettings()
