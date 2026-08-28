@@ -1165,9 +1165,9 @@ def main():
 
     for layer, spec, codes, n_cats, attr in (
             (LW, LW_SPEC, LW_VEIN_CODES, 135, "Type"),
-            # 287 = 286 codes + NULL (was 284 before ZBXS/SSTS/SSLS,
-            # inject_lith_codes_2026_08).
-            (BM, BM_SPEC, list(VEIN_LITHS), 287, "Lithology1")):
+            # 300 = 299 codes + NULL (was 287 before the 13 round-2
+            # cover codes, inject_cover_codes_round2).
+            (BM, BM_SPEC, list(VEIN_LITHS), 300, "Lithology1")):
         cols = [r[1] for r in cur.execute('PRAGMA table_info("%s")' % layer)]
         cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?",
                     (layer,))

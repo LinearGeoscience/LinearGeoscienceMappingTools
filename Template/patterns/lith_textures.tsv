@@ -267,7 +267,10 @@ RSPC	claystone	Regolith	Saprolitic Clays	weathered profile: clay-rich saprolite 
 RSPL	claystone	Regolith	Saprolite Lower, Moderately Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
 RSPR	claystone	Regolith	Saprock, Weakly Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
 RSPU	claystone	Regolith	Saprolite Upper, Strongly Weathered	weathered profile: clay-rich saprolite zones	auto	saprolite
+TAES	sandstone	Transported Cover	Aeolian Sand	aeolian	auto	-
 TALL	alluvium	Transported Cover	Alluvium	alluvium	auto	-
+TASH	tuff	Transported Cover	Volcanic Ash	airfall	auto	-
+TBCH	sandstone	Transported Cover	Beach & Coastal Sand	coastal / marine	auto	-
 TCO	colluvium	Transported Cover	Colluvium	colluvial / scree	auto	colluvium
 TCOC	colluvium	Transported Cover	Colluvium, Coarse	colluvial / scree	auto	colluvium
 TCOD	claystone	Transported Cover	Colluvium, Fine silt & Clay	clay / loam / hardpan	auto	-
@@ -275,12 +278,20 @@ TCOS	sandstone	Transported Cover	Colluvium, Sands	sandy cover	auto	-
 TCY	claystone	Transported Cover	Clay	clay / loam / hardpan	auto	-
 TDLP	laterite	Transported Cover	Duricrust of Transported Pisoliths	transported pisoliths	auto	-
 TEVS	evaporite	Transported Cover	Evaporitic Sediments	salt pan / evaporitic / gypsum dunes	auto	-
+TFIL	crosshatch	Transported Cover	Anthropogenic Fill	anthropogenic	auto	-
+TGFO	gravel	Transported Cover	Glaciofluvial Outwash	glacial	auto	-
 TGRV	gravel	Transported Cover	Gravel	gravel / lag	auto	-
 TGYP	evaporite	Transported Cover	Gypsum dunes, Kopai	salt pan / evaporitic / gypsum dunes	auto	-
 THP	claystone	Transported Cover	Hard Pan	clay / loam / hardpan	auto	-
+TLAC	claystone	Transported Cover	Lacustrine Clay	lacustrine	auto	-
 TLG	gravel	Transported Cover	Lag	gravel / lag	auto	-
+TLGC	gravel	Transported Cover	Lag on Colluvium	gravel / lag	auto	-
+TLOE	siltstone	Transported Cover	Loess	aeolian	auto	-
 TLSC	colluvium	Transported Cover	Lithic Scree	colluvial / scree	auto	-
+TLSD	colluvium	Transported Cover	Landslide & Debris Flow	colluvial / scree	auto	-
 TLTP	laterite	Transported Cover	Transported Pisoliths	transported pisoliths	auto	-
+TMUD	mudstone	Transported Cover	Tidal & Estuarine Mud	coastal / marine	auto	-
+TPEA	marl	Transported Cover	Peat & Organic Soil	organic	auto	-
 TRSL	colluvium	Transported Cover	Residual Soil, Lithic Fragments	colluvial / scree	auto	residual_soil
 TRSLM	claystone	Transported Cover	Residual Soil, Loam	clay / loam / hardpan	auto	-
 TRSS	sandstone	Transported Cover	Residual Soil, Sandy	sandy cover	auto	residual_soil
@@ -288,3 +299,5 @@ TSA	sandstone	Transported Cover	Sand	sandy cover	auto	-
 TSAC	sandstone	Transported Cover	Clayey Sand	sandy cover	auto	-
 TSI	siltstone	Transported Cover	Silt	silt	auto	-
 TSP	evaporite	Transported Cover	Salt Pan	salt pan / evaporitic / gypsum dunes	auto	-
+TSW	alluvium	Transported Cover	Sheetwash	alluvium	auto	-
+TTIL	conglomerate	Transported Cover	Glacial Till	glacial	auto	-

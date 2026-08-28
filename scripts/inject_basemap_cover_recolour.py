@@ -1,5 +1,14 @@
 """Move the Transported Cover family off the sandstone cream, onto pale grey.
 
+SUPERSEDED BY ROUND 2 - kept for the record, not for re-running.
+inject_cover_mechanism.py has since moved these same 21 codes off the grey
+ladder onto mechanism-tinted family hues (and added 13 more codes beside
+them), so this script's guards no longer hold against the current template:
+it counts 21 cover codes where there are now 34, and expects the cream this
+template no longer carries. Run it and it aborts, by design. The greys it
+wrote survive as cover_palette.ROUND1_GREY, which is what round 2 checks
+its own idempotency against.
+
 THE PROBLEM
 -----------
 20 of the 21 Transported Cover codes shared ONE cream anchor, `#efe8ce`
