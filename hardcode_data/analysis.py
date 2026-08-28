@@ -11,17 +11,52 @@ previewed change records verbatim — it never re-evaluates.
 import uuid
 from dataclasses import dataclass, field
 
-from qgis.PyQt.QtCore import QVariant
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
-from qgis.core import QgsField
+from qgis.PyQt.QtCore import QMetaType
+from qgis.core import (QgsCoordinateReferenceSystem, QgsField, QgsFields,
+                       QgsVectorLayerFeatureSource)
 
 try:
     from ..script_adddata.utils import detect_uuid_field
 except ImportError:
     from script_adddata.utils import detect_uuid_field
+
+
+class LayerScanSnapshot:
+    """Thread-safe stand-in for the QgsVectorLayer surface analyze_layer
+    uses. Build it on the MAIN thread; it can then be scanned from a
+    background task. getFeatures() iterates a QgsVectorLayerFeatureSource,
+    which captures the layer's current state (including any uncommitted
+    edit buffer) at construction time."""
+
+    def __init__(self, layer):
+        self._id = layer.id()
+        self._name = layer.name()
+        self._fields = QgsFields(layer.fields())
+        self._crs = QgsCoordinateReferenceSystem(layer.crs())
+        self._feature_count = layer.featureCount()
+        self._selected_ids = list(layer.selectedFeatureIds())
+        self._source = QgsVectorLayerFeatureSource(layer)
+
+    def id(self):
+        return self._id
+
+    def name(self):
+        return self._name
+
+    def fields(self):
+        return self._fields
+
+    def crs(self):
+        return self._crs
+
+    def featureCount(self):
+        return self._feature_count
+
+    def selectedFeatureIds(self):
+        return list(self._selected_ids)
+
+    def getFeatures(self):
+        return self._source.getFeatures()
 
 
 # Update modes
@@ -40,6 +75,13 @@ DISTINCT_CAP = 1000
 SAMPLE_VALUES_MAX = 5
 PROGRESS_EVERY = 500
 
+# lgs_* provenance columns used by the reconcile (three-way merge) system.
+# Injected here so the existing field-create pass keeps them present on the
+# standard layers; reconcile fills/maintains the values. All TEXT so they
+# survive any QField round-trip. See script_adddata/reconcile/commit.py.
+LGS_FIELDS = ['lgs_version', 'lgs_last_modified', 'lgs_author', 'lgs_editor',
+              'lgs_feature_hash', 'lgs_parent_uuid', 'lgs_merged_from']
+
 # copy_operations tuples are (source_field, target_field, geometry_axis);
 # geometry_axis 'x'/'y' enables a from-geometry fallback when the source
 # attribute is empty, so every point still gets hardcoded coordinates
@@ -56,16 +98,19 @@ LAYER_CONFIGS = {
             'source_field': 'Subtype1',
             'lookup_table': 'FieldNotebookCodes',
         },
+        'inject_lgs_fields': True,
     },
     '2 - Overlay': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
+        'inject_lgs_fields': True,
     },
     '3 - Linework': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
         'copy_operations': [],
         'legend': None,
+        'inject_lgs_fields': True,
     },
     '4 - Basemap': {
         'standard_fields': ['ProjectID', 'MappedScale', 'MappedCRS'],
@@ -78,27 +123,21 @@ LAYER_CONFIGS = {
             'source_field': 'Lithology1',
             'lookup_table': 'BasemapCodes',
         },
+        'inject_lgs_fields': True,
     },
 }
 
 
-def create_compatible_field(name, field_type='string'):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
 
-    # Default fallback
-    return QgsField(name, QVariant.String)
+
+def create_compatible_field(name, field_type='string'):
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 def is_empty(value):
@@ -230,7 +269,7 @@ class _ColumnAccumulator:
 
 
 def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
-                  mode, lookup_layer=None, progress_cb=None):
+                  mode, lookup_layer=None, lookup_dict=None, progress_cb=None):
     """Single-pass analysis of one layer.
 
     Computes column stats for ALL fields plus the complete change list for
@@ -240,6 +279,10 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
 
     MappedCRS records the LAYER's CRS — that is the CRS the geometry and
     any hardcoded coordinates are actually stored in.
+
+    `layer` may be a live QgsVectorLayer or a LayerScanSnapshot. When running
+    from a background task, pass a snapshot plus a pre-built `lookup_dict`
+    (see build_lookup_dict) so no live layer is touched off the main thread.
     """
     report = LayerReport(layer_id=layer.id(), layer_name=layer.name())
     fields = layer.fields()
@@ -266,6 +309,12 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
             report.fields_to_create.append(name)
         standard_ops.append((name, idx, standard_values.get(name, '')))
 
+    # Inject the lgs_* provenance columns (created empty; reconcile fills them).
+    if config.get('inject_lgs_fields'):
+        for name in LGS_FIELDS:
+            if fields.indexOf(name) == -1 and name not in report.fields_to_create:
+                report.fields_to_create.append(name)
+
     # Copy operations: need an existing source field, unless a geometry
     # axis provides a fallback value
     geographic = layer_crs.isGeographic()
@@ -291,7 +340,7 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
     legend_op = None            # (src_idx, target_name, tgt_idx_or_-1, lookup_dict)
     seen_codes = set()
     if legend_cfg:
-        if lookup_layer is None:
+        if lookup_layer is None and lookup_dict is None:
             report.legend_skipped_reason = (
                 f"No lookup table selected — '{legend_cfg['target_field']}' "
                 "not updated")
@@ -302,7 +351,8 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
                     f"Source field '{legend_cfg['source_field']}' not found — "
                     f"'{legend_cfg['target_field']}' not updated")
             else:
-                lookup_dict = build_lookup_dict(lookup_layer)
+                if lookup_dict is None:
+                    lookup_dict = build_lookup_dict(lookup_layer)
                 target_name = legend_cfg['target_field']
                 tgt_idx = fields.indexOf(target_name)
                 if tgt_idx == -1 and target_name not in report.fields_to_create:
@@ -443,8 +493,13 @@ def analyze_layer(layer, config, *, project_id, mapped_scale, project_crs,
     return report
 
 
-def apply_layer_report(layer, report, progress_cb=None):
-    """Apply the previewed changes for one layer. Returns (applied, errors)."""
+def iter_apply_layer_report(layer, report):
+    """Generator form of apply_layer_report for cancelable chunked commits.
+
+    Yields the running change count every PROGRESS_EVERY changes while the
+    edit session stays open; returns (applied, errors). Closing the
+    generator (cancellation) rolls the open edit session back.
+    """
     errors = []
     if not layer.isEditable() and not layer.startEditing():
         return 0, [f"Could not start editing '{layer.name()}'"]
@@ -473,8 +528,8 @@ def apply_layer_report(layer, report, progress_cb=None):
                 continue
             layer.changeAttributeValue(change.feature_id, idx, change.new_value)
             applied += 1
-            if progress_cb and count % PROGRESS_EVERY == 0:
-                progress_cb(count)
+            if count % PROGRESS_EVERY == 0:
+                yield count
 
         if layer.commitChanges():
             layer.triggerRepaint()
@@ -483,7 +538,23 @@ def apply_layer_report(layer, report, progress_cb=None):
         layer.rollBack()
         return 0, errors
 
+    except GeneratorExit:
+        # Cancelled from outside: discard the open edit session.
+        layer.rollBack()
+        raise
     except Exception as exc:
         layer.rollBack()
         errors.append(str(exc))
         return 0, errors
+
+
+def apply_layer_report(layer, report, progress_cb=None):
+    """Apply the previewed changes for one layer. Returns (applied, errors)."""
+    gen = iter_apply_layer_report(layer, report)
+    while True:
+        try:
+            count = next(gen)
+        except StopIteration as stop:
+            return stop.value if stop.value is not None else (0, [])
+        if progress_cb:
+            progress_cb(count)

@@ -1,8 +1,8 @@
 from qgis.core import (
-    QgsProject, QgsSnappingConfig, QgsTolerance, QgsVectorLayer,
+    QgsProject, QgsSnappingConfig, QgsVectorLayer,
     QgsPalLayerSettings, QgsProperty, QgsVectorLayerSimpleLabeling,
     QgsExpressionContext, QgsExpressionContextUtils, QgsPropertyCollection,
-    QgsUnitTypes, QgsTextFormat, QgsSimpleLineCallout, QgsLineSymbol,
+    QgsTextFormat, QgsSimpleLineCallout, QgsLineSymbol,
     QgsRuleBasedLabeling, QgsMessageLog, Qgis
 )
 from qgis.PyQt.QtWidgets import (
@@ -21,17 +21,8 @@ except ImportError:
 
 
 def get_over_point_placement():
-    """Get the correct OverPoint placement enum for the current QGIS version"""
-    try:
-        # Try the newer enum structure (QGIS 3.40+)
-        return QgsPalLayerSettings.Placement.OverPoint
-    except AttributeError:
-        try:
-            # Try the older direct enum (QGIS 3.34 and earlier)
-            return QgsPalLayerSettings.OverPoint
-        except AttributeError:
-            # Fallback to the most basic point placement
-            return QgsPalLayerSettings.AroundPoint
+    """OverPoint label placement (Qgis.LabelPlacement; QGIS 3.26+ and 4.x)."""
+    return Qgis.LabelPlacement.OverPoint
 
 
 class ModernLayerConfigDialog(QDialog):
@@ -59,7 +50,7 @@ class ModernLayerConfigDialog(QDialog):
         self.setupProgressSection(mainLayout)
 
         # Add standard dialog buttons
-        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttonBox.accepted.connect(self.onAccepted)
         self.buttonBox.rejected.connect(self.reject)
         mainLayout.addWidget(self.buttonBox)
@@ -168,7 +159,7 @@ class ModernLayerConfigDialog(QDialog):
 
         # Create status label
         self.statusLabel = QLabel("Ready")
-        self.statusLabel.setAlignment(Qt.AlignCenter)
+        self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         progressLayout.addWidget(self.statusLabel)
 
         mainLayout.addWidget(self.progressGroup)
@@ -193,7 +184,7 @@ class ModernLayerConfigDialog(QDialog):
             if matched is None:
                 QgsMessageLog.logMessage(
                     f"[Match] No match found for {role}, target name: {target_names.get(role)}",
-                    'Linear Geoscience', Qgis.Warning)
+                    'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def getSelectedLayers(self):
         """Get dictionary of selected layer IDs by role.
@@ -226,7 +217,7 @@ class ModernLayerConfigDialog(QDialog):
             self.progress_timer.stop()
             self.statusLabel.setText("Completed")
             # Enable the OK button again
-            self.buttonBox.button(QDialogButtonBox.Ok).setEnabled(True)
+            self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
 
     def startProgress(self, status_text):
         """Start the progress display with the given status text"""
@@ -241,8 +232,8 @@ class ModernLayerConfigDialog(QDialog):
         self.progressBar.setValue(0)
 
         # Disable buttons during progress
-        self.buttonBox.button(QDialogButtonBox.Ok).setEnabled(False)
-        self.buttonBox.button(QDialogButtonBox.Cancel).setEnabled(False)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(False)
 
         # Process events to update UI
         from qgis.PyQt.QtWidgets import QApplication
@@ -320,7 +311,7 @@ class ModernLayerConfigDialog(QDialog):
         self.setProgress(100, "Configuration complete!")
         self.configuration_complete = True
 
-        QgsMessageLog.logMessage("Configuration completed successfully!", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Configuration completed successfully!", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
 class LayerConfigurator:
@@ -356,12 +347,12 @@ class LayerConfigurator:
             if layer:
                 layer.setCrs(self.project_crs)
                 updated += 1
-                QgsMessageLog.logMessage(f"[CRS] Updated CRS for {layer.name()} (ID: {layer_id[:8]})", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"[CRS] Updated CRS for {layer.name()} (ID: {layer_id[:8]})", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         if updated:
-            QgsMessageLog.logMessage(f"[CRS] Updated {updated} layers to match project CRS", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[CRS] Updated {updated} layers to match project CRS", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
-            QgsMessageLog.logMessage("[CRS] No layers selected for CRS update", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("[CRS] No layers selected for CRS update", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def set_reference_scale(self, layers_dict, scale_value):
         """Set reference scale for selected layers"""
@@ -375,9 +366,9 @@ class LayerConfigurator:
                     updated += 1
 
         if updated:
-            QgsMessageLog.logMessage(f"[Scale] Set reference scale 1:{scale_value} for {updated} layers", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Scale] Set reference scale 1:{scale_value} for {updated} layers", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
-            QgsMessageLog.logMessage("[Scale] No layers selected for reference scale", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("[Scale] No layers selected for reference scale", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def configure_snapping(self, layers_dict):
         """Configure snapping for relevant layers"""
@@ -388,7 +379,7 @@ class LayerConfigurator:
         snapping_config.setEnabled(True)
 
         # Force advanced configuration mode
-        snapping_config.setMode(QgsSnappingConfig.AdvancedConfiguration)
+        snapping_config.setMode(Qgis.SnappingMode.AdvancedConfiguration)
 
         # Enable intersection snapping to allow snapping on overlapping geometries
         snapping_config.setIntersectionSnapping(True)
@@ -406,15 +397,16 @@ class LayerConfigurator:
                 settings.setEnabled(True)
 
                 # Set type to both vertex and segment flags
-                settings.setType(QgsSnappingConfig.SnappingType.Vertex |
-                                 QgsSnappingConfig.SnappingType.Segment)
+                # (setTypeFlag replaces the deprecated setType removed in QGIS 4)
+                settings.setTypeFlag(Qgis.SnappingType.Vertex |
+                                     Qgis.SnappingType.Segment)
 
                 # Set tolerance and units
                 settings.setTolerance(20)
-                settings.setUnits(QgsTolerance.Pixels)
+                settings.setUnits(Qgis.MapToolUnit.Pixels)
 
                 snapping_config.setIndividualLayerSettings(layer, settings)
-                QgsMessageLog.logMessage(f"[Snap] Configured snapping for {layer.name()} (vertex & segment)", 'Linear Geoscience', Qgis.Info)
+                QgsMessageLog.logMessage(f"[Snap] Configured snapping for {layer.name()} (vertex & segment)", 'Linear Geoscience', Qgis.MessageLevel.Info)
                 layers_configured += 1
 
         # Apply the updated configuration back to the project
@@ -424,9 +416,9 @@ class LayerConfigurator:
         self.project.setTopologicalEditing(True)
 
         if layers_configured > 0:
-            QgsMessageLog.logMessage(f"[Snap] Advanced snapping configuration applied to {layers_configured} layers", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"[Snap] Advanced snapping configuration applied to {layers_configured} layers", 'Linear Geoscience', Qgis.MessageLevel.Info)
         else:
-            QgsMessageLog.logMessage("[Snap] No layers selected for snapping configuration", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("[Snap] No layers selected for snapping configuration", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def create_standard_text_format(self):
         """Create standard text format for Dip labels"""
@@ -479,15 +471,11 @@ class LayerConfigurator:
         # Placement settings - using version-compatible placement
         settings.placement = get_over_point_placement()
         settings.isOffsetFromPoint = True
-        settings.offsetUnits = QgsUnitTypes.RenderMapUnits
+        settings.offsetUnits = Qgis.RenderUnit.MapUnits
         settings.autoWrapLength = 35
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Data-defined placement (original expression)
         placement_expression = (
@@ -498,7 +486,7 @@ class LayerConfigurator:
         )
 
         props = QgsPropertyCollection()
-        props.setProperty(QgsPalLayerSettings.OffsetXY,
+        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
                           QgsProperty.fromExpression(placement_expression))
         settings.setDataDefinedProperties(props)
 
@@ -523,14 +511,10 @@ class LayerConfigurator:
         # Placement settings - using version-compatible placement
         settings.placement = get_over_point_placement()
         settings.isOffsetFromPoint = True
-        settings.offsetUnits = QgsUnitTypes.RenderMapUnits
+        settings.offsetUnits = Qgis.RenderUnit.MapUnits
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Data-defined properties
         props = QgsPropertyCollection()
@@ -542,14 +526,14 @@ class LayerConfigurator:
             f'to_string(({x_value} * sin(radians("DipDirection" - 90 + 135)))) '
             f'ELSE \'15,15\' END'
         )
-        props.setProperty(QgsPalLayerSettings.OffsetXY,
+        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
                           QgsProperty.fromExpression(placement_expression))
 
         # Text rotation to match symbol orientation
         rotation_expression = (
             'CASE WHEN "Type" = \'Structure\' THEN "DipDirection" - 90 ELSE 0 END'
         )
-        props.setProperty(QgsPalLayerSettings.LabelRotation,
+        props.setProperty(QgsPalLayerSettings.Property.LabelRotation,
                           QgsProperty.fromExpression(rotation_expression))
 
         settings.setDataDefinedProperties(props)
@@ -573,25 +557,16 @@ class LayerConfigurator:
         settings.setFormat(self.create_regolith_note_text_format())
 
         # Placement settings - Cartographic (AroundPoint)
-        try:
-            # Try newer enum structure first
-            settings.placement = QgsPalLayerSettings.Placement.AroundPoint
-        except AttributeError:
-            # Fallback to older enum
-            settings.placement = QgsPalLayerSettings.AroundPoint
+        settings.placement = Qgis.LabelPlacement.AroundPoint
 
         settings.dist = 0.0  # Distance from feature
-        settings.distUnits = QgsUnitTypes.RenderMillimeters
+        settings.distUnits = Qgis.RenderUnit.Millimeters
 
         # Prioritize closer labels (cartographic placement setting)
         settings.priority = 5  # Medium-high priority
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -625,15 +600,11 @@ class LayerConfigurator:
         # Placement settings - using version-compatible placement
         settings.placement = get_over_point_placement()
         settings.isOffsetFromPoint = True
-        settings.offsetUnits = QgsUnitTypes.RenderMapUnits
+        settings.offsetUnits = Qgis.RenderUnit.MapUnits
         settings.autoWrapLength = 35
 
         # Allow overlaps without penalty
-        try:
-            from qgis.core import Qgis
-            settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
-        except (AttributeError, ImportError):
-            pass  # Older QGIS versions
+        settings.overlapHandling = Qgis.LabelOverlapHandling.AllowOverlapAtNoCost
 
         # Improved placement expression - handle invalid DipDirection and moderate offset
         placement_expression = (
@@ -645,7 +616,7 @@ class LayerConfigurator:
         )
 
         props = QgsPropertyCollection()
-        props.setProperty(QgsPalLayerSettings.OffsetXY,
+        props.setProperty(QgsPalLayerSettings.Property.OffsetXY,
                           QgsProperty.fromExpression(placement_expression))
         settings.setDataDefinedProperties(props)
 
@@ -679,40 +650,57 @@ class LayerConfigurator:
         """Configure rule-based labeling for the Field Notebook layer"""
         layer = self.get_layer(layers_dict.get("FieldNotebook"))
         if not layer:
-            QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             return
 
-        # Get scale-appropriate offset value
-        x_value = self.SCALE_TO_OFFSET.get(scale_value, 1)
-
-        # Create root rule (overlap handling is set on each individual rule)
-        root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
-
-        # Rule 1: Dip field (no callouts)
-        dip_rule = self.create_dip_rule(x_value)
-        root.appendChild(dip_rule)
-
-        # Rule 2: SymbolSuffix field (small, italic, no callouts)
-        suffix_rule = self.create_suffix_rule(x_value)
-        root.appendChild(suffix_rule)
-
-        # Rule 3: Regolith Note (Cartographic placement, no callouts)
-        regolith_rule = self.create_regolith_note_rule()
-        root.appendChild(regolith_rule)
-
-        # Rule 4: Fallback rule (with callouts)
-        fallback_rule = self.create_fallback_rule(x_value)
-        root.appendChild(fallback_rule)
-
-        # Apply rule-based labeling
-        rules = QgsRuleBasedLabeling(root)
-        layer.setLabeling(rules)
+        layer.setLabeling(build_structural_labeling(scale_value))
         layer.setLabelsEnabled(True)
         layer.triggerRepaint()
 
-        QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"[Label] All rules have 'Allow Overlaps without Penalty' enabled", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"[Label] Applied rule-based labeling with 4 rules to {layer.name()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"[Label] Rules: 1-Dip, 2-SymbolSuffix, 3-RegolithNote, 4-Fallback", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"[Label] All rules have 'Allow Overlaps without Penalty' enabled", 'Linear Geoscience', Qgis.MessageLevel.Info)
+
+
+def offset_for_scale(scale_value):
+    """Map-unit label offset distance for a mapping scale.
+
+    Every SCALE_TO_OFFSET entry is exactly 0.006 * scale, so unlisted
+    scales fall back to the same linear fit.
+    """
+    return LayerConfigurator.SCALE_TO_OFFSET.get(scale_value, scale_value * 0.006)
+
+
+def build_structural_labeling(scale_value):
+    """Return the canonical LGS rule-based structural labeling with label
+    offsets baked for scale_value.
+
+    Shared by Set Mapping Scale and the static mapping export, so exported
+    layers can get offsets regenerated to match their export scale.
+    """
+    configurator = LayerConfigurator()
+    x_value = offset_for_scale(scale_value)
+
+    # Root rule (overlap handling is set on each individual rule)
+    root = QgsRuleBasedLabeling.Rule(QgsPalLayerSettings())
+    # Rule 1: Dip field (no callouts)
+    root.appendChild(configurator.create_dip_rule(x_value))
+    # Rule 2: SymbolSuffix field (small, italic, no callouts)
+    root.appendChild(configurator.create_suffix_rule(x_value))
+    # Rule 3: Regolith Note (Cartographic placement, no callouts)
+    root.appendChild(configurator.create_regolith_note_rule())
+    # Rule 4: Fallback rule (with callouts)
+    root.appendChild(configurator.create_fallback_rule(x_value))
+    return QgsRuleBasedLabeling(root)
+
+
+def is_lgs_structural_labeling(labeling):
+    """True if labeling is the LGS rule-based structural labeling built by
+    this module, detected by the rule descriptions it generates."""
+    if not isinstance(labeling, QgsRuleBasedLabeling):
+        return False
+    descriptions = {rule.description() for rule in labeling.rootRule().children()}
+    return {'Dip Labels', 'SymbolSuffix Labels'} <= descriptions
 
 
 def run_configuration():
@@ -724,8 +712,8 @@ def run_configuration():
     dialog = ModernLayerConfigDialog()
     result = dialog.exec()
 
-    if result != QDialog.Accepted:
-        QgsMessageLog.logMessage("User cancelled. No changes made.", 'Linear Geoscience', Qgis.Info)
+    if result != QDialog.DialogCode.Accepted:
+        QgsMessageLog.logMessage("User cancelled. No changes made.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
 def run(iface):

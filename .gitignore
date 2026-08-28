@@ -173,3 +173,13 @@ docs/_templates/
 *.zip
 *.tar.gz
 *.tar.bz2
+
+# Personal working notes (not committed)
+RECONCILE_GUIDE.md
+RECONCILE_QUICKSTART.md
+
+# QGIS artifact created by headless QgsApplication runs
+symbology-style.db
+
+# Build stamp written by scripts/git-hooks (deployed with the plugin, not tracked)
+/build_info.json

@@ -13,13 +13,14 @@ This script integrates data from the 'GeologistCodes' and '1 - FieldNotebook' la
 import os
 from qgis.PyQt.QtWidgets import (
     QFileDialog, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
-    QPushButton, QLineEdit, QComboBox, QDialogButtonBox, QApplication, QMessageBox
+    QPushButton, QLineEdit, QComboBox, QDialogButtonBox, QApplication, QMessageBox,
+    QProgressDialog
 )
 from qgis.core import (
     QgsProject, QgsPointXY, QgsFeature, QgsGeometry, QgsVectorLayer, QgsField,
     QgsCoordinateReferenceSystem, QgsPalLayerSettings, QgsVectorLayerSimpleLabeling,
     QgsSimpleMarkerSymbolLayer, QgsSymbol, QgsSingleSymbolRenderer, QgsLayerTreeGroup, QgsRendererCategory,
-    QgsCategorizedSymbolRenderer, QgsRuleBasedRenderer, QgsMessageLog, Qgis, QgsWkbTypes
+    QgsCategorizedSymbolRenderer, QgsRuleBasedRenderer, QgsMessageLog, Qgis
 )
 
 try:
@@ -37,44 +38,21 @@ except ImportError:
     except ImportError:
         def read_exif_orientation(path):
             return 1
-from qgis.PyQt.QtCore import QVariant, QUrl
-try:
-    from qgis.PyQt.QtCore import QMetaType
-except ImportError:
-    QMetaType = None
+from qgis.PyQt.QtCore import QUrl, QMetaType, Qt
 from qgis.PyQt.QtGui import QColor, QImageReader
 import sys
 
 
+_FIELD_TYPES = {
+    'string': QMetaType.Type.QString,
+    'double': QMetaType.Type.Double,
+    'int': QMetaType.Type.Int,
+}
+
+
 def create_compatible_field(name, field_type):
-    """Create QgsField with QGIS version compatibility"""
-    try:
-        # Try QGIS 3.34+ syntax first
-        if QMetaType and hasattr(QMetaType, 'Type'):
-            if field_type == 'string':
-                return QgsField(name, QMetaType.Type.QString)
-            elif field_type == 'double':
-                return QgsField(name, QMetaType.Type.Double)
-            elif field_type == 'int':
-                return QgsField(name, QMetaType.Type.Int)
-        # Fallback for older versions
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
-    except Exception:
-        # Final fallback to QGIS 3.4 syntax
-        if field_type == 'string':
-            return QgsField(name, QVariant.String)
-        elif field_type == 'double':
-            return QgsField(name, QVariant.Double)
-        elif field_type == 'int':
-            return QgsField(name, QVariant.Int)
-    
-    # Default fallback
-    return QgsField(name, QVariant.String)
+    """Create a QgsField (QMetaType overload; QGIS 3.38+ including 4.x)."""
+    return QgsField(name, _FIELD_TYPES.get(field_type, QMetaType.Type.QString))
 
 
 # Function to retrieve active geologists with entries in the point layer
@@ -97,7 +75,7 @@ def get_active_geologists(point_layer, geologist_name_map):
 def get_geologist_name_map(codes_layer):
     geologist_name_map = {}
     if codes_layer is None:
-        QgsMessageLog.logMessage("Geologist codes layer not selected.", 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage("Geologist codes layer not selected.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return geologist_name_map
 
     for feature in codes_layer.getFeatures():
@@ -120,7 +98,7 @@ class GeoreferenceLayerDialog(QDialog):
         form = QFormLayout()
 
         self.point_combo = QComboBox()
-        point_layers = layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+        point_layers = layer_candidates(geometry=Qgis.GeometryType.Point,
                                         required_fields=['Geologist', 'PhotoID'])
         populate_layer_combo(self.point_combo, point_layers,
                              target_name='1 - FieldNotebook')
@@ -143,7 +121,7 @@ class GeoreferenceLayerDialog(QDialog):
             warn.setStyleSheet("color: red;")
             layout.addWidget(warn)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -198,7 +176,7 @@ def select_geologist_folders(geologist_name_map):
     """Displays a dialog to select folders for each geologist and returns a map of geologist codes to folder paths."""
     app = QApplication.instance() or QApplication(sys.argv)
     dialog = GeologistFolderDialog(geologist_name_map)
-    if dialog.exec() == QDialog.Accepted:
+    if dialog.exec() == QDialog.DialogCode.Accepted:
         return dialog.geologist_folders
     else:
         return {}
@@ -233,13 +211,13 @@ def expand_photo_ids(photo_id_str):
                 expanded_range = [str(i).zfill(4) for i in expanded_range]
                 photo_ids.extend(expanded_range)
             except ValueError as e:
-                QgsMessageLog.logMessage(f"Error parsing range {component}: {e}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Error parsing range {component}: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         else:
             try:
                 single_id = str(int(component)).zfill(4)
                 photo_ids.append(single_id)
             except ValueError as e:
-                QgsMessageLog.logMessage(f"Error parsing single ID {component}: {e}", 'Linear Geoscience', Qgis.Warning)
+                QgsMessageLog.logMessage(f"Error parsing single ID {component}: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     return photo_ids
 
@@ -270,7 +248,7 @@ def match_photos(point_layer, geologist_folders, codes_layer):
     # Check required fields
     field_names = point_layer.fields().names()
     if 'Geologist' not in field_names or 'PhotoID' not in field_names:
-        QgsMessageLog.logMessage("Required fields 'Geologist' or 'PhotoID' are missing in the layer.", 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage("Required fields 'Geologist' or 'PhotoID' are missing in the layer.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return
 
     # Check for optional fields and log their status
@@ -282,7 +260,7 @@ def match_photos(point_layer, geologist_folders, codes_layer):
     QgsMessageLog.logMessage(f"Field status - Type: {'Found' if has_type_field else 'Missing'}, "
           f"Favourite: {'Found' if has_favourite_field else 'Missing'}, "
           f"Comments: {'Found' if has_comments_field else 'Missing'}, "
-          f"SampleID: {'Found' if has_sampleid_field else 'Missing'}", 'Linear Geoscience', Qgis.Info)
+          f"SampleID: {'Found' if has_sampleid_field else 'Missing'}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # Retrieve geologist name map from the selected codes layer
     geologist_name_map = get_geologist_name_map(codes_layer)
@@ -329,8 +307,32 @@ def match_photos(point_layer, geologist_folders, codes_layer):
     ])
     table_layer.updateFields()
 
+    # Scan each geologist's photo folder ONCE up front (this loop previously
+    # re-walked the folder for every feature: O(features x files) disk I/O).
+    folder_photo_dicts = {}
+    for folder in set(geologist_folders.values()):
+        photo_dict = {}
+        for root, dirs, files in os.walk(folder):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    photo_id = file[-8:-4]
+                    # Store the FULL path (root may be a subfolder). Storing only the
+                    # bare filename and rebuilding from photo_folder broke nested layouts:
+                    # the photo matched but the path pointed at the wrong place.
+                    photo_dict[photo_id] = os.path.join(root, file)
+        folder_photo_dicts[folder] = photo_dict
+
+    progress = QProgressDialog("Matching photos to features...", "Cancel",
+                               0, point_layer.featureCount())
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.setMinimumDuration(500)
+
     # Process each feature in point layer by geologist
-    for feature in point_layer.getFeatures():
+    for feat_no, feature in enumerate(point_layer.getFeatures()):
+        progress.setValue(feat_no)
+        if progress.wasCanceled():
+            QgsMessageLog.logMessage("Photo matching cancelled by user.", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            break
         geologist = feature['Geologist']
         geologist_name = geologist_name_map.get(str(geologist).strip(), f"Geologist {geologist}")
         photo_id_str = str(feature['PhotoID'])
@@ -342,27 +344,18 @@ def match_photos(point_layer, geologist_folders, codes_layer):
         sampleid_value = feature['SampleID'] if has_sampleid_field and feature['SampleID'] is not None else ''
 
         if geologist not in geologist_folders:
-            QgsMessageLog.logMessage(f"Skipping feature ID {feature.id()} for geologist {geologist_name} - No folder selected.", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Skipping feature ID {feature.id()} for geologist {geologist_name} - No folder selected.", 'Linear Geoscience', Qgis.MessageLevel.Info)
             continue
 
         if photo_id_str == 'NULL' or not photo_id_str.strip():
             continue  # Skip NULL or empty PhotoID entries
 
-        photo_folder = geologist_folders[geologist]
-        photo_dict = {}
-        for root, dirs, files in os.walk(photo_folder):
-            for file in files:
-                if file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    photo_id = file[-8:-4]
-                    # Store the FULL path (root may be a subfolder). Storing only the
-                    # bare filename and rebuilding from photo_folder broke nested layouts:
-                    # the photo matched but the path pointed at the wrong place.
-                    photo_dict[photo_id] = os.path.join(root, file)
+        photo_dict = folder_photo_dicts[geologist_folders[geologist]]
 
         try:
             expanded_photo_ids = expand_photo_ids(photo_id_str)
         except Exception as e:
-            QgsMessageLog.logMessage(f"Error expanding PhotoID for {geologist_name}:{photo_id_str} - {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Error expanding PhotoID for {geologist_name}:{photo_id_str} - {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             continue
 
         photo_html = ""
@@ -466,10 +459,12 @@ def match_photos(point_layer, geologist_folders, codes_layer):
             ])
             provider.addFeature(photo_feature)
         else:
-            QgsMessageLog.logMessage(f"No matching photo files found for Geologist:PhotoID {geologist_name}:{photo_id_str}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"No matching photo files found for Geologist:PhotoID {geologist_name}:{photo_id_str}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
         # Update summary
         photo_summary[geologist_name] = photo_summary.get(geologist_name, 0) + len(photo_files)
+
+    progress.close()
 
     # Create group in QGIS and add layers
     group = QgsProject.instance().layerTreeRoot().insertGroup(0, 'Georeferenced Photos')
@@ -481,7 +476,7 @@ def match_photos(point_layer, geologist_folders, codes_layer):
     apply_html_map_tip(photo_layer)
     apply_symbol_renderer(photo_layer)
     apply_labels(photo_layer)
-    QgsMessageLog.logMessage("Photo points and Photo Table have been plotted in QGIS with Type, Favourite, and SampleID fields included.", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage("Photo points and Photo Table have been plotted in QGIS with Type, Favourite, and SampleID fields included.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # Show summary popup
     summary_message = "Georeferencing Summary:\n"
@@ -562,7 +557,7 @@ def apply_symbol_renderer(layer):
 
     symbol = QgsSymbol.defaultSymbol(layer.geometryType())
     marker = QgsSimpleMarkerSymbolLayer()
-    marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+    marker.setShape(Qgis.MarkerShape.Circle)
     marker.setSize(4.5)
     marker.setColor(QColor(255, 255, 255))   # white fill
     marker.setStrokeColor(charcoal)          # thin charcoal ring
@@ -574,7 +569,7 @@ def apply_symbol_renderer(layer):
 
     QgsMessageLog.logMessage(
         "Applied clean monochrome point markers (white fill, charcoal ring).",
-        'Linear Geoscience', Qgis.Info)
+        'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
 # Labeling
@@ -586,7 +581,7 @@ def apply_labels(layer):
     # single-photo point is just clutter.
     label_settings.fieldName = 'if("PhotoCount" > 1, to_string("PhotoCount"), \'\')'
     label_settings.isExpression = True
-    label_settings.placement = QgsPalLayerSettings.Placement.OverPoint
+    label_settings.placement = Qgis.LabelPlacement.OverPoint
     label_format = label_settings.format()
     label_format.setSize(7)
     label_format.setColor(QColor('#333333'))   # charcoal, matches the ring
@@ -610,8 +605,8 @@ def apply_labels(layer):
 def main():
     # Let the user pick the layers (pre-matched to the standard names)
     dialog = GeoreferenceLayerDialog()
-    if dialog.exec() != QDialog.Accepted:
-        QgsMessageLog.logMessage("Georeferencing cancelled.", 'Linear Geoscience', Qgis.Info)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        QgsMessageLog.logMessage("Georeferencing cancelled.", 'Linear Geoscience', Qgis.MessageLevel.Info)
         return
 
     point_layer, codes_layer = dialog.get_selected_layers()
@@ -626,39 +621,39 @@ def main():
                             "'Code' and 'Description' fields.")
         return
 
-    QgsMessageLog.logMessage(f"Using point layer '{point_layer.name()}'.", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage(f"Using point layer '{point_layer.name()}'.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # Debugging: List fields in the layer
     field_names = [field.name() for field in point_layer.fields()]
-    QgsMessageLog.logMessage(f"Fields in '{point_layer.name()}': {field_names}", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage(f"Fields in '{point_layer.name()}': {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # Debugging: Check the data source of the layer
     data_source = point_layer.dataProvider().dataSourceUri()
-    QgsMessageLog.logMessage(f"Data source of '{point_layer.name()}': {data_source}", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage(f"Data source of '{point_layer.name()}': {data_source}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
     # Load the geologist name map from the selected codes layer
     geologist_name_map = get_geologist_name_map(codes_layer)
-    QgsMessageLog.logMessage(f"Geologist Name Map: {geologist_name_map}", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage(f"Geologist Name Map: {geologist_name_map}", 'Linear Geoscience', Qgis.MessageLevel.Info)
     if not geologist_name_map:
-        QgsMessageLog.logMessage(f"Could not load geologist names from '{codes_layer.name()}'. Ensure this table is correctly set up.", 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage(f"Could not load geologist names from '{codes_layer.name()}'. Ensure this table is correctly set up.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return
 
     # Filter geologists to only those found in the point layer
     active_geologist_map = get_active_geologists(point_layer, geologist_name_map)
-    QgsMessageLog.logMessage(f"Active Geologist Map: {active_geologist_map}", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage(f"Active Geologist Map: {active_geologist_map}", 'Linear Geoscience', Qgis.MessageLevel.Info)
     if not active_geologist_map:
-        QgsMessageLog.logMessage("No active geologists found in '1 - FieldNotebook' layer.", 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage("No active geologists found in '1 - FieldNotebook' layer.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return
 
     # Display the dialog to select photo folders for each active geologist
     geologist_folders = select_geologist_folders(active_geologist_map)
     if not geologist_folders:
-        QgsMessageLog.logMessage("No photo folders selected for any geologist.", 'Linear Geoscience', Qgis.Warning)
+        QgsMessageLog.logMessage("No photo folders selected for any geologist.", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         return
 
     # Pass the geologist folder map to match_photos
     match_photos(point_layer, geologist_folders, codes_layer)
-    QgsMessageLog.logMessage("Photo points and Photo Table have been plotted in QGIS with Type, Favourite, and SampleID fields included.", 'Linear Geoscience', Qgis.Info)
+    QgsMessageLog.logMessage("Photo points and Photo Table have been plotted in QGIS with Type, Favourite, and SampleID fields included.", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
 
 def run(iface):

@@ -3,9 +3,9 @@
 Dock Widget UI for Map Cleaning Toolkit - Clipping Panel
 Tabbed interface for clipping operations and spline settings
 """
-from qgis.core import QgsMapLayerProxyModel
-from qgis.gui import QgsMapLayerComboBox
-from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
+from qgis.core import Qgis, QgsProject
+from qgis.core import QgsSettings
+from qgis.PyQt.QtCore import QMetaType, pyqtSignal, Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,6 +20,13 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from ...layer_select import (
+        layer_candidates, populate_layer_combo, combo_current_layer)
+except ImportError:
+    from layer_select import (
+        layer_candidates, populate_layer_combo, combo_current_layer)
 
 
 def detect_uuid_field(layer):
@@ -70,7 +77,7 @@ def get_candidate_uuid_fields(layer):
         is_uuid_field = any(pattern in field_name_lower for pattern in uuid_patterns)
 
         # Only include string fields as candidates
-        if field.type() == QVariant.String:
+        if field.type() == QMetaType.Type.QString:
             if is_uuid_field:
                 candidates.insert(0, (f"{field.name()} (detected)", field.name()))
             else:
@@ -99,6 +106,7 @@ class ClipperDockWidget(QDockWidget):
     detectGeometryIssuesClicked = pyqtSignal()  # Emitted when detect geometry issues is clicked
     viewGeometryIssuesClicked = pyqtSignal()  # Emitted when view issues is clicked
     fixGeometryIssuesClicked = pyqtSignal()  # Emitted when fix all is clicked
+    runNativeAlgClicked = pyqtSignal(str)  # Emits a native Processing algorithm id (QGIS 4)
 
     def __init__(self, parent=None):
         super(ClipperDockWidget, self).__init__(parent)
@@ -130,7 +138,7 @@ class ClipperDockWidget(QDockWidget):
 
         # Title
         title_label = QLabel("<b>Map Cleaning Toolkit</b>")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet("font-size: 11pt; padding: 4px; color: #2196F3;")
         main_layout.addWidget(title_label)
 
@@ -141,9 +149,16 @@ class ClipperDockWidget(QDockWidget):
         layer_layout.setSpacing(4)
         layer_layout.setContentsMargins(6, 6, 6, 6)
 
-        self.layer_combo = QgsMapLayerComboBox()
-        self.layer_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        self.layer_combo.layerChanged.connect(self.on_layer_changed)
+        self.layer_combo = QComboBox()
+        populate_layer_combo(
+            self.layer_combo,
+            layer_candidates(geometry=Qgis.GeometryType.Polygon))
+        self.layer_combo.currentIndexChanged.connect(self._on_layer_combo_changed)
+
+        # A plain combo (unlike QgsMapLayerComboBox) does not auto-track the
+        # project, so refresh when layers are added/removed.
+        QgsProject.instance().layersAdded.connect(self.refresh_layers)
+        QgsProject.instance().layersRemoved.connect(self.refresh_layers)
 
         layer_layout.addWidget(self.layer_combo)
         layer_group.setLayout(layer_layout)
@@ -385,7 +400,7 @@ class ClipperDockWidget(QDockWidget):
         actions_layout = QVBoxLayout()
         actions_layout.setSpacing(6)
 
-        self.primary_button_isolated = QPushButton("Lock Cutters & Select Targets")
+        self.primary_button_isolated = QPushButton("Lock Cutters && Select Targets")
         self.primary_button_isolated.setEnabled(False)
         self.primary_button_isolated.setStyleSheet(
             "QPushButton { background-color: #2196F3; color: white; "
@@ -739,9 +754,44 @@ class ClipperDockWidget(QDockWidget):
         actions_group.setLayout(actions_layout)
         layout.addWidget(actions_group)
 
+        # QGIS 4 native cleaning algorithms (shown only when available):
+        # gap filling and small-part removal, run via their Processing
+        # dialogs on the active layer.
+        self._build_native_cleaning_group(layout)
+
         layout.addStretch()
         tab.setLayout(layout)
         return tab
+
+    def _build_native_cleaning_group(self, layout):
+        """Add buttons for native gap-fill / remove-parts algorithms when
+        the running QGIS provides them (QGIS 4.0/4.2+). No-op on 3.x."""
+        from qgis.core import QgsApplication
+        registry = QgsApplication.processingRegistry()
+        available = [
+            ("Fill Gaps Between Polygons", 'native:fixgeometrygap'),
+            ("Remove Small Parts (by area)", 'native:removepartsbyarea'),
+            ("Remove Short Parts (by length)", 'native:removepartsbylength'),
+        ]
+        available = [(label, alg) for label, alg in available
+                     if registry.algorithmById(alg) is not None]
+        if not available:
+            return
+
+        group = QGroupBox("QGIS 4 Cleaning Tools")
+        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        vbox = QVBoxLayout()
+        vbox.setSpacing(6)
+        note = QLabel("Native algorithms from your QGIS version.")
+        note.setStyleSheet("font-size: 9pt; color: #666;")
+        vbox.addWidget(note)
+        for label, alg in available:
+            btn = QPushButton(label)
+            btn.setStyleSheet("padding: 8px; border-radius: 4px;")
+            btn.clicked.connect(lambda _checked, a=alg: self.runNativeAlgClicked.emit(a))
+            vbox.addWidget(btn)
+        group.setLayout(vbox)
+        layout.addWidget(group)
 
     def create_spline_settings_tab(self):
         """Create Spline Settings tab content"""
@@ -906,10 +956,9 @@ class ClipperDockWidget(QDockWidget):
 
     def apply_spline_settings(self):
         """Apply spline settings"""
-        from qgis.PyQt.QtCore import QSettings
         from ..core.utils import SETTINGS_NAME
 
-        settings = QSettings()
+        settings = QgsSettings()
         settings.setValue(f"{SETTINGS_NAME}/tightness", self.tightness_spinbox.value())
         settings.setValue(f"{SETTINGS_NAME}/tolerance", self.tolerance_spinbox.value())
         settings.setValue(f"{SETTINGS_NAME}/max_segments", self.max_segments_spinbox.value())
@@ -926,10 +975,9 @@ class ClipperDockWidget(QDockWidget):
 
     def load_spline_settings(self):
         """Load spline settings from QSettings"""
-        from qgis.PyQt.QtCore import QSettings
         from ..core.utils import SETTINGS_NAME, DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS
 
-        settings = QSettings()
+        settings = QgsSettings()
         tightness = settings.value(f"{SETTINGS_NAME}/tightness", DEFAULT_TIGHTNESS, float)
         tolerance = settings.value(f"{SETTINGS_NAME}/tolerance", DEFAULT_TOLERANCE, float)
         max_segments = settings.value(f"{SETTINGS_NAME}/max_segments", DEFAULT_MAX_SEGMENTS, int)
@@ -948,7 +996,7 @@ class ClipperDockWidget(QDockWidget):
     def reset_to_step_1(self):
         """Reset to step 1"""
         self.isolated_step = 1
-        self.primary_button_isolated.setText("Lock Cutters & Select Targets")
+        self.primary_button_isolated.setText("Lock Cutters && Select Targets")
         self.step_label_isolated.setText("Current Step: <b>1 of 2</b>")
 
     def update_selection_counts(self, cutter_count, target_count):
@@ -1041,7 +1089,36 @@ class ClipperDockWidget(QDockWidget):
 
     def get_current_layer(self):
         """Get currently selected layer"""
-        return self.layer_combo.currentLayer()
+        return combo_current_layer(self.layer_combo)
+
+    def _on_layer_combo_changed(self, _index):
+        """Resolve the selected layer and run the existing change handler."""
+        self.on_layer_changed(self.get_current_layer())
+
+    def refresh_layers(self):
+        """Rebuild the dropdown when project layers change.
+
+        Preserves the current selection where possible. Only re-runs the
+        change handler when the active layer actually changed (e.g. the
+        selected layer was removed), so unrelated project edits don't clear
+        in-progress selections via the toolkit's clear_all().
+        """
+        prev_id = self.layer_combo.currentData()
+        populate_layer_combo(
+            self.layer_combo,
+            layer_candidates(geometry=Qgis.GeometryType.Polygon),
+            select_layer_id=prev_id)
+        if self.layer_combo.currentData() != prev_id:
+            self.on_layer_changed(self.get_current_layer())
+
+    def cleanup(self):
+        """Disconnect project signals before the dock is destroyed."""
+        for sig in (QgsProject.instance().layersAdded,
+                    QgsProject.instance().layersRemoved):
+            try:
+                sig.disconnect(self.refresh_layers)
+            except (RuntimeError, TypeError):
+                pass
 
     def get_mode(self):
         """Get current clipping mode"""

@@ -15,16 +15,27 @@ Interaction model:
   adds to the current selection.
 - Left-click on an empty part of the stereonet axes: clear selection on the
   plotted layers. Clicks outside the axes (legend, margins) are ignored.
+- Right-press and hold: probe - shows the great circle of the plane whose
+  pole sits under the cursor plus a two-line dip/dip-direction and
+  plunge/trend readout in the bottom-left corner of the canvas; dragging
+  moves it, releasing hides it.
+- Right double-click: pin the probed plane/line into the plot (stored as
+  data on the controller, so pins survive replots and appear in exports).
+  Right double-click on a pinned pole removes that pin.
 """
 
 import numpy as np
 from matplotlib.patches import Rectangle
+
+from ..vendor.mplstereonet import stereonet_math
 
 from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsMessageLog, QgsVectorLayer, Qgis
 
 FALLBACK_HIGHLIGHT_COLOR = '#FFD700'  # QGIS's default yellow selection colour
+
+PIN_HIT_RADIUS_PX = 10.0  # right double-click within this of a pinned pole unpins it
 
 
 class StereonetPickHandler:
@@ -53,6 +64,15 @@ class StereonetPickHandler:
         self._drag_additive = False
         self._drag_rect = None
         self._drag_background = None
+        # Right-press-and-hold plane probe state. Artists are created lazily
+        # per render (figure.clear() on re-render destroys them) and marked
+        # animated so normal renders/exports never include them.
+        self._probe_ax = None
+        self._probe_active = False
+        self._probe_background = None
+        self._probe_line = None
+        self._probe_marker = None
+        self._probe_text = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -65,6 +85,7 @@ class StereonetPickHandler:
             canvas.mpl_connect('button_press_event', self.on_button_press),
             canvas.mpl_connect('motion_notify_event', self.on_motion),
             canvas.mpl_connect('button_release_event', self.on_release),
+            canvas.mpl_connect('resize_event', self._on_canvas_resize),
         ]
 
     def disconnect(self):
@@ -80,9 +101,10 @@ class StereonetPickHandler:
         # (_process_click bails out when canvas is None / nothing pending)
         self.set_plot({})
 
-    def set_plot(self, registry):
+    def set_plot(self, registry, ax=None):
         """Called after every render (or clear). The previous figure contents
-        are gone, so just forget old highlight artists rather than remove()."""
+        are gone, so just forget old highlight artists rather than remove().
+        ax is the freshly rendered stereonet axes (None disables the probe)."""
         self._registry = dict(registry) if registry else {}
         self._plot_datasets = {
             dataset_idx
@@ -93,6 +115,7 @@ class StereonetPickHandler:
         self._pending_hits = []
         self._pending_additive = None
         self._reset_drag()
+        self._reset_probe(ax)
 
     def _reset_drag(self):
         """Forget drag state without touching the (possibly dead) figure."""
@@ -104,6 +127,16 @@ class StereonetPickHandler:
         self._drag_rect = None
         self._drag_background = None
         self._drag_origin = None
+
+    def _reset_probe(self, ax):
+        """Forget probe state after a render/clear. Artist references are
+        dropped without remove() - the figure they lived on was cleared."""
+        self._probe_ax = ax
+        self._probe_active = False
+        self._probe_background = None
+        self._probe_line = None
+        self._probe_marker = None
+        self._probe_text = None
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -124,6 +157,17 @@ class StereonetPickHandler:
         self._schedule(mouseevent)
 
     def on_button_press(self, event):
+        if event.button == 3:
+            # A double-click arrives as press/release/press(dblclick)/release;
+            # the first press already started a probe, so hide it before
+            # pinning (the trailing release then no-ops on _probe_active)
+            if getattr(event, 'dblclick', False):
+                if self._probe_active:
+                    self._end_probe()
+                self._toggle_pin(event)
+                return
+            self._start_probe(event)
+            return
         if event.button != 1:
             return
         # Only clicks inside the plot axes count as "empty area" (so clicking
@@ -137,6 +181,9 @@ class StereonetPickHandler:
         self._schedule(event)
 
     def on_motion(self, event):
+        if self._probe_active:
+            self._update_probe(event)
+            return
         if self._drag_origin is None or self.canvas is None:
             return
         if event.x is None or event.y is None:
@@ -159,6 +206,10 @@ class StereonetPickHandler:
             self.canvas.draw_idle()
 
     def on_release(self, event):
+        if event.button == 3:
+            if self._probe_active:
+                self._end_probe()
+            return
         if self._drag_origin is None or event.button != 1:
             return
         x0, y0 = self._drag_origin
@@ -230,6 +281,159 @@ class StereonetPickHandler:
                 self.canvas.draw_idle()
         self._drag_background = None
 
+    # ------------------------------------------------------------------
+    # Plane probe (right-press and hold)
+    # ------------------------------------------------------------------
+
+    def _on_canvas_resize(self, _event):
+        # A resize invalidates the cached blit background pixel-for-pixel
+        if self._probe_active:
+            self._end_probe()
+        self._probe_background = None
+
+    def _event_lonlat(self, event):
+        """Pixel coords -> (lon, lat) radians on the stereonet axes, or None
+        if there is no rendered plot or the cursor is outside the net.
+
+        Deliberately ignores event.xdata/ydata: the hidden polar overlay axes
+        sits on top of the stereonet axes and usually owns event.inaxes, and
+        its data coords are (theta, r), not (lon, lat)."""
+        ax = self._probe_ax
+        if ax is None or event.x is None or event.y is None:
+            return None
+        try:
+            if not ax.patch.contains_point((event.x, event.y)):
+                return None
+            lon, lat = ax.transData.inverted().transform((event.x, event.y))
+        except Exception:
+            return None
+        if not (np.isfinite(lon) and np.isfinite(lat)):
+            return None
+        return float(lon), float(lat)
+
+    def _ensure_probe_artists(self):
+        if self._probe_line is not None:
+            return
+        ax = self._probe_ax
+        self._probe_line, = ax.plot([], [], color='#C0392B', lw=1.6,
+                                    ls='--', animated=True, zorder=15)
+        self._probe_marker, = ax.plot([], [], marker='o', ms=7, ls='none',
+                                      mfc='#C0392B', mec='white', mew=1.0,
+                                      animated=True, zorder=16)
+        # Figure-anchored (bottom-left corner) so it can never clip at any
+        # canvas size, but axes-owned so ax.draw_artist keeps blitting it
+        self._probe_text = ax.text(0.012, 0.015, '',
+                                   transform=ax.figure.transFigure,
+                                   ha='left', va='bottom', fontsize=9,
+                                   linespacing=1.3, animated=True, zorder=16,
+                                   bbox=dict(boxstyle='round,pad=0.3',
+                                             fc='white', ec='#999999',
+                                             alpha=0.9))
+
+    def _start_probe(self, event):
+        if self.canvas is None or self._event_lonlat(event) is None:
+            return
+        self._ensure_probe_artists()
+        try:
+            # Flush any pending draw_idle so the copied background is current
+            self.canvas.draw()
+            self._probe_background = self.canvas.copy_from_bbox(
+                self.canvas.figure.bbox)
+        except Exception:
+            self._probe_background = None  # motion falls back to draw_idle
+        self._probe_active = True
+        self._update_probe(event)
+
+    def _update_probe(self, event):
+        res = self._event_lonlat(event)
+        if res is None:
+            # Dragged off the net / off the canvas: hide until it re-enters
+            self._blit_probe(visible=False)
+            return
+        lon, lat = res
+        plunge, bearing = stereonet_math.geographic2plunge_bearing(lon, lat)
+        strike, dip = stereonet_math.geographic2pole(lon, lat)
+        plunge, bearing = float(plunge[0]), float(bearing[0])
+        strike, dip = float(strike[0]), float(dip[0])
+        dip_dir = (strike + 90.0) % 360.0
+
+        lon_gc, lat_gc = stereonet_math.plane(strike, dip)
+        self._probe_line.set_data(lon_gc.ravel(), lat_gc.ravel())
+        self._probe_marker.set_data([lon], [lat])
+        self._probe_text.set_text(
+            u"Plane {:02.0f}°/{:03.0f}° (dip/dip dir)\n"
+            u"Line {:02.0f}°→{:03.0f}° (plunge/trend)".format(
+                dip, dip_dir, plunge, bearing))
+        self._blit_probe(visible=True)
+
+    def _blit_probe(self, visible):
+        for art in (self._probe_line, self._probe_marker, self._probe_text):
+            if art is not None:
+                art.set_visible(visible)
+        if self.canvas is None:
+            return
+        if self._probe_background is not None:
+            try:
+                self.canvas.restore_region(self._probe_background)
+                if visible:
+                    ax = self._probe_ax
+                    ax.draw_artist(self._probe_line)
+                    ax.draw_artist(self._probe_marker)
+                    ax.draw_artist(self._probe_text)
+                self.canvas.blit(self.canvas.figure.bbox)
+                return
+            except Exception:
+                pass
+        self.canvas.draw_idle()
+
+    def _end_probe(self):
+        self._probe_active = False
+        self._blit_probe(visible=False)
+        self._probe_background = None
+
+    # ------------------------------------------------------------------
+    # Pinned probes (right double-click)
+    # ------------------------------------------------------------------
+
+    def _toggle_pin(self, event):
+        res = self._event_lonlat(event)
+        if res is None:
+            return
+        hit = self._find_pin_near(event)
+        if hit is not None:
+            self.controller.remove_stereonet_pin(hit)
+            self._show_status("Stereonet: pin removed")
+            return
+        lon, lat = res
+        plunge, bearing = stereonet_math.geographic2plunge_bearing(lon, lat)
+        strike, dip = stereonet_math.geographic2pole(lon, lat)
+        strike, dip = float(strike[0]), float(dip[0])
+        dip_dir = (strike + 90.0) % 360.0
+        self.controller.add_stereonet_pin({
+            'dip': dip, 'dip_dir': dip_dir, 'strike': strike,
+            'plunge': float(plunge[0]), 'bearing': float(bearing[0]),
+            'lon': lon, 'lat': lat,
+        })
+        self._show_status(
+            "Stereonet: pinned plane {:02.0f}/{:03.0f} "
+            "(right double-click it to remove)".format(dip, dip_dir))
+
+    def _find_pin_near(self, event):
+        """Index of the pin whose pole is within PIN_HIT_RADIUS_PX of the
+        cursor (nearest wins), else None. Hit-tests the stored pole position
+        regardless of display mode so 'Plane only' pins stay removable."""
+        ax = self._probe_ax
+        pins = getattr(self.controller, 'stereonet_pins', None)
+        if ax is None or not pins:
+            return None
+        try:
+            pts = ax.transData.transform([(p['lon'], p['lat']) for p in pins])
+        except Exception:
+            return None
+        d = np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y)
+        i = int(np.argmin(d))
+        return i if d[i] <= PIN_HIT_RADIUS_PX else None
+
     def _schedule(self, mouseevent):
         additive = self._is_additive(mouseevent)
         if self._pending_additive is None:
@@ -241,7 +445,7 @@ class StereonetPickHandler:
         # Qt's live modifier state is reliable across matplotlib versions;
         # mpl's MouseEvent.key needs canvas keyboard focus on older releases
         try:
-            if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
                 return True
         except Exception:
             pass
@@ -253,7 +457,7 @@ class StereonetPickHandler:
     @staticmethod
     def _is_shift(mouseevent):
         try:
-            if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+            if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
                 return True
         except Exception:
             pass
@@ -308,7 +512,7 @@ class StereonetPickHandler:
         if missing_fid:
             QgsMessageLog.logMessage(
                 f"Stereonet pick: {missing_fid} plotted point(s) have no source feature id",
-                'Linear Geoscience', Qgis.Warning)
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
         if not picks_by_dataset:
             # Points were hit but none could be linked to a feature: leave
@@ -342,7 +546,7 @@ class StereonetPickHandler:
                 QgsMessageLog.logMessage(
                     f"Stereonet pick: layer for dataset {dataset_idx + 1} "
                     "not available, skipping selection",
-                    'Linear Geoscience', Qgis.Warning)
+                    'Linear Geoscience', Qgis.MessageLevel.Warning)
                 continue
             _, merged = layers_with_picks.setdefault(layer.id(), (layer, set()))
             merged.update(fids)
@@ -353,7 +557,7 @@ class StereonetPickHandler:
         try:
             for layer, fids in layers_with_picks.values():
                 if additive:
-                    layer.selectByIds(list(fids), QgsVectorLayer.AddToSelection)
+                    layer.selectByIds(list(fids), Qgis.SelectBehavior.AddToSelection)
                 else:
                     layer.selectByIds(list(fids))
             if not additive:

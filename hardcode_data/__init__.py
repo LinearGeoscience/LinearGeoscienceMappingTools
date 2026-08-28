@@ -5,5 +5,5 @@ filling, data-quality reporting and UUID checking tool."""
 def run(iface):
     """Entry point called from mainplugin.py."""
     from .dialog import HardcodeDataDialog
-    dialog = HardcodeDataDialog(iface.mainWindow())
+    dialog = HardcodeDataDialog(iface, parent=iface.mainWindow())
     dialog.exec()

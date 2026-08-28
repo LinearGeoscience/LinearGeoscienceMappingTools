@@ -42,9 +42,9 @@ except ImportError:
 def _create_status_pixmap(color_hex, check=False, size=16):
     """Create a small coloured circle or checkmark pixmap."""
     pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     if check:
         pen_w = max(2, size // 8)
         painter.setPen(QPen(QColor(color_hex), pen_w))
@@ -52,7 +52,7 @@ def _create_status_pixmap(color_hex, check=False, size=16):
         painter.drawLine(size * 2 // 5, size * 3 // 4, size * 4 // 5, size // 4)
     else:
         painter.setBrush(QBrush(QColor(color_hex)))
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
         m = size // 5
         painter.drawEllipse(m, m, size - 2 * m, size - 2 * m)
     painter.end()
@@ -81,7 +81,7 @@ class CollapsibleSection(QWidget):
 
         # Header
         self._header = QWidget()
-        self._header.setCursor(QCursor(Qt.PointingHandCursor))
+        self._header.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         h = QHBoxLayout(self._header)
         pad = s.dimension(10)
         h.setContentsMargins(pad, s.dimension(8), pad, s.dimension(8))
@@ -203,7 +203,7 @@ class DataPreviewTable(QWidget):
         hdr.addStretch()
 
         self._toggle_btn = QPushButton("Show Preview")
-        self._toggle_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._toggle_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._toggle_btn.setStyleSheet(
             f"color: {theme.PRIMARY}; border: none; background: transparent; "
             f"font-size: {s.font_size(11)}px; font-family: {theme.FONT_FAMILY}; "
@@ -215,8 +215,8 @@ class DataPreviewTable(QWidget):
         lay.addLayout(hdr)
 
         self._table = QTableWidget()
-        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._table.setSelectionMode(QTableWidget.NoSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._table.setAlternatingRowColors(True)
         self._table.setMaximumHeight(s.dimension(150))
         self._table.horizontalHeader().setStretchLastSection(True)
@@ -288,8 +288,8 @@ class StepButton(QPushButton):
 
         s = get_scale_manager()
         self.setCheckable(True)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.setMinimumHeight(s.dimension(38))
         self.setStyleSheet(theme.nav_button_style())
 
@@ -404,12 +404,12 @@ class LayerCheckList(QWidget):
         btn_row.setSpacing(s.dimension(6))
 
         btn_all = QPushButton("Select All")
-        btn_all.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_all.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_all.setStyleSheet(theme.action_button_style(primary=False))
         btn_all.clicked.connect(self.select_all)
 
         btn_none = QPushButton("Select None")
-        btn_none.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_none.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_none.setStyleSheet(theme.action_button_style(primary=False))
         btn_none.clicked.connect(self.select_none)
 
@@ -429,10 +429,10 @@ class LayerCheckList(QWidget):
         self._list.clear()
         for layer in layers:
             item = QListWidgetItem(layer_display_name(layer))
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
-                Qt.Unchecked if layer.id() in unchecked else Qt.Checked)
-            item.setData(Qt.UserRole, layer.id())
+                Qt.CheckState.Unchecked if layer.id() in unchecked else Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, layer.id())
             self._list.addItem(item)
         self._list.blockSignals(False)
         self.checks_changed.emit()
@@ -442,8 +442,8 @@ class LayerCheckList(QWidget):
         ids = []
         for i in range(self._list.count()):
             item = self._list.item(i)
-            if item.checkState() == Qt.Checked:
-                ids.append(item.data(Qt.UserRole))
+            if item.checkState() == Qt.CheckState.Checked:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
         return ids
 
     def unchecked_layer_ids(self):
@@ -451,17 +451,17 @@ class LayerCheckList(QWidget):
         ids = []
         for i in range(self._list.count()):
             item = self._list.item(i)
-            if item.checkState() != Qt.Checked:
-                ids.append(item.data(Qt.UserRole))
+            if item.checkState() != Qt.CheckState.Checked:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
         return ids
 
     def select_all(self):
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.Checked)
+            self._list.item(i).setCheckState(Qt.CheckState.Checked)
 
     def select_none(self):
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.Unchecked)
+            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
 
 
 # ── FieldGroupManager ────────────────────────────────────────────
@@ -519,14 +519,14 @@ class _FieldPickerDialog(QDialog):
             label = (f"{field} (empty)" if field in self._empty_fields
                      else field)
             item = QListWidgetItem(label)
-            item.setData(Qt.UserRole, field)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if field in already_checked else Qt.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, field)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if field in already_checked else Qt.CheckState.Unchecked)
             self._list.addItem(item)
         layout.addWidget(self._list, 1)
         self._apply_empty_filter()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.setStyleSheet(theme.action_button_style(primary=False))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -536,18 +536,18 @@ class _FieldPickerDialog(QDialog):
         hide = bool(self._hide_empty and self._hide_empty.isChecked())
         for i in range(self._list.count()):
             item = self._list.item(i)
-            field = item.data(Qt.UserRole)
+            field = item.data(Qt.ItemDataRole.UserRole)
             is_empty = field in self._empty_fields
             keep = (not is_empty or not hide
-                    or item.checkState() == Qt.Checked)
+                    or item.checkState() == Qt.CheckState.Checked)
             item.setHidden(not keep)
 
     def checked_fields(self):
         result = []
         for i in range(self._list.count()):
             item = self._list.item(i)
-            if item.checkState() == Qt.Checked:
-                result.append(item.data(Qt.UserRole))
+            if item.checkState() == Qt.CheckState.Checked:
+                result.append(item.data(Qt.ItemDataRole.UserRole))
         return result
 
 
@@ -598,7 +598,7 @@ class FieldGroupManager(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(s.dimension(6))
         btn_add = QPushButton("+ Add Group")
-        btn_add.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_add.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_add.setStyleSheet(theme.action_button_style(primary=False))
         btn_add.clicked.connect(self._add_group)
         btn_row.addWidget(btn_add)
@@ -681,7 +681,7 @@ class FieldGroupManager(QWidget):
         dlg = _FieldPickerDialog(available, group['fields'],
                                  populated_fields=self._populated_fields,
                                  parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             group['fields'] = dlg.checked_fields()
             self._rebuild_group_widgets()
             self.groups_changed.emit()
@@ -705,11 +705,11 @@ class FieldGroupManager(QWidget):
     @staticmethod
     def _lookup_tables():
         """Non-spatial vector layers in the project (lookup tables)."""
-        from qgis.core import QgsProject, QgsMapLayerType
+        from qgis.core import QgsProject, Qgis
         tables = []
         for lyr in sorted(QgsProject.instance().mapLayers().values(),
                           key=lambda l: l.name()):
-            if (lyr.type() == QgsMapLayerType.VectorLayer
+            if (lyr.type() == Qgis.LayerType.Vector
                     and not lyr.isSpatial()):
                 tables.append(lyr)
         return tables
@@ -785,11 +785,11 @@ class FieldGroupManager(QWidget):
             if gi >= 0:
                 grp_combo.setCurrentIndex(gi)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         lay.addWidget(buttons)
-        if dlg.exec() == QDialog.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             lookup['key_column'] = key_combo.currentText()
             lookup['value_column'] = val_combo.currentText()
             lookup['group_column'] = grp_combo.currentData()
@@ -844,13 +844,13 @@ class FieldGroupManager(QWidget):
             top.addWidget(name_edit, 1)
 
             btn_edit = QPushButton("Edit Fields")
-            btn_edit.setCursor(QCursor(Qt.PointingHandCursor))
+            btn_edit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn_edit.setStyleSheet(theme.action_button_style(primary=False))
             btn_edit.clicked.connect(lambda checked, ix=idx: self._edit_fields(ix))
             top.addWidget(btn_edit)
 
             btn_remove = QPushButton("Remove")
-            btn_remove.setCursor(QCursor(Qt.PointingHandCursor))
+            btn_remove.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn_remove.setStyleSheet(theme.action_button_style(primary=False))
             btn_remove.clicked.connect(lambda checked, ix=idx: self._remove_group(ix))
             top.addWidget(btn_remove)
@@ -944,7 +944,7 @@ class FieldGroupManager(QWidget):
             disp_row.addWidget(lk_combo, 1)
 
             btn_cols = QPushButton("Columns…")
-            btn_cols.setCursor(QCursor(Qt.PointingHandCursor))
+            btn_cols.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn_cols.setStyleSheet(theme.action_button_style(primary=False))
             btn_cols.clicked.connect(
                 lambda checked, ix=idx: self._edit_lookup_columns(ix))

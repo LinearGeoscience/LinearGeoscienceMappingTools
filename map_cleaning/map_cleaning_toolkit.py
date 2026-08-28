@@ -22,10 +22,11 @@
 """
 import os.path
 
-from qgis.PyQt.QtCore import QSettings, Qt
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QProgressDialog, QDialog
-from qgis.core import QgsApplication, QgsWkbTypes, QgsMapLayerType, QgsVectorLayer, QgsMessageLog, Qgis
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon, QAction
+from qgis.PyQt.QtWidgets import QMessageBox, QProgressDialog, QDialog
+from qgis.core import QgsApplication, QgsVectorLayer, QgsMessageLog, Qgis
+from qgis.core import QgsSettings
 
 # Import clipping components
 from .clipping.clipper_dockwidget import ClipperDockWidget
@@ -106,7 +107,7 @@ class MapCleaningToolkit(object):
 
         # Create dock widget (starts hidden)
         self.dockwidget = ClipperDockWidget()
-        self.iface.addDockWidget(Qt.RightDockWidgetArea, self.dockwidget)
+        self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dockwidget)
         self.dockwidget.setVisible(False)
 
         # Create managers for clipping
@@ -132,6 +133,7 @@ class MapCleaningToolkit(object):
         self.dockwidget.detectGeometryIssuesClicked.connect(self.detect_geometry_issues_from_tab)
         self.dockwidget.viewGeometryIssuesClicked.connect(self.view_geometry_issues)
         self.dockwidget.fixGeometryIssuesClicked.connect(self.fix_geometry_issues)
+        self.dockwidget.runNativeAlgClicked.connect(self.run_native_algorithm)
 
         # Load spline settings into dock widget
         self.dockwidget.load_spline_settings()
@@ -297,6 +299,10 @@ class MapCleaningToolkit(object):
 
         # Remove dock widget
         if self.dockwidget:
+            try:
+                self.dockwidget.cleanup()
+            except (RuntimeError, TypeError):
+                pass
             self.iface.removeDockWidget(self.dockwidget)
             self.dockwidget.deleteLater()
             self.dockwidget = None
@@ -372,9 +378,9 @@ class MapCleaningToolkit(object):
 
         # Enable reshape and add feature tools only for polygon/line layers in edit mode
         enable_tools = False
-        if layer and layer.type() == QgsMapLayerType.VectorLayer:
+        if layer and layer.type() == Qgis.LayerType.Vector:
             try:
-                if layer.geometryType() in [QgsWkbTypes.PolygonGeometry, QgsWkbTypes.LineGeometry]:
+                if layer.geometryType() in [Qgis.GeometryType.Polygon, Qgis.GeometryType.Line]:
                     enable_tools = layer.isEditable()
 
                     # Connect to editing signals
@@ -398,6 +404,26 @@ class MapCleaningToolkit(object):
 
         # Switch to smart clip tab (index 2)
         self.dockwidget.tab_widget.setCurrentIndex(2)
+
+    def run_native_algorithm(self, alg_id):
+        """Launch a native QGIS Processing algorithm dialog (QGIS 4 cleaning
+        tools) pre-filled with the active layer. Runs in the background with
+        its own progress via the Processing framework."""
+        try:
+            import processing
+        except ImportError:
+            QMessageBox.warning(
+                self.iface.mainWindow(), 'Processing unavailable',
+                'The Processing framework is not available.')
+            return
+        layer = self.iface.activeLayer()
+        params = {'INPUT': layer} if layer is not None else {}
+        try:
+            processing.execAlgorithmDialog(alg_id, params)
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Failed to open algorithm {alg_id}: {e}",
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def execute_geometry_fixer(self):
         """Execute geometry fixer directly from toolbar button"""
@@ -424,7 +450,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Checker')
 
         # Create engine with delete_zero_area enabled
@@ -448,10 +474,10 @@ class MapCleaningToolkit(object):
         issues_dialog = GeometryIssuesDialog(layer, issues, self.iface, self.iface.mainWindow())
 
         # Show dialog and wait for user decision
-        result = issues_dialog.exec_()
+        result = issues_dialog.exec()
 
         # If user clicked "Fix All", proceed with fixing
-        if result == QDialog.Accepted:
+        if result == QDialog.DialogCode.Accepted:
             # Create progress dialog for fixing
             progress = QProgressDialog(
                 'Fixing geometries...',
@@ -460,7 +486,7 @@ class MapCleaningToolkit(object):
                 total_features,
                 self.iface.mainWindow()
             )
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setWindowTitle('Geometry Fixer')
 
             # Run the fixing engine
@@ -472,7 +498,7 @@ class MapCleaningToolkit(object):
             self.show_geometry_fixer_results(layer, fix_results)
         else:
             # User cancelled - just log it
-            self.log_geometry_fixer("Geometry fixing cancelled by user", Qgis.Info)
+            self.log_geometry_fixer("Geometry fixing cancelled by user", Qgis.MessageLevel.Info)
 
     def validate_layer_for_geometry_fixer(self, layer):
         """
@@ -489,12 +515,12 @@ class MapCleaningToolkit(object):
             return False, "Layer is not in editing mode.\n\nPlease start editing first (Toggle Editing button)."
 
         geom_type = layer.geometryType()
-        if geom_type != QgsWkbTypes.PolygonGeometry:
+        if geom_type != Qgis.GeometryType.Polygon:
             return False, "This tool only works with polygon layers"
 
         return True, None
 
-    def log_geometry_fixer(self, message, level=Qgis.Info):
+    def log_geometry_fixer(self, message, level=Qgis.MessageLevel.Info):
         """Log message to QGIS message log for geometry fixer."""
         QgsMessageLog.logMessage(message, 'Map Cleaning Toolkit - Geometry Fixer', level)
 
@@ -530,15 +556,15 @@ class MapCleaningToolkit(object):
             f'Use Ctrl+Z to undo if needed.'
         )
 
-        msg_type = QMessageBox.Information if results['failed'] == 0 else QMessageBox.Warning
+        msg_type = QMessageBox.Icon.Information if results['failed'] == 0 else QMessageBox.Icon.Warning
 
         QMessageBox(
             msg_type,
             'Geometry Fixing Results',
             message,
-            QMessageBox.Ok,
+            QMessageBox.StandardButton.Ok,
             self.iface.mainWindow()
-        ).exec_()
+        ).exec()
 
         self.log_geometry_fixer(
             f"Completed: {results['fixed']} fixed, {results.get('recovered', 0)} recovered, "
@@ -572,7 +598,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Checker')
 
         # Create engine with delete_zero_area enabled and store for reuse in fix step
@@ -626,10 +652,10 @@ class MapCleaningToolkit(object):
         )
 
         # Show dialog (user can inspect and zoom)
-        result = issues_dialog.exec_()
+        result = issues_dialog.exec()
 
         # If user clicked "Fix All", proceed with fixing
-        if result == QDialog.Accepted:
+        if result == QDialog.DialogCode.Accepted:
             self.fix_geometry_issues()
 
     def fix_geometry_issues(self):
@@ -652,11 +678,11 @@ class MapCleaningToolkit(object):
             f'This will fix all {len(self.geometry_issues)} detected issues in layer "{layer.name()}".\n\n'
             f'The layer will remain in edit mode so you can undo if needed.\n\n'
             f'Proceed?',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Create progress dialog for fixing
@@ -667,7 +693,7 @@ class MapCleaningToolkit(object):
             total_features,
             self.iface.mainWindow()
         )
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setWindowTitle('Geometry Fixer')
 
         # Reuse stored engine if available and layer matches, otherwise create new
@@ -1093,7 +1119,7 @@ class MapCleaningToolkit(object):
         if not self.dockwidget:
             return
 
-        settings = QSettings()
+        settings = QgsSettings()
         settings.setValue(f"{self.settings_key}/visible", self.dockwidget.isVisible())
         settings.setValue(f"{self.settings_key}/geometry", self.dockwidget.saveGeometry())
 
@@ -1105,7 +1131,7 @@ class MapCleaningToolkit(object):
         if not self.dockwidget:
             return
 
-        settings = QSettings()
+        settings = QgsSettings()
 
         geometry = settings.value(f"{self.settings_key}/geometry")
         if geometry:

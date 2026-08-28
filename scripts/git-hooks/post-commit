@@ -1,0 +1,2 @@
+#!/bin/sh
+"$(git rev-parse --show-toplevel)/scripts/git-hooks/write-build-info.sh"

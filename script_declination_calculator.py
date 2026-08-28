@@ -5,12 +5,13 @@ Calculates magnetic declination for points using the World Magnetic Model (WMM)
 
 from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
-                                  QMessageBox, QHeaderView, QGroupBox, QAction,
+                                  QMessageBox, QHeaderView, QGroupBox,
                                   QCheckBox, QDateEdit, QDoubleSpinBox, QRadioButton,
                                   QButtonGroup, QProgressDialog, QTextEdit)
-from qgis.PyQt.QtCore import Qt, QDate, QVariant
-from qgis.PyQt.QtGui import QIcon
-from qgis.core import (QgsProject, QgsVectorLayer, QgsField, edit,
+from qgis.PyQt.QtCore import QMetaType, Qt, QDate
+from qgis.PyQt.QtGui import QIcon, QAction
+from qgis.core import (
+    Qgis,QgsProject, QgsVectorLayer, QgsField, edit,
                        QgsCoordinateReferenceSystem, QgsCoordinateTransform,
                        QgsPointXY, QgsWkbTypes)
 from qgis.utils import iface
@@ -193,7 +194,7 @@ class CalculateDeclinationDialog(QDialog):
         self.preview_table.setHorizontalHeaderLabels([
             "Feature ID", "Longitude", "Latitude", "Elevation (m)", "Date", "Declination (°)"
         ])
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.preview_table)
 
         # Buttons
@@ -306,9 +307,9 @@ class CalculateDeclinationDialog(QDialog):
             reply = QMessageBox.question(
                 self, "Field Exists",
                 f"Field '{field_name}' already exists. Use it anyway?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 # Select the existing field
                 index = self.declination_field_combo.findText(field_name)
                 if index >= 0:
@@ -319,7 +320,7 @@ class CalculateDeclinationDialog(QDialog):
 
         # Create new field
         with edit(self.layer):
-            field = QgsField(field_name, QVariant.Double)
+            field = QgsField(field_name, QMetaType.Type.Double)
             self.layer.addAttribute(field)
 
         # Refresh the combo box
@@ -343,7 +344,7 @@ class CalculateDeclinationDialog(QDialog):
                 return None, None
 
             # Handle different geometry types
-            if geom.type() == QgsWkbTypes.PointGeometry:
+            if geom.type() == Qgis.GeometryType.Point:
                 if geom.isMultipart():
                     # For multipart geometries, use the first point
                     points = geom.asMultiPoint()
@@ -615,14 +616,14 @@ class CalculateDeclinationDialog(QDialog):
         # Confirm with user
         msg = f"This will calculate magnetic declination for {len(features)} features.\n\nContinue?"
         reply = QMessageBox.question(self, "Confirm Calculation", msg,
-                                    QMessageBox.Yes | QMessageBox.No)
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Create progress dialog
         progress = QProgressDialog("Calculating declination...", "Cancel", 0, len(features), self)
-        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
 
         # Get field index

@@ -15,7 +15,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsWkbTypes, QgsFeature,
+    QgsProject, QgsVectorLayer, QgsFeature,
     QgsMessageLog, Qgis,
 )
 
@@ -39,7 +39,7 @@ except ImportError:
     from layer_select import layer_display_name
 
 
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
 
 
@@ -65,7 +65,7 @@ def _get_non_spatial_layers():
     result = []
     for layer_id, layer in project.mapLayers().items():
         if (isinstance(layer, QgsVectorLayer)
-                and layer.geometryType() == QgsWkbTypes.NullGeometry):
+                and layer.geometryType() == Qgis.GeometryType.Null):
             result.append(layer)
     result.sort(key=lambda l: l.name())
     return result
@@ -98,7 +98,7 @@ class UpdateTablesPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -365,9 +365,27 @@ class UpdateTablesPage(QWidget):
             else:
                 key_col = target_cols[0]  # Use first column as dedup key
                 if key_col in self._incoming_df.columns:
-                    existing_keys = set(self._current_df[key_col].astype(str))
+                    # Normalise both sides the same way so '1', ' 1' and '01'
+                    # compare consistently and rows aren't silently dropped or
+                    # duplicated by stray whitespace.
+                    def _norm_key(series):
+                        return series.astype(str).str.strip()
+
+                    existing_keys = set(_norm_key(self._current_df[key_col]))
+                    incoming_keys = _norm_key(self._incoming_df[key_col])
+
+                    # Surface duplicate keys within the incoming CSV itself —
+                    # otherwise the later concat keeps them all with no warning.
+                    internal_dups = incoming_keys[incoming_keys.duplicated()].unique()
+                    if len(internal_dups) > 0:
+                        self.log_message.emit(
+                            f"⚠ CSV has {len(internal_dups)} duplicate key(s) "
+                            f"in '{key_col}': "
+                            f"{', '.join(map(str, internal_dups[:10]))}"
+                            + (" …" if len(internal_dups) > 10 else ""))
+
                     new_rows = self._incoming_df[
-                        ~self._incoming_df[key_col].astype(str).isin(existing_keys)
+                        ~incoming_keys.isin(existing_keys)
                     ]
                     if len(new_rows) > 0:
                         new_aligned = new_rows.reindex(columns=target_cols)
@@ -398,9 +416,9 @@ class UpdateTablesPage(QWidget):
             self, "Confirm Changes",
             f"Apply changes to '{self._target_layer.name()}'?\n\n"
             f"This will write {len(self._preview_df)} rows to the table.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.status_changed.emit("in_progress")
@@ -449,7 +467,7 @@ class UpdateTablesPage(QWidget):
                 layer.rollBack()
                 err_msg = "; ".join(errors) if errors else "Unknown error"
                 self.log_message.emit(f"Commit failed: {err_msg}")
-                _log(f"Commit failed for '{layer.name()}': {err_msg}", Qgis.Critical)
+                _log(f"Commit failed for '{layer.name()}': {err_msg}", Qgis.MessageLevel.Critical)
                 QMessageBox.warning(self, "Error",
                                     f"Failed to commit changes:\n{err_msg}")
                 self.status_changed.emit("not_started")
@@ -458,6 +476,6 @@ class UpdateTablesPage(QWidget):
             if layer.isEditable():
                 layer.rollBack()
             self.log_message.emit(f"Error: {e}")
-            _log(f"Error updating '{layer.name()}': {e}", Qgis.Critical)
+            _log(f"Error updating '{layer.name()}': {e}", Qgis.MessageLevel.Critical)
             QMessageBox.warning(self, "Error", f"An error occurred:\n{e}")
             self.status_changed.emit("not_started")

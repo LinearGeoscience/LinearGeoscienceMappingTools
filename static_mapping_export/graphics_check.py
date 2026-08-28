@@ -223,7 +223,7 @@ def _check_label_settings(settings, findings, seen):
     if not background.enabled():
         return
     shape = background.type()
-    if shape == QgsTextBackgroundSettings.ShapeSVG:
+    if shape == QgsTextBackgroundSettings.ShapeType.ShapeSVG:
         reason = _classify_svg_path(background.svgFile())
         if reason:
             _add_finding(findings, seen, 'svg', 'labeling background',

@@ -49,15 +49,15 @@ class ZoomableImageView(QGraphicsView):
         self._fit_mode = True  # auto-fit until user manually zooms
 
         # Configure view
-        self.setRenderHint(QPainter.Antialiasing)
-        self.setRenderHint(QPainter.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setBackgroundBrush(Qt.black)
-        self.setFrameShape(QFrame.NoFrame)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setBackgroundBrush(Qt.GlobalColor.black)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         """Display a pixmap in the view."""
@@ -85,7 +85,7 @@ class ZoomableImageView(QGraphicsView):
         """Fit the image in the view, maintaining aspect ratio."""
         if self._pixmap_item:
             self._fit_mode = True
-            self.fitInView(self._pixmap_item, Qt.KeepAspectRatio)
+            self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
             self.zoom_changed.emit()
 
     def actual_size(self) -> None:
@@ -120,7 +120,7 @@ class ZoomableImageView(QGraphicsView):
 
     def mouseDoubleClickEvent(self, event):
         """Double-click toggles fullscreen (handled by the viewer)."""
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.double_clicked.emit()
         super().mouseDoubleClickEvent(event)
 
@@ -128,7 +128,7 @@ class ZoomableImageView(QGraphicsView):
         """Bug fix #13: re-fit when in fit-mode on window resize."""
         super().resizeEvent(event)
         if self._fit_mode and self._pixmap_item:
-            self.fitInView(self._pixmap_item, Qt.KeepAspectRatio)
+            self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
             self.zoom_changed.emit()
 
 
@@ -142,7 +142,7 @@ class PhotoViewer(QWidget):
     closed = pyqtSignal()
 
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent, Qt.WindowType.Window)
         self.current_photo = None
         self.current_index = -1
         self.total_photos = 0
@@ -259,7 +259,7 @@ class PhotoViewer(QWidget):
         self.zoom_label = QLabel("")
         self.zoom_label.setStyleSheet("color: white;")
         self.zoom_label.setMinimumWidth(scale.dimension(45))
-        self.zoom_label.setAlignment(Qt.AlignCenter)
+        self.zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Fullscreen toggle
         self.fullscreen_btn = QPushButton()
@@ -279,7 +279,7 @@ class PhotoViewer(QWidget):
         # Photo counter
         self.photo_counter = QLabel("Photo 0 of 0")
         self.photo_counter.setStyleSheet("color: white;")
-        self.photo_counter.setAlignment(Qt.AlignCenter)
+        self.photo_counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # File name label
         self.filename_label = QLabel("")
@@ -367,7 +367,7 @@ class PhotoViewer(QWidget):
         self.image_view.show_message(f"Could not load image:\n{os.path.basename(path)}")
         QgsMessageLog.logMessage(
             f"Photo panel: failed to load '{path}': {error}",
-            'Linear Geoscience', Qgis.Warning
+            'Linear Geoscience', Qgis.MessageLevel.Warning
         )
 
     def _update_zoom_ui(self) -> None:
@@ -397,30 +397,30 @@ class PhotoViewer(QWidget):
         key = event.key()
         mod = event.modifiers()
 
-        if key == Qt.Key_Left and mod & Qt.ControlModifier:
+        if key == Qt.Key.Key_Left and mod & Qt.KeyboardModifier.ControlModifier:
             self._rotate_left()
-        elif key == Qt.Key_Right and mod & Qt.ControlModifier:
+        elif key == Qt.Key.Key_Right and mod & Qt.KeyboardModifier.ControlModifier:
             self._rotate_right()
-        elif key == Qt.Key_Left:
+        elif key == Qt.Key.Key_Left:
             self.prev_requested.emit()
-        elif key == Qt.Key_Right:
+        elif key == Qt.Key.Key_Right:
             self.next_requested.emit()
-        elif key == Qt.Key_F11:
+        elif key == Qt.Key.Key_F11:
             self._toggle_fullscreen()
-        elif key == Qt.Key_Escape:
+        elif key == Qt.Key.Key_Escape:
             if self.isFullScreen():
                 self._toggle_fullscreen()
             else:
                 self.close()
-        elif key == Qt.Key_Return or key == Qt.Key_Enter:
+        elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
             self._open_in_native_viewer()
-        elif key in (Qt.Key_Plus, Qt.Key_Equal):
+        elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
             self.image_view.zoom_in()
-        elif key == Qt.Key_Minus:
+        elif key == Qt.Key.Key_Minus:
             self.image_view.zoom_out()
-        elif key == Qt.Key_0:
+        elif key == Qt.Key.Key_0:
             self.image_view.fit_in_view()
-        elif key == Qt.Key_1:
+        elif key == Qt.Key.Key_1:
             self.image_view.actual_size()
         else:
             super().keyPressEvent(event)
@@ -451,7 +451,7 @@ class PhotoViewer(QWidget):
         if self.current_rotation != 0:
             transform = QTransform()
             transform.rotate(self.current_rotation)
-            pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+            pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
 
         self.image_view.set_pixmap(pixmap)
 
@@ -464,5 +464,5 @@ class PhotoViewer(QWidget):
                 QgsMessageLog.logMessage(
                     f"Photo panel: could not open '{self.current_photo}' "
                     f"in system viewer: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )

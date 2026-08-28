@@ -4,6 +4,7 @@ Preview System for Polygon Clipper
 Handles preview layer creation and confirmation dialog
 """
 from qgis.core import (
+    Qgis,
     QgsCategorizedSymbolRenderer,
     QgsFeature,
     QgsField,
@@ -11,9 +12,8 @@ from qgis.core import (
     QgsProject,
     QgsRendererCategory,
     QgsVectorLayer,
-    QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import pyqtSignal, Qt, QVariant
+from qgis.PyQt.QtCore import QMetaType, pyqtSignal, Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -57,7 +57,7 @@ class PreviewDialog(QDialog):
 
         # Make dialog non-modal and stay on top to allow map interaction (zoom/pan) during preview inspection
         self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
 
@@ -67,8 +67,8 @@ class PreviewDialog(QDialog):
 
         # Separator
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
 
         # Operation details
@@ -194,7 +194,7 @@ class PreviewManager:
         source_layer.removeSelection()
 
         # Determine geometry type
-        if source_layer.wkbType() == QgsWkbTypes.MultiPolygon:
+        if source_layer.wkbType() == Qgis.WkbType.MultiPolygon:
             geom_type = "MultiPolygon"
         else:
             geom_type = "Polygon"
@@ -214,7 +214,7 @@ class PreviewManager:
         if style_mode in ('overlap', 'sliver'):
             # Add _type field if not already present from overlap/sliver features
             if '_type' not in [f.name() for f in source_fields]:
-                provider.addAttributes([QgsField('_type', QVariant.String)])
+                provider.addAttributes([QgsField('_type', QMetaType.Type.QString)])
         self.preview_layer.updateFields()
 
         # Add clipped features

@@ -193,7 +193,7 @@ class DeclinationAdjusterDialog(QDialog):
         self.preview_table = QTableWidget()
         self.preview_table.setColumnCount(3)
         self.preview_table.setHorizontalHeaderLabels(["Feature ID", "Original Value", "New Value"])
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.preview_table)
 
         # Buttons
@@ -476,9 +476,9 @@ class DeclinationAdjusterDialog(QDialog):
         msg += "\n\nContinue?"
 
         reply = QMessageBox.question(self, "Confirm Changes", msg,
-                                     QMessageBox.Yes | QMessageBox.No)
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Apply changes

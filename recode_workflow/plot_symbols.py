@@ -14,7 +14,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import pyqtSignal
 from qgis.core import (
     QgsProject, QgsFeature, QgsGeometry, QgsPointXY,
-    QgsRectangle, QgsWkbTypes, QgsMessageLog, Qgis,
+    QgsRectangle, QgsMessageLog, Qgis,
     QgsCoordinateTransform,
 )
 
@@ -42,20 +42,18 @@ except ImportError:
 
 # ── Module-level helpers (moved verbatim from script_plotsymbols.py) ──
 
-_plotted_features = {}  # {layer_id: [fid, ...]}
 
-
-def _log(msg, level=Qgis.Info):
+def _log(msg, level=Qgis.MessageLevel.Info):
     QgsMessageLog.logMessage(msg, LOG_TAG, level)
 
 
 def get_unique_categories(table_layer, key_field):
     """Gather unique non-null values from *key_field* in the table layer."""
     if table_layer is None:
-        _log("Code table not found in project", Qgis.Warning)
+        _log("Code table not found in project", Qgis.MessageLevel.Warning)
         return []
     if key_field not in table_layer.fields().names():
-        _log(f"Field '{key_field}' not found in table '{table_layer.name()}'", Qgis.Warning)
+        _log(f"Field '{key_field}' not found in table '{table_layer.name()}'", Qgis.MessageLevel.Warning)
         return []
     categories = set()
     for feat in table_layer.getFeatures():
@@ -72,9 +70,9 @@ def create_grid_features(layer, origin_x, origin_y, categories, code_field,
     features = []
     x, y = origin_x, origin_y
     for cat in categories:
-        if geom_type == QgsWkbTypes.PointGeometry:
+        if geom_type == Qgis.GeometryType.Point:
             geom = QgsGeometry.fromPointXY(QgsPointXY(x, y))
-        elif geom_type == QgsWkbTypes.LineGeometry:
+        elif geom_type == Qgis.GeometryType.Line:
             geom = QgsGeometry.fromPolylineXY([
                 QgsPointXY(x, y),
                 QgsPointXY(x + feature_size, y),
@@ -112,6 +110,11 @@ class PlotSymbolsPage(QWidget):
         super().__init__(parent)
         self.iface = iface
         self.scale = get_scale_manager()
+        # Plotted-feature tracking is per-wizard-session instance state. A
+        # module-level dict used to persist across open/close and could point at
+        # FIDs that had been reused by other edits, so "Remove previously
+        # plotted" risked deleting unrelated features.
+        self._plotted_features = {}  # {layer_id: [fid, ...]}
         self._init_ui()
         self._populate_default_mappings()
 
@@ -123,7 +126,7 @@ class PlotSymbolsPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -160,10 +163,10 @@ class PlotSymbolsPage(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["Layer", "Code Table", "Key Field", "Layer Field", ""])
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 5):
-            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.setStyleSheet(f"""
             QTableWidget {{
@@ -276,7 +279,7 @@ class PlotSymbolsPage(QWidget):
         table_layers = []
         for layer in project.mapLayers().values():
             if hasattr(layer, 'geometryType'):
-                if layer.geometryType() == QgsWkbTypes.NullGeometry:
+                if layer.geometryType() == Qgis.GeometryType.Null:
                     table_layers.append(layer)
                 else:
                     geom_layers.append(layer)
@@ -406,8 +409,6 @@ class PlotSymbolsPage(QWidget):
     # ─── plot logic (verbatim from script_plotsymbols.py) ─────────
 
     def _on_plot(self):
-        global _plotted_features
-
         self.status_changed.emit("in_progress")
         self.log_message.emit("--- Plot Features started ---")
 
@@ -453,12 +454,20 @@ class PlotSymbolsPage(QWidget):
                 continue
 
             if layer_crs != project_crs:
-                xform = QgsCoordinateTransform(project_crs, layer_crs, project)
-                layer_center = xform.transform(canvas_center)
+                # An invalid/unavailable CRS pair raises QgsCsException; skip
+                # the mapping rather than letting it crash the whole plot run.
+                try:
+                    xform = QgsCoordinateTransform(project_crs, layer_crs, project)
+                    layer_center = xform.transform(canvas_center)
+                except Exception as exc:
+                    self.log_message.emit(
+                        f"CRS transform failed for '{layer.name()}' "
+                        f"({exc}), skipping")
+                    continue
             else:
                 layer_center = canvas_center
 
-            is_line = layer.geometryType() == QgsWkbTypes.LineGeometry
+            is_line = layer.geometryType() == Qgis.GeometryType.Line
             if is_line:
                 block_width = SPACING
             else:
@@ -495,7 +504,6 @@ class PlotSymbolsPage(QWidget):
             layer = r['layer']
             geom_type = layer.geometryType()
             layer_center = r['center']
-            count_before = layer.featureCount()
 
             feats = create_grid_features(
                 layer, current_x, layer_center.y(),
@@ -505,32 +513,22 @@ class PlotSymbolsPage(QWidget):
             )
 
             if feats:
+                # Snapshot the existing FIDs so we can identify exactly the
+                # features this run committed (the post-commit ids on the
+                # in-memory `feats` are unreliable across providers).
+                before_ids = set(layer.allFeatureIds())
                 layer.startEditing()
                 ok = layer.addFeatures(feats)
                 if ok:
                     commit_ok = layer.commitChanges()
                     if commit_ok:
                         layer.updateExtents()
-                        count_after = layer.featureCount()
-                        num_added = count_after - count_before
+                        new_fids = list(set(layer.allFeatureIds()) - before_ids)
+                        num_added = len(new_fids)
 
-                        new_fids = [f.id() for f in feats if f.id() >= 0]
-                        if not new_fids:
-                            placed_rect = QgsRectangle()
-                            for f in feats:
-                                if f.hasGeometry():
-                                    placed_rect.combineExtentWith(f.geometry().boundingBox())
-                            if not placed_rect.isEmpty():
-                                placed_rect.grow(SPACING * 0.1)
-                                for f in layer.getFeatures():
-                                    if (f.hasGeometry()
-                                            and placed_rect.contains(f.geometry().boundingBox())):
-                                        if f.id() not in new_fids:
-                                            new_fids.append(f.id())
-
-                        if layer.id() not in _plotted_features:
-                            _plotted_features[layer.id()] = []
-                        _plotted_features[layer.id()].extend(new_fids)
+                        if layer.id() not in self._plotted_features:
+                            self._plotted_features[layer.id()] = []
+                        self._plotted_features[layer.id()].extend(new_fids)
 
                         total_features += num_added
                         total_layers += 1
@@ -581,18 +579,16 @@ class PlotSymbolsPage(QWidget):
     # ─── remove previously plotted features ───────────────────────
 
     def _on_remove_previous(self):
-        global _plotted_features
-
-        if not _plotted_features:
+        if not self._plotted_features:
             return
 
-        total = sum(len(fids) for fids in _plotted_features.values())
+        total = sum(len(fids) for fids in self._plotted_features.values())
         reply = QMessageBox.question(
             self, "Remove Features",
             f"Remove {total} previously plotted feature(s)?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.log_message.emit(f"Removing {total} previously plotted features...")
@@ -600,10 +596,10 @@ class PlotSymbolsPage(QWidget):
         removed = 0
         errors = []
 
-        for layer_id, fids in list(_plotted_features.items()):
+        for layer_id, fids in list(self._plotted_features.items()):
             layer = project.mapLayer(layer_id)
             if layer is None:
-                del _plotted_features[layer_id]
+                del self._plotted_features[layer_id]
                 continue
 
             layer.startEditing()
@@ -613,7 +609,7 @@ class PlotSymbolsPage(QWidget):
                 if commit_ok:
                     layer.updateExtents()
                     removed += len(fids)
-                    del _plotted_features[layer_id]
+                    del self._plotted_features[layer_id]
                 else:
                     layer.rollBack()
                     errors.append(f"Commit failed for '{layer.name()}'")
@@ -634,7 +630,7 @@ class PlotSymbolsPage(QWidget):
                                     f"Removed {removed} features.")
 
     def _update_remove_button(self):
-        total = sum(len(fids) for fids in _plotted_features.values())
+        total = sum(len(fids) for fids in self._plotted_features.values())
         if total > 0:
             self.btn_remove.setText(f"Remove {total} previously plotted feature(s)")
             self.btn_remove.setVisible(True)

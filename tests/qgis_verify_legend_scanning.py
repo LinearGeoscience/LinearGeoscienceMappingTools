@@ -14,6 +14,7 @@ from qgis.core import (
 
 from LinearGeoscienceMappingTools.recode_workflow.legend_builder import (
     scan_layer_values, scan_sections_for_sheet, load_lookup_map,
+    prepare_sheet_scan, scan_sections_for_sheets_prepared,
 )
 from LinearGeoscienceMappingTools.recode_workflow.legend_config import (
     normalize_section,
@@ -86,6 +87,18 @@ crs_results = scan_sections_for_sheet(
     sheet_geom=sheet_wgs, sheet_crs=wgs)
 check("scan_sections_for_sheet transforms sheet CRS to layer CRS",
       crs_results.get('crs-test') == ['0', 'Kf', 'Qz', 'Ser'])
+
+# ── prepared-source scan (background-task path) parity ──────────────
+prepared = prepare_sheet_scan(QgsProject.instance(), [section])
+prepared_results = scan_sections_for_sheets_prepared(
+    prepared, [(1, QgsGeometry(sheet_wgs), wgs),
+               (2, QgsGeometry(sheet_geom), sheet_crs)])
+check("prepared scan matches live per-sheet scan (transformed sheet)",
+      prepared_results.get(1) == crs_results)
+check("prepared scan matches live per-sheet scan (native CRS sheet)",
+      prepared_results.get(2) == scan_sections_for_sheet(
+          QgsProject.instance(), [section],
+          sheet_geom=sheet_geom, sheet_crs=sheet_crs))
 
 # ── load_lookup_map: NULL and zero keys ──────────────────────────────
 lookup = QgsVectorLayer(

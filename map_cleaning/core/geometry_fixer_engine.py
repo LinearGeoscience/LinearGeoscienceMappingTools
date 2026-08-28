@@ -19,7 +19,7 @@
  ***************************************************************************/
 """
 
-from qgis.core import QgsGeometry, QgsWkbTypes, Qgis, QgsPointXY, QgsRectangle
+from qgis.core import QgsGeometry, Qgis, QgsPointXY, QgsRectangle
 import math
 
 from .utils import MIN_AREA_THRESHOLD
@@ -93,7 +93,7 @@ class GeometryFixerEngine:
             if progress_dialog:
                 progress_dialog.setValue(idx)
                 if progress_dialog.wasCanceled():
-                    self.log("Operation cancelled by user", Qgis.Warning)
+                    self.log("Operation cancelled by user", Qgis.MessageLevel.Warning)
                     break
 
             fid = feature.id()
@@ -109,7 +109,7 @@ class GeometryFixerEngine:
                 self.features_to_delete.append(fid)
                 results['deleted'] += 1
                 results['deleted_fids'].append(fid)
-                self.log(f"Feature {fid}: Marked for deletion (zero area, unrecoverable)", Qgis.Warning)
+                self.log(f"Feature {fid}: Marked for deletion (zero area, unrecoverable)", Qgis.MessageLevel.Warning)
             elif success:
                 if was_fixed:
                     results['fixed'] += 1
@@ -127,7 +127,7 @@ class GeometryFixerEngine:
 
         # Delete features marked for deletion
         if self.features_to_delete and self.delete_zero_area:
-            self.log(f"Deleting {len(self.features_to_delete)} zero-area features", Qgis.Warning)
+            self.log(f"Deleting {len(self.features_to_delete)} zero-area features", Qgis.MessageLevel.Warning)
             self.layer.deleteFeatures(self.features_to_delete)
 
         if progress_dialog:
@@ -156,7 +156,7 @@ class GeometryFixerEngine:
                 if self.delete_zero_area:
                     return False, False, False, False, False, True
                 else:
-                    self.log(f"Feature {fid}: Null geometry, cannot recover", Qgis.Warning)
+                    self.log(f"Feature {fid}: Null geometry, cannot recover", Qgis.MessageLevel.Warning)
                     return False, False, False, False, False, False
 
         # Work on a copy to preserve original
@@ -223,14 +223,14 @@ class GeometryFixerEngine:
                 # Final check - should we delete?
                 if self.should_delete_feature(backup_geom, fid):
                     return False, False, False, False, False, True
-                self.log(f"Feature {fid}: Final validation failed, cannot recover", Qgis.Critical)
+                self.log(f"Feature {fid}: Final validation failed, cannot recover", Qgis.MessageLevel.Critical)
                 return False, False, False, False, False, False
 
         # Step 5: Apply the changes
         if was_fixed or was_converted or duplicates_removed or was_recovered:
             success = self.layer.changeGeometry(fid, geom)
             if not success:
-                self.log(f"Feature {fid}: Failed to apply geometry changes", Qgis.Critical)
+                self.log(f"Feature {fid}: Failed to apply geometry changes", Qgis.MessageLevel.Critical)
                 return False, False, False, False, False, False
 
             # Log what was actually changed
@@ -263,11 +263,11 @@ class GeometryFixerEngine:
             return True
 
         # Check for zero area polygons
-        if geom.type() == QgsWkbTypes.PolygonGeometry:
+        if geom.type() == Qgis.GeometryType.Polygon:
             try:
                 area = geom.area()
                 if area <= self.zero_area_threshold:
-                    self.log(f"Feature {fid}: Zero area ({area}), marking for deletion", Qgis.Warning)
+                    self.log(f"Feature {fid}: Zero area ({area}), marking for deletion", Qgis.MessageLevel.Warning)
                     return True
             except Exception:
                 pass
@@ -301,7 +301,7 @@ class GeometryFixerEngine:
                     # Check if the geometry is still valid after removal
                     if test_geom.isGeosValid() and not test_geom.isEmpty():
                         # Check area hasn't collapsed to zero
-                        if test_geom.type() == QgsWkbTypes.PolygonGeometry:
+                        if test_geom.type() == Qgis.GeometryType.Polygon:
                             area = test_geom.area()
                             if area > self.zero_area_threshold:
                                 duplicate_count = vertex_count_before - vertex_count_after
@@ -323,7 +323,7 @@ class GeometryFixerEngine:
             return geom
 
         except Exception as e:
-            self.log(f"Feature {fid}: Error removing duplicate nodes: {str(e)}", Qgis.Warning)
+            self.log(f"Feature {fid}: Error removing duplicate nodes: {str(e)}", Qgis.MessageLevel.Warning)
             return None
 
     def recover_collapsed_polygon(self, collapsed_geom, original_geom, fid):
@@ -397,30 +397,30 @@ class GeometryFixerEngine:
         try:
             valid_geom = geom.makeValid()
             if valid_geom and not valid_geom.isEmpty() and valid_geom.isGeosValid():
-                area = valid_geom.area() if valid_geom.type() == QgsWkbTypes.PolygonGeometry else 1
+                area = valid_geom.area() if valid_geom.type() == Qgis.GeometryType.Polygon else 1
                 if area > self.zero_area_threshold:
                     self.log(f"Feature {fid}: Fixed using makeValid()")
                     return valid_geom
         except Exception as e:
-            self.log(f"Feature {fid}: makeValid() failed: {str(e)}", Qgis.Warning)
+            self.log(f"Feature {fid}: makeValid() failed: {str(e)}", Qgis.MessageLevel.Warning)
 
         # Method 2: For "ring not in exterior" errors - remove interior rings entirely
         if "ring" in error_type.lower() and "exterior" in error_type.lower():
             try:
                 fixed_geom = self.fix_ring_not_in_exterior(geom, fid)
                 if fixed_geom and fixed_geom.isGeosValid():
-                    area = fixed_geom.area() if fixed_geom.type() == QgsWkbTypes.PolygonGeometry else 1
+                    area = fixed_geom.area() if fixed_geom.type() == Qgis.GeometryType.Polygon else 1
                     if area > self.zero_area_threshold:
                         self.log(f"Feature {fid}: Fixed ring-in-exterior issue by removing problematic holes")
                         return fixed_geom
             except Exception as e:
-                self.log(f"Feature {fid}: Ring fix failed: {str(e)}", Qgis.Warning)
+                self.log(f"Feature {fid}: Ring fix failed: {str(e)}", Qgis.MessageLevel.Warning)
 
         # Method 3: Buffer(0) - classic fix for self-intersections
         try:
             buffered = geom.buffer(0.0, 8)
             if buffered and not buffered.isEmpty() and buffered.isGeosValid():
-                area = buffered.area() if buffered.type() == QgsWkbTypes.PolygonGeometry else 1
+                area = buffered.area() if buffered.type() == Qgis.GeometryType.Polygon else 1
                 if area > self.zero_area_threshold:
                     self.log(f"Feature {fid}: Fixed using buffer(0)")
                     return buffered
@@ -438,7 +438,7 @@ class GeometryFixerEngine:
                     if shrunk and not shrunk.isEmpty() and shrunk.isGeosValid():
                         simplified = shrunk.simplify(buffer_size * 0.5)
                         if simplified and simplified.isGeosValid():
-                            area = simplified.area() if simplified.type() == QgsWkbTypes.PolygonGeometry else 1
+                            area = simplified.area() if simplified.type() == Qgis.GeometryType.Polygon else 1
                             if area > self.zero_area_threshold:
                                 self.log(f"Feature {fid}: Fixed using buffer {buffer_size} with simplification")
                                 return simplified
@@ -449,7 +449,7 @@ class GeometryFixerEngine:
         try:
             simplified = geom.simplify(0.0001)
             if simplified and not simplified.isEmpty() and simplified.isGeosValid():
-                area = simplified.area() if simplified.type() == QgsWkbTypes.PolygonGeometry else 1
+                area = simplified.area() if simplified.type() == Qgis.GeometryType.Polygon else 1
                 if area > self.zero_area_threshold:
                     self.log(f"Feature {fid}: Fixed using simplification")
                     return simplified
@@ -457,7 +457,7 @@ class GeometryFixerEngine:
             pass
 
         # Method 6: Extract exterior ring only (removes all holes) - last resort for polygons
-        if geom.type() == QgsWkbTypes.PolygonGeometry:
+        if geom.type() == Qgis.GeometryType.Polygon:
             try:
                 exterior_only = self.extract_exterior_ring_as_polygon(geom, fid)
                 if exterior_only and exterior_only.isGeosValid():
@@ -468,7 +468,7 @@ class GeometryFixerEngine:
             except Exception as e:
                 pass
 
-        self.log(f"Feature {fid}: Could not make geometry valid with any method", Qgis.Critical)
+        self.log(f"Feature {fid}: Could not make geometry valid with any method", Qgis.MessageLevel.Critical)
         return None
 
     def fix_ring_not_in_exterior(self, geom, fid):
@@ -501,7 +501,7 @@ class GeometryFixerEngine:
                     return QgsGeometry.fromPolygonXY(fixed_polygon)
                 return None
         except Exception as e:
-            self.log(f"Feature {fid}: Error fixing ring: {str(e)}", Qgis.Warning)
+            self.log(f"Feature {fid}: Error fixing ring: {str(e)}", Qgis.MessageLevel.Warning)
             return None
 
     def fix_single_polygon_rings(self, polygon_rings, fid):
@@ -555,7 +555,7 @@ class GeometryFixerEngine:
                     clipped = interior_geom.intersection(exterior_geom)
                     if clipped and not clipped.isEmpty() and clipped.isGeosValid():
                         # Check if the clipped result is still a valid hole
-                        if clipped.type() == QgsWkbTypes.PolygonGeometry:
+                        if clipped.type() == Qgis.GeometryType.Polygon:
                             clipped_polygon = clipped.asPolygon()
                             if clipped_polygon and len(clipped_polygon) > 0:
                                 clipped_ring = clipped_polygon[0]
@@ -596,7 +596,7 @@ class GeometryFixerEngine:
                     if exterior_ring and len(exterior_ring) >= 4:
                         return QgsGeometry.fromPolygonXY([exterior_ring])
         except Exception as e:
-            self.log(f"Feature {fid}: Error extracting exterior: {str(e)}", Qgis.Warning)
+            self.log(f"Feature {fid}: Error extracting exterior: {str(e)}", Qgis.MessageLevel.Warning)
 
         return None
 
@@ -610,7 +610,7 @@ class GeometryFixerEngine:
         self.log(f"Feature {fid}: Attempting geometry recovery")
 
         # Check if the original geometry has zero area - if so, don't try to recover
-        if original_geom and original_geom.type() == QgsWkbTypes.PolygonGeometry:
+        if original_geom and original_geom.type() == Qgis.GeometryType.Polygon:
             try:
                 area = original_geom.area()
                 if area <= self.zero_area_threshold:
@@ -623,7 +623,7 @@ class GeometryFixerEngine:
         try:
             convex = original_geom.convexHull()
             if convex and not convex.isEmpty() and convex.isGeosValid():
-                area = convex.area() if convex.type() == QgsWkbTypes.PolygonGeometry else 1
+                area = convex.area() if convex.type() == Qgis.GeometryType.Polygon else 1
                 if area > self.zero_area_threshold:
                     self.log(f"Feature {fid}: Recovered using convex hull")
                     return convex
@@ -634,7 +634,7 @@ class GeometryFixerEngine:
         try:
             obb = original_geom.orientedMinimumBoundingBox()
             if obb[0] and not obb[0].isEmpty() and obb[0].isGeosValid():
-                area = obb[0].area() if obb[0].type() == QgsWkbTypes.PolygonGeometry else 1
+                area = obb[0].area() if obb[0].type() == Qgis.GeometryType.Polygon else 1
                 if area > self.zero_area_threshold:
                     self.log(f"Feature {fid}: Recovered using oriented bounding box")
                     return obb[0]
@@ -704,7 +704,7 @@ class GeometryFixerEngine:
         try:
             parts = geom.asGeometryCollection()
             if not parts or len(parts) == 0:
-                self.log(f"Feature {fid}: Multipart but no parts found", Qgis.Warning)
+                self.log(f"Feature {fid}: Multipart but no parts found", Qgis.MessageLevel.Warning)
                 return None
 
             # Find largest valid part by area
@@ -713,7 +713,7 @@ class GeometryFixerEngine:
 
             for part in parts:
                 if part.isGeosValid():
-                    if part.type() == QgsWkbTypes.PolygonGeometry:
+                    if part.type() == Qgis.GeometryType.Polygon:
                         area = part.area()
                         if area > largest_area and area > self.zero_area_threshold:
                             largest_area = area
@@ -725,7 +725,7 @@ class GeometryFixerEngine:
             if largest_part:
                 # Log discarded parts so users can verify nothing important was dropped
                 discarded = [p for p in parts if p is not largest_part
-                             and p.type() == QgsWkbTypes.PolygonGeometry]
+                             and p.type() == Qgis.GeometryType.Polygon]
                 if discarded:
                     discarded_areas = [f"{p.area():.6f}" for p in discarded]
                     self.log(
@@ -737,11 +737,11 @@ class GeometryFixerEngine:
                     self.log(f"Feature {fid}: Converted from {len(parts)} parts to singlepart")
                 return largest_part
             else:
-                self.log(f"Feature {fid}: Could not find valid part in multipart geometry", Qgis.Warning)
+                self.log(f"Feature {fid}: Could not find valid part in multipart geometry", Qgis.MessageLevel.Warning)
                 return None
 
         except Exception as e:
-            self.log(f"Feature {fid}: Multipart conversion failed: {str(e)}", Qgis.Critical)
+            self.log(f"Feature {fid}: Multipart conversion failed: {str(e)}", Qgis.MessageLevel.Critical)
             return None
 
     def validate_geometry_strict(self, geom, fid):
@@ -753,38 +753,38 @@ class GeometryFixerEngine:
         """
         # Check 1: Not null
         if not geom or geom.isNull():
-            self.log(f"Feature {fid}: Validation failed - null geometry", Qgis.Warning)
+            self.log(f"Feature {fid}: Validation failed - null geometry", Qgis.MessageLevel.Warning)
             return False
 
         # Check 2: Not empty
         if geom.isEmpty():
-            self.log(f"Feature {fid}: Validation failed - empty geometry", Qgis.Warning)
+            self.log(f"Feature {fid}: Validation failed - empty geometry", Qgis.MessageLevel.Warning)
             return False
 
         # Check 3: GEOS validity
         if not geom.isGeosValid():
-            self.log(f"Feature {fid}: Validation warning - not GEOS valid", Qgis.Warning)
+            self.log(f"Feature {fid}: Validation warning - not GEOS valid", Qgis.MessageLevel.Warning)
             # Don't immediately fail, might still be usable
 
         # Check 4: For polygons, check area strictly
-        if geom.type() == QgsWkbTypes.PolygonGeometry:
+        if geom.type() == Qgis.GeometryType.Polygon:
             try:
                 area = geom.area()
                 if area <= self.zero_area_threshold:
-                    self.log(f"Feature {fid}: Validation warning - very small area: {area}", Qgis.Warning)
+                    self.log(f"Feature {fid}: Validation warning - very small area: {area}", Qgis.MessageLevel.Warning)
                     # This is a strict validation - reject zero area
                     return False
                 # Area is good
                 return True
             except Exception:
-                self.log(f"Feature {fid}: Validation failed - could not compute area", Qgis.Critical)
+                self.log(f"Feature {fid}: Validation failed - could not compute area", Qgis.MessageLevel.Critical)
                 return False
 
         # Check 5: Has vertices
         try:
             vertex_count = len(list(geom.vertices()))
             if vertex_count == 0:
-                self.log(f"Feature {fid}: Validation failed - no vertices", Qgis.Critical)
+                self.log(f"Feature {fid}: Validation failed - no vertices", Qgis.MessageLevel.Critical)
                 return False
         except Exception:
             pass
@@ -809,7 +809,7 @@ class GeometryFixerEngine:
             if progress_dialog:
                 progress_dialog.setValue(idx)
                 if progress_dialog.wasCanceled():
-                    self.log("Detection cancelled by user", Qgis.Warning)
+                    self.log("Detection cancelled by user", Qgis.MessageLevel.Warning)
                     break
 
             fid = feature.id()
@@ -854,7 +854,7 @@ class GeometryFixerEngine:
                 ))
 
             # Check 3: Zero area polygons
-            if geom.type() == QgsWkbTypes.PolygonGeometry:
+            if geom.type() == Qgis.GeometryType.Polygon:
                 try:
                     area = geom.area()
                     if area <= self.zero_area_threshold:
@@ -887,7 +887,7 @@ class GeometryFixerEngine:
             if vertex_count_after < vertex_count_before:
                 duplicate_count = vertex_count_before - vertex_count_after
                 # Check if removal would cause collapse
-                if geom.type() == QgsWkbTypes.PolygonGeometry:
+                if geom.type() == Qgis.GeometryType.Polygon:
                     if geom_copy.area() <= self.zero_area_threshold and geom.area() > self.zero_area_threshold:
                         issues.append(GeometryIssue(
                             fid=fid,

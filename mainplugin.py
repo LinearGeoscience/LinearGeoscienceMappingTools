@@ -1,14 +1,22 @@
 import os
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.core import QgsSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
-    QAction, QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QMessageBox, QWidget, QGroupBox, QFrame, QSizePolicy, QScrollArea,
-    QStackedWidget, QButtonGroup, QShortcut, QApplication
+    QStackedWidget, QButtonGroup, QApplication
 )
 from qgis.PyQt.QtGui import (
-    QIcon, QColor, QPalette, QLinearGradient, QCursor, QKeySequence
+    QIcon, QColor, QPalette, QLinearGradient, QCursor, QKeySequence,
+    QAction, QShortcut
 )
-from qgis.PyQt.QtSvg import QSvgWidget, QSvgRenderer
+from qgis.PyQt.QtSvg import QSvgRenderer
+try:
+    # Qt6 (QGIS 4): QSvgWidget lives in QtSvgWidgets
+    from qgis.PyQt.QtSvgWidgets import QSvgWidget
+except ImportError:
+    # Qt5 (QGIS 3.x): still in QtSvg
+    from qgis.PyQt.QtSvg import QSvgWidget
 
 # Import UI scaling system for DPI-aware interface
 from .ui_scaling import get_scale_manager
@@ -16,43 +24,35 @@ from .ui_scaling import get_scale_manager
 # Import centralized theme
 from . import plugin_theme as theme
 
-# The stereonet and recode workflow modules require matplotlib/pandas, which
-# are not bundled with every QGIS install (notably some Linux packages). Guard
-# their imports so the plugin still loads and the remaining tools stay usable;
-# the affected features show an installation hint instead.
-try:
-    from .stereonet import StereonetPluginCore
-    STEREONET_IMPORT_ERROR = None
-except ImportError as e:
-    StereonetPluginCore = None
-    STEREONET_IMPORT_ERROR = str(e)
-
-try:
-    from .recode_workflow import run_recode_workflow
-    RECODE_IMPORT_ERROR = None
-except ImportError as e:
-    run_recode_workflow = None
-    RECODE_IMPORT_ERROR = str(e)
-
-from .photo_panel import run_photo_panel
+# The stereonet and recode-workflow modules pull in matplotlib/pandas/numpy —
+# the heaviest imports in the plugin. They (and the other feature modules) are
+# imported lazily inside their launcher methods so plugin load (paid on every
+# QGIS startup) stays cheap and the stereonet dock is only built when first
+# opened. Only map_cleaning stays eager (it registers a Processing provider at
+# load). feature_info is a lightweight constants module, kept eager for the
+# sidebar builder.
 from .map_cleaning import MapCleaningToolkit
-from .script_declination_adjuster import DeclinationAdjusterDialog
-from .script_declination_calculator import CalculateDeclinationDialog
 from . import feature_info
+from . import version_info
 
 # QSettings keys
 SETTINGS_PREFIX = "LinearGeoscience"
 SETTING_LAST_PAGE = f"{SETTINGS_PREFIX}/lastPage"
 SETTING_GEOMETRY = f"{SETTINGS_PREFIX}/dialogGeometry"
 
+
+def _esc_amp(text):
+    """Escape '&' as '&&' so Qt shows a literal ampersand in mnemonic-parsing widgets."""
+    return text.replace("&", "&&")
+
 # Page definitions: (nav_label, icon_file, tooltip, page_title)
 PAGE_DEFS = [
-    ("Setup Mapping", None, "Configure your mapping geopackage for QField", "Setup Mapping"),
+    ("Set Mapping Scale", None, "Configure your mapping geopackage for QField", "Set Mapping Scale"),
     ("Field Photos", None, "Georeference, view, and export field photos", "Field Photos"),
     ("Data Management", None, "Backup, update, reproject, and merge data", "Data Management"),
     ("Declination", None, "Calculate and adjust magnetic declination", "Declination"),
     ("Structural Domains", None, "Create and classify structural domains", "Structural Domains"),
-    ("Mapsheets && Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
+    ("Mapsheets & Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
     ("Modify Symbology", None, "Re-classify coding and apply symbology", "Symbology"),
 ]
 
@@ -61,9 +61,9 @@ class ActionButton(QPushButton):
     """Modern styled action button with consistent appearance."""
 
     def __init__(self, text, icon_name=None, parent=None, plugin_dir=None, primary=True):
-        super().__init__(text, parent)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        super().__init__(_esc_amp(text), parent)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._original_text = text
 
         scale = get_scale_manager()
@@ -86,7 +86,7 @@ class BrandHeader(QWidget):
         self.plugin_dir = plugin_dir
         self.scale = get_scale_manager()
         self.setMinimumHeight(self.scale.dimension(80))
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.setAutoFillBackground(True)
         self._apply_gradient(self.width())
@@ -113,12 +113,12 @@ class BrandHeader(QWidget):
             aspect_ratio = original_size.width() / original_size.height()
             width = int(height * aspect_ratio)
             self.logo.setFixedSize(width, height)
-            content_layout.addWidget(self.logo, 0, Qt.AlignLeft | Qt.AlignVCenter)
+            content_layout.addWidget(self.logo, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         # Title
         self.title = QLabel("QField Geological Mapping Plugin")
-        self.title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.title.setAlignment(Qt.AlignCenter)
+        self.title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet(theme.header_title_style())
         content_layout.addWidget(self.title, 1)
 
@@ -126,8 +126,8 @@ class BrandHeader(QWidget):
 
         # Bottom shadow line
         shadow_line = QFrame()
-        shadow_line.setFrameShape(QFrame.HLine)
-        shadow_line.setFrameShadow(QFrame.Plain)
+        shadow_line.setFrameShape(QFrame.Shape.HLine)
+        shadow_line.setFrameShadow(QFrame.Shadow.Plain)
         shadow_line.setStyleSheet(theme.header_bottom_shadow())
         layout.addWidget(shadow_line)
 
@@ -136,7 +136,7 @@ class BrandHeader(QWidget):
         gradient = QLinearGradient(0, 0, max(width, 1), 0)
         gradient.setColorAt(0, QColor(theme.HEADER_START))
         gradient.setColorAt(1, QColor(theme.HEADER_END))
-        palette.setBrush(QPalette.Window, gradient)
+        palette.setBrush(QPalette.ColorRole.Window, gradient)
         self.setPalette(palette)
 
     def resizeEvent(self, event):
@@ -166,7 +166,7 @@ class FeatureGroup(QGroupBox):
     """Styled feature group containing action buttons and info buttons."""
 
     def __init__(self, title, plugin_dir, parent=None):
-        super().__init__(title, parent)
+        super().__init__(_esc_amp(title), parent)
         self.plugin_dir = plugin_dir
         self.scale = get_scale_manager()
 
@@ -196,8 +196,8 @@ class FeatureGroup(QGroupBox):
 
     def addSeparator(self):
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Plain)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Plain)
         line.setStyleSheet(theme.separator_style())
         self.group_layout.addWidget(line)
 
@@ -217,7 +217,7 @@ class FeatureGroup(QGroupBox):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         content_widget = QWidget()
         scroll.setWidget(content_widget)
@@ -227,7 +227,7 @@ class FeatureGroup(QGroupBox):
 
         info_label = QLabel(content)
         info_label.setWordWrap(True)
-        info_label.setTextFormat(Qt.RichText)
+        info_label.setTextFormat(Qt.TextFormat.RichText)
         info_label.setOpenExternalLinks(True)
         content_layout.addWidget(info_label)
         content_layout.addStretch()
@@ -235,8 +235,8 @@ class FeatureGroup(QGroupBox):
         layout.addWidget(scroll)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         layout.addWidget(sep)
 
@@ -259,15 +259,29 @@ class LinearGeosciencePluginMain:
         self.plugin_dir = os.path.dirname(__file__)
         self.toolbar = None
         self.action_main_button = None
+        self.action_about = None
         self.stereonet_core = None
         self.photo_panel = None
         self.map_cleaning = None
         self.main_dialog = None  # non-modal dialog reference
+        # Plugin-owned singletons for the tools that used to stash them on
+        # iface (torn down in unload so a reload rebuilds fresh).
+        self.layout_panel = None
+        self.reproject_dialog = None
+        self.recode_wizard = None
+        self.reconcile_dialog = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
     # ------------------------------------------------------------------
     def initGui(self):
+        # Move any legacy bare-QSettings values into the QGIS profile once.
+        try:
+            from .settings import migrate_qsettings_once
+            migrate_qsettings_once()
+        except Exception:
+            pass  # settings migration is best-effort, never blocks load
+
         self.toolbar = self.iface.addToolBar("Linear Geoscience Mapping Tools")
         self.toolbar.setObjectName("LinearGeoscienceMappingTools")
 
@@ -287,24 +301,54 @@ class LinearGeosciencePluginMain:
         # Add to Plugins menu (required for QGIS plugin repository)
         self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_main_button)
 
-        if StereonetPluginCore is not None:
-            self.stereonet_core = StereonetPluginCore(self.iface)
-            self.stereonet_core.initGui()
+        self.action_about = QAction("About...", self.iface.mainWindow())
+        self.action_about.setToolTip("Plugin version and build information")
+        self.action_about.triggered.connect(self.show_about_dialog)
+        self.iface.addPluginToMenu("Linear Geoscience Mapping Tools", self.action_about)
+
+        # The stereonet dock (+ matplotlib/pandas) is built lazily on first
+        # open via _ensure_stereonet(), not at startup.
+        self._stereonet_import_error = None
 
         # Map cleaning toolkit: adds its actions to the plugin toolbar
         self.map_cleaning = MapCleaningToolkit(self.iface)
         self.map_cleaning.initGui(toolbar=self.toolbar)
 
+    def _ensure_stereonet(self):
+        """Build the stereonet core + dock on first use. Returns the core or
+        None if matplotlib/pandas are unavailable (hint already shown)."""
+        if self.stereonet_core is not None:
+            return self.stereonet_core
+        if self._stereonet_import_error is not None:
+            return None
+        try:
+            from .stereonet import StereonetPluginCore
+        except ImportError as e:
+            self._stereonet_import_error = str(e)
+            return None
+        core = StereonetPluginCore(self.iface)
+        core.initGui()
+        self.stereonet_core = core
+        return core
+
     def unload(self):
         if self.main_dialog:
             self._save_geometry()
             self.main_dialog.close()
+            # The dialog is cached across opens (no WA_DeleteOnClose), so a
+            # plugin unload/reload must delete it explicitly.
+            self.main_dialog.deleteLater()
             self.main_dialog = None
 
         if self.action_main_button:
             self.iface.removePluginMenu("Linear Geoscience Mapping Tools", self.action_main_button)
             self.action_main_button.triggered.disconnect()
             self.action_main_button = None
+
+        if self.action_about:
+            self.iface.removePluginMenu("Linear Geoscience Mapping Tools", self.action_about)
+            self.action_about.triggered.disconnect()
+            self.action_about = None
 
         if self.map_cleaning:
             try:
@@ -313,7 +357,7 @@ class LinearGeosciencePluginMain:
                 from qgis.core import QgsMessageLog, Qgis
                 QgsMessageLog.logMessage(
                     f"Map cleaning toolkit unload failed: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )
             self.map_cleaning = None
 
@@ -333,24 +377,37 @@ class LinearGeosciencePluginMain:
                 from qgis.core import QgsMessageLog, Qgis
                 QgsMessageLog.logMessage(
                     f"Photo panel shutdown failed during unload: {e}",
-                    'Linear Geoscience', Qgis.Warning
+                    'Linear Geoscience', Qgis.MessageLevel.Warning
                 )
             self.iface.removeDockWidget(self.photo_panel)
             self.photo_panel.deleteLater()
             self.photo_panel = None
 
-        # The Map Layout Generator panel is a singleton stored on iface;
-        # remove it on unload so a plugin reload builds a fresh panel
-        # from the new code instead of re-raising the stale dock.
-        layout_panel = getattr(self.iface, '_layout_panel', None)
-        if layout_panel is not None:
-            try:
-                self.iface.removeDockWidget(layout_panel)
-                layout_panel.close()
-                layout_panel.deleteLater()
-            except Exception:
-                pass  # panel may already be deleted
-            self.iface._layout_panel = None
+        # Plugin-owned singletons: tear down on unload so a reload rebuilds
+        # fresh instead of re-raising a stale one. Also sweep up the old
+        # iface-stashed attributes so panels created by a previous plugin
+        # version are cleaned up during an in-place upgrade.
+        for own_attr, iface_attr, is_dock in (
+                ('layout_panel', '_layout_panel', True),
+                ('reproject_dialog', '_reproject_dialog', False),
+                ('recode_wizard', '_recode_wizard', False),
+                ('reconcile_dialog', '_reconcile_dialog', False)):
+            for holder, attr in ((self, own_attr),
+                                 (self.iface, iface_attr)):
+                widget = getattr(holder, attr, None)
+                if widget is None:
+                    continue
+                try:
+                    if is_dock:
+                        self.iface.removeDockWidget(widget)
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass  # already deleted
+                try:
+                    setattr(holder, attr, None)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Panel toggles
@@ -367,16 +424,20 @@ class LinearGeosciencePluginMain:
         )
 
     def toggle_stereonet_panel(self):
-        if self.stereonet_core is None and STEREONET_IMPORT_ERROR:
-            self._show_missing_dependency("Stereonet Analysis", STEREONET_IMPORT_ERROR)
+        core = self._ensure_stereonet()
+        if core is None:
+            self._show_missing_dependency(
+                "Stereonet Analysis",
+                self._stereonet_import_error or "matplotlib/pandas not found")
             return
-        if not self.stereonet_core or not self.stereonet_core.dock:
+        if not core.dock:
             return
-        dock = self.stereonet_core.dock
+        dock = core.dock
         dock.setVisible(not dock.isVisible())
 
     def toggle_photo_panel(self):
         if not self.photo_panel:
+            from .photo_panel import run_photo_panel
             self.photo_panel = run_photo_panel(self.iface)
             if not self.photo_panel:
                 return
@@ -395,14 +456,25 @@ class LinearGeosciencePluginMain:
     # ------------------------------------------------------------------
     # Main dialog  (non-modal)
     # ------------------------------------------------------------------
+    def show_about_dialog(self):
+        """Show the About dialog (version, build stamp, environment)."""
+        from .about_dialog import AboutDialog
+        dlg = AboutDialog(self.iface.mainWindow())
+        dlg.exec()
+
     def open_plugin_dialog(self):
-        """Open or bring to front the main plugin dialog (non-modal)."""
+        """Open or bring to front the main plugin dialog (non-modal).
+
+        The dialog is built once and cached — closing hides it, reopening
+        shows the same instance instantly with its state intact. It only
+        rebuilds after a plugin reload (unload() deletes it)."""
         if self.main_dialog is not None:
             try:
-                if self.main_dialog.isVisible():
-                    self.main_dialog.raise_()
-                    self.main_dialog.activateWindow()
-                    return
+                self._refresh_dialog_on_show(self.main_dialog)
+                self.main_dialog.show()
+                self.main_dialog.raise_()
+                self.main_dialog.activateWindow()
+                return
             except RuntimeError:
                 # C++ object already deleted
                 self.main_dialog = None
@@ -411,8 +483,7 @@ class LinearGeosciencePluginMain:
 
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle("Linear Geoscience - Geological Mapping")
-        dialog.setAttribute(Qt.WA_DeleteOnClose)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         dialog_width, dialog_height = scale.dialog_size(800, 600)
         dialog.setStyleSheet(theme.dialog_style())
@@ -457,15 +528,14 @@ class LinearGeosciencePluginMain:
 
         # Restore state
         self._restore_geometry(dialog)
-        last_page = QSettings().value(SETTING_LAST_PAGE, 0, type=int)
+        last_page = QgsSettings().value(SETTING_LAST_PAGE, 0, type=int)
         last_page = max(0, min(last_page, stacked_widget.count() - 1))
         nav_group.button(last_page).setChecked(True)
         stacked_widget.setCurrentIndex(last_page)
         page_header_label.setText(PAGE_DEFS[last_page][3])
 
-        # Save geometry on close and clean up reference
+        # Save geometry on close (the dialog itself is kept for reuse)
         dialog.finished.connect(lambda: self._save_geometry())
-        dialog.destroyed.connect(lambda: setattr(self, 'main_dialog', None))
 
         # Store references for external access
         dialog._nav_group = nav_group
@@ -474,6 +544,11 @@ class LinearGeosciencePluginMain:
 
         self.main_dialog = dialog
         dialog.show()
+
+    def _refresh_dialog_on_show(self, dialog):
+        """Hook for state that must refresh when the cached dialog is
+        re-shown. The current pages hold no layer-dependent state; any
+        future page that does must repopulate itself here."""
 
     # ------------------------------------------------------------------
     # Sidebar builder
@@ -488,9 +563,9 @@ class LinearGeosciencePluginMain:
         sidebar_scroll.setMinimumWidth(scale.dimension(280))
         sidebar_scroll.setMaximumWidth(scale.dimension(350))
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        sidebar_scroll.setFrameShape(QFrame.NoFrame)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
         sidebar_scroll.setStyleSheet(
             theme.sidebar_style() + "\n" + theme.scrollbar_style()
         )
@@ -510,7 +585,7 @@ class LinearGeosciencePluginMain:
         qa_style = theme.quick_access_button_style()
 
         btn_stereonet = QPushButton("Launch Stereonet")
-        btn_stereonet.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_stereonet.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_stereonet.setMinimumHeight(scale.dimension(34))
         btn_stereonet.setToolTip("Open the interactive stereonet plotting panel")
         btn_stereonet.setStyleSheet(qa_style)
@@ -518,7 +593,7 @@ class LinearGeosciencePluginMain:
         lay.addWidget(btn_stereonet)
 
         btn_map_cleaning = QPushButton("Launch Map Cleaning")
-        btn_map_cleaning.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_map_cleaning.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_map_cleaning.setMinimumHeight(scale.dimension(34))
         btn_map_cleaning.setToolTip("Open the map cleaning panel (clip, splines, fix geometry)")
         btn_map_cleaning.setStyleSheet(qa_style)
@@ -526,7 +601,7 @@ class LinearGeosciencePluginMain:
         lay.addWidget(btn_map_cleaning)
 
         btn_photo = QPushButton("Launch Photo Panel")
-        btn_photo.setCursor(QCursor(Qt.PointingHandCursor))
+        btn_photo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_photo.setMinimumHeight(scale.dimension(34))
         btn_photo.setToolTip("Open the photo viewing dock panel")
         btn_photo.setStyleSheet(qa_style)
@@ -535,8 +610,8 @@ class LinearGeosciencePluginMain:
 
         # Separator
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         sep_margin = scale.dimension(4)
         sep.setContentsMargins(0, sep_margin, 0, sep_margin)
@@ -552,10 +627,10 @@ class LinearGeosciencePluginMain:
         nav_group.setExclusive(True)
 
         for idx, (label, icon_file, tooltip, _title) in enumerate(PAGE_DEFS):
-            btn = QPushButton(label)
+            btn = QPushButton(_esc_amp(label))
             btn.setCheckable(True)
-            btn.setCursor(QCursor(Qt.PointingHandCursor))
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
             btn.setMinimumHeight(scale.dimension(36))
             btn.setToolTip(tooltip)
             btn.setStyleSheet(nav_style)
@@ -570,21 +645,38 @@ class LinearGeosciencePluginMain:
 
         # Version info with top separator
         ver_sep = QFrame()
-        ver_sep.setFrameShape(QFrame.HLine)
-        ver_sep.setFrameShadow(QFrame.Plain)
+        ver_sep.setFrameShape(QFrame.Shape.HLine)
+        ver_sep.setFrameShadow(QFrame.Shadow.Plain)
         ver_sep.setStyleSheet(theme.separator_style())
         lay.addWidget(ver_sep)
 
-        version_info = QLabel("Linear Geoscience Mapping Tools V3.3\nAuthor: Harry West\nJune 2026")
-        version_info.setAlignment(Qt.AlignLeft)
-        version_info.setStyleSheet(theme.version_label_style())
-        lay.addWidget(version_info)
+        version_label = QLabel(version_info.footer_text())
+        version_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        version_label.setStyleSheet(theme.version_label_style())
+        lay.addWidget(version_label)
+
+        # QField export button (above template)
+        btn_qfield = QPushButton("Export for QField")
+        btn_qfield.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_qfield.setMinimumHeight(scale.dimension(34))
+        btn_qfield.setToolTip("Export selected layers and the current project for QField (offline)")
+        btn_qfield.setStyleSheet(theme.qfield_button_style())
+        btn_qfield.clicked.connect(self.run_qfield_export)
+        lay.addWidget(btn_qfield)
+
+        # Reconcile button (below QField export, above template)
+        btn_reconcile = QPushButton("Reconcile / Merge")
+        btn_reconcile.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_reconcile.setMinimumHeight(scale.dimension(34))
+        btn_reconcile.setToolTip("Reconcile and re-sync the working geopackage back into the master GeoPackage")
+        btn_reconcile.setStyleSheet(theme.reconcile_button_style())
+        btn_reconcile.clicked.connect(self.run_reconcile)
+        lay.addWidget(btn_reconcile)
 
         # Template button
-        btn_template = QPushButton("Setup Mapping\nTemplate")
-        btn_template.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_template.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_template.setMinimumHeight(scale.dimension(50))
+        btn_template = QPushButton("New Mapping Template")
+        btn_template.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_template.setMinimumHeight(scale.dimension(34))
         btn_template.setToolTip("Load or configure the mapping geopackage template for your project")
         btn_template.setStyleSheet(theme.template_button_style())
         btn_template.clicked.connect(self.run_loadtemplate)
@@ -609,14 +701,14 @@ class LinearGeosciencePluginMain:
         layout.setSpacing(scale.spacing(12))
 
         # Page header label
-        page_header = QLabel("Setup Mapping")
+        page_header = QLabel("Set Mapping Scale")
         page_header.setStyleSheet(theme.page_header_style())
         layout.addWidget(page_header)
 
         # Thin separator under page header
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Plain)
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
         sep.setStyleSheet(theme.separator_style())
         layout.addWidget(sep)
 
@@ -647,8 +739,8 @@ class LinearGeosciencePluginMain:
 
     def _build_page_setup(self):
         page, lay = self._make_page()
-        grp = FeatureGroup("Setup Mapping Geopackage", self.plugin_dir, page)
-        grp.addFeature("Setup Mapping Geopackage", None,
+        grp = FeatureGroup("Set Mapping Scale", self.plugin_dir, page)
+        grp.addFeature("Set Mapping Scale", None,
                         feature_info.INFO_SETUP_MAPPING, self.run_setmapping)
         lay.addWidget(grp)
         lay.addStretch()
@@ -741,7 +833,7 @@ class LinearGeosciencePluginMain:
             stacked_widget.setCurrentIndex(btn_id)
             if 0 <= btn_id < len(PAGE_DEFS):
                 page_header_label.setText(PAGE_DEFS[btn_id][3])
-            QSettings().setValue(SETTING_LAST_PAGE, btn_id)
+            QgsSettings().setValue(SETTING_LAST_PAGE, btn_id)
 
         nav_group.idClicked.connect(on_button_clicked)
 
@@ -759,19 +851,19 @@ class LinearGeosciencePluginMain:
                     btn.setChecked(True)
                     btn.click()
 
-        QShortcut(QKeySequence(Qt.Key_Escape), dialog, dialog.close)
-        QShortcut(QKeySequence(Qt.Key_Up), dialog, lambda: move_nav(-1))
-        QShortcut(QKeySequence(Qt.Key_Down), dialog, lambda: move_nav(1))
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), dialog, dialog.close)
+        QShortcut(QKeySequence(Qt.Key.Key_Up), dialog, lambda: move_nav(-1))
+        QShortcut(QKeySequence(Qt.Key.Key_Down), dialog, lambda: move_nav(1))
 
     # ------------------------------------------------------------------
     # Geometry persistence
     # ------------------------------------------------------------------
     def _save_geometry(self):
         if self.main_dialog:
-            QSettings().setValue(SETTING_GEOMETRY, self.main_dialog.saveGeometry())
+            QgsSettings().setValue(SETTING_GEOMETRY, self.main_dialog.saveGeometry())
 
     def _restore_geometry(self, dialog):
-        geom = QSettings().value(SETTING_GEOMETRY)
+        geom = QgsSettings().value(SETTING_GEOMETRY)
         if geom:
             dialog.restoreGeometry(geom)
 
@@ -795,18 +887,25 @@ class LinearGeosciencePluginMain:
         run(self.iface)
 
     def run_recode_workflow(self):
-        if run_recode_workflow is None:
-            self._show_missing_dependency("Recode & Restyle Wizard", RECODE_IMPORT_ERROR)
+        # recode_workflow pulls in pandas; import lazily so a missing
+        # dependency only affects this feature, not plugin load.
+        try:
+            from .recode_workflow import run_recode_workflow
+        except ImportError as e:
+            self._show_missing_dependency("Recode & Restyle Wizard", str(e))
             return
-        run_recode_workflow(self.iface)
+        run_recode_workflow(self.iface, owner=self)
 
     def run_reprojectgeopackage(self):
         from .script_reprojectgeopackage import run
-        run(self.iface)
+        run(self.iface, owner=self)
 
     def run_static_mapping_export(self):
         from .static_mapping_export import run_static_mapping_export
-        run_static_mapping_export(self.iface, stereonet_core=self.stereonet_core)
+        # Build the stereonet core on demand (it feeds the export); None is
+        # handled downstream when matplotlib is unavailable.
+        run_static_mapping_export(self.iface,
+                                  stereonet_core=self._ensure_stereonet())
 
     def run_adddomainlayer(self):
         from .script_adddomainlayer import run
@@ -820,13 +919,22 @@ class LinearGeosciencePluginMain:
         from .script_adddata import run_gpkg_append_tool_dialog
         run_gpkg_append_tool_dialog(self.iface)
 
+    def run_reconcile(self):
+        from .script_adddata.reconcile.dialog import run_reconcile_tool_dialog
+        run_reconcile_tool_dialog(self.iface, owner=self)
+
+    def run_qfield_export(self):
+        from .qfield_export.gui.export_dialog import ExportDialog
+        dlg = ExportDialog(self.iface, self.iface.mainWindow())
+        dlg.exec()
+
     def run_mapsheetgenerator(self):
         from .script_mapsheet_generator import run
         run(self.iface)
 
     def run_createlayouts(self):
         from .script_create_layouts import run
-        run(self.iface)
+        run(self.iface, owner=self)
 
     def run_loadtemplate(self):
         try:
@@ -837,17 +945,19 @@ class LinearGeosciencePluginMain:
             from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(
                 f"run_loadtemplate failed: {e}\n{traceback.format_exc()}",
-                'Linear Geoscience', Qgis.Critical
+                'Linear Geoscience', Qgis.MessageLevel.Critical
             )
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",
-                f"Could not open Setup Mapping Template: {e}"
+                f"Could not open New Mapping Template: {e}"
             )
 
     def run_declination_adjuster(self):
+        from .script_declination_adjuster import DeclinationAdjusterDialog
         dialog = DeclinationAdjusterDialog(self.iface.mainWindow())
         dialog.exec()
 
     def run_declination_calculator(self):
+        from .script_declination_calculator import CalculateDeclinationDialog
         dialog = CalculateDeclinationDialog(self.iface.mainWindow())
         dialog.exec()

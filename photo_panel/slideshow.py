@@ -43,9 +43,9 @@ class SlideshowControls(QWidget):
         scale = get_scale_manager()
 
         self.setWindowFlags(
-            Qt.Window | Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            Qt.WindowType.Window | Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setStyleSheet(f"""
             QWidget {{
                 background-color: {STYLE['PRIMARY_DARK']};
@@ -84,7 +84,7 @@ class SlideshowControls(QWidget):
 
         # Play/pause toggle (standard style icons are always available)
         self.play_btn = QPushButton()
-        self.play_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.play_btn.setIconSize(scale.icon_size(24, 24))
         self.play_btn.setToolTip("Play/Pause Slideshow (Space)")
         self.play_btn.setStyleSheet(button_style)
@@ -95,7 +95,7 @@ class SlideshowControls(QWidget):
         self.interval_spin.setValue(DEFAULT_INTERVAL_S)
         self.interval_spin.setSuffix(" s")
         self.interval_spin.setToolTip("Seconds between photos")
-        self.interval_spin.setFocusPolicy(Qt.ClickFocus)
+        self.interval_spin.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.interval_spin.setStyleSheet(f"""
             QSpinBox {{
                 background-color: rgba(255, 255, 255, 0.15);
@@ -186,13 +186,13 @@ class SlideshowControls(QWidget):
     def play(self):
         """Start auto-advance."""
         self._timer.start()
-        self.play_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+        self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause))
         self.play_btn.setToolTip("Pause Slideshow (Space)")
 
     def pause(self):
         """Pause auto-advance."""
         self._timer.stop()
-        self.play_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.play_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.play_btn.setToolTip("Play Slideshow (Space)")
 
     def _on_manual_nav_prev(self):
@@ -222,15 +222,15 @@ class SlideshowControls(QWidget):
     def keyPressEvent(self, event):
         """Keyboard control when the floating panel has focus."""
         key = event.key()
-        if key == Qt.Key_Left:
+        if key == Qt.Key.Key_Left:
             self._on_manual_nav_prev()
-        elif key == Qt.Key_Right:
+        elif key == Qt.Key.Key_Right:
             self._on_manual_nav_next()
-        elif key == Qt.Key_Space:
+        elif key == Qt.Key.Key_Space:
             self.toggle_play()
-        elif key == Qt.Key_Escape:
+        elif key == Qt.Key.Key_Escape:
             self.close_slideshow()
-        elif key in (Qt.Key_Return, Qt.Key_Enter):
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.view_requested.emit()
         else:
             super().keyPressEvent(event)
@@ -247,20 +247,28 @@ class SlideshowControls(QWidget):
         panel_y = qgis_rect.y() + 120
         self.move(int(panel_x), int(panel_y))
 
+    @staticmethod
+    def _global_pos(event):
+        """Global cursor position of a mouse event on both Qt5 and Qt6
+        (globalPos() is removed in Qt6; globalPosition() is absent in Qt5)."""
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        return event.globalPos()
+
     def mousePressEvent(self, event):
         """Handle mouse press for dragging."""
-        if event.button() == Qt.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_position = self._global_pos(event) - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move for dragging."""
-        if event.buttons() == Qt.LeftButton and self.drag_position:
-            self.move(event.globalPos() - self.drag_position)
+        if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position:
+            self.move(self._global_pos(event) - self.drag_position)
             event.accept()
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release for dragging."""
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.drag_position = None
             event.accept()

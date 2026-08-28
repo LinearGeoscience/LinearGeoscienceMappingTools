@@ -56,12 +56,12 @@ Only update azimuth values for specific structures. Select those features in the
 
 # Setup Mapping Section
 INFO_SETUP_MAPPING = """
-<h1>Setup Mapping Geopackage</h1>
+<h1>Set Mapping Scale</h1>
 <p>Setup the Mapping Geopackage Layers ready for <b>QField</b>.</p>
 <ol>
 <li>Import your Mapping Geopackage from the <b>Project Folder</b>.</li>
 <li>Set the <b>Project CRS</b>.</li>
-<li>Run the <b>Setup Mapping Geopackage</b> button and select your desired mapping scale:</li>
+<li>Run the <b>Set Mapping Scale</b> button and select your desired mapping scale:</li>
 <ul>
 <li>Mapping layers are set to the same as the <b>Project CRS</b>.</li>
 <li>Sets the <b>Fixed Reference Scale</b> of each mapping layer.</li>
@@ -166,6 +166,33 @@ INFO_HARDCODE_DATA = """
    <li>Click <b>Commit Changes</b> to apply exactly what was previewed. Missing fields are created automatically.</li>
 </ol>
 <p><b>Important:</b> Run this procedure before modifying any mapping layers and before exporting to a master database.</p>
+"""
+
+INFO_RECONCILE = """
+<h1>Reconcile / Merge Field Data</h1>
+<p>A three-way merge between a working QField template and the master GeoPackage. Where the <b>Append Mapping Data</b> tool only ever <i>adds</i> new features, Reconcile also propagates <b>edits</b> and <b>deletes</b>, and lets you re-sync an edited template <b>without losing the edits</b>. Everything is previewed before anything is written.</p>
+<h2>How it works:</h2>
+<ul>
+   <li><b>UUID identity:</b> features are matched by their <b>UUID</b> (never the per-file <b>fid</b>).</li>
+   <li><b>Base snapshot:</b> a per-template snapshot is stored as the common ancestor. Working changes and master changes are both compared against it, so the tool can tell a genuine edit from an unchanged feature.</li>
+   <li><b>Re-sync without loss:</b> after each accepted reconcile the base advances, so the next sync of the same template applies further edits as <b>updates</b> instead of silently skipping them.</li>
+   <li><b>Field-level merge:</b> when a feature was edited on both sides but in <i>different</i> fields, the edits are combined automatically (shown under <b>Auto-merged</b>). Only a genuine same-field clash becomes a conflict.</li>
+   <li><b>Conflict resolution:</b> for each real conflict choose <b>Field-merge</b> (keep both sides' independent edits, the template wins a true clash), <b>Take working</b> (the template's version), <b>Take master</b> or <b>Skip</b>. The clashing fields and their rival values are shown beneath each conflict. <i>Take master and Skip write nothing this sync; because the template still differs, the conflict re-appears next sync until the template itself is updated.</i></li>
+   <li><b>Splits &amp; merges:</b> when one polygon becomes many (or many become one), the geometry overlap is detected and proposed for <b>confirm/reject</b>. On accept the lineage is recorded (<code>lgs_parent_uuid</code> / <code>lgs_merged_from</code>) and the parent's attributes are carried into the new feature's empty fields.</li>
+   <li><b>Safe deletes:</b> every propagated delete is saved as a recoverable <b>tombstone</b> beside the master.</li>
+   <li><b>Two people at once:</b> an advisory lock plus a master-version check stop two simultaneous reconciles from clashing; if the master moved since your preview you are asked to rebuild it.</li>
+</ul>
+<h2>One-off setup:</h2>
+<p>Click <b>Verify / migrate master</b> once per master GeoPackage. This adds the <code>lgs_*</code> tracking columns, backfills any missing UUIDs, verifies the UUID default expressions and records a baseline. It is safe to re-run.</p>
+<h2>Usage:</h2>
+<ol>
+   <li>Select the <b>master GeoPackage</b> and the <b>working template</b>, and enter the <b>Mapper ID</b> (who collected the data).</li>
+   <li>Click <b>Build preview</b> and review the adds / updates / deletes / auto-merged / conflicts / splits / merges per layer.</li>
+   <li><b>Click any feature</b> in the preview to zoom and flash it on the map — <b>amber = template version</b>, <b>grey = master version</b> — so you can see exactly which feature it is and what changed.</li>
+   <li>Pick a resolution for any conflict and tick the splits / merges you want to accept.</li>
+   <li>Click <b>Apply reconcile</b> to commit. Each layer is written in a single transaction; on any error that layer rolls back and keeps its previous base for a clean retry.</li>
+</ol>
+<p><b>Tip:</b> run <b>Hardcode Data & Update Legends</b> before reconciling, as you would before appending.</p>
 """
 
 INFO_DECLINATION_ADJUSTER = """

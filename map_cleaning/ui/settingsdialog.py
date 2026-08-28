@@ -17,8 +17,9 @@
  ***************************************************************************/
 """
 import os
+from qgis.core import QgsSettings
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import Qt, pyqtSignal, QSettings
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import QDialogButtonBox
 
 from ..core.utils import DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS, SETTINGS_NAME
@@ -34,30 +35,30 @@ class SettingsDialog(uicls_log, basecls_log):
     def __init__(self, parent=None):
         super(SettingsDialog, self).__init__(parent)
         self.setupUi(self)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        self.tightness = QSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
+        self.tightness = QgsSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
         self.splineTightnessSpinBox.setValue(self.tightness)
 
-        self.tolerance = QSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
+        self.tolerance = QgsSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
         self.splineToleranceSpinBox.setValue(self.tolerance)
 
-        self.max_segments = QSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
+        self.max_segments = QgsSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, int)
         self.max_segments_nr_sbox.setValue(self.max_segments)
 
-        self.buttonBox.button(QDialogButtonBox.Ok).clicked.connect(self.ok)
-        self.buttonBox.button(QDialogButtonBox.Cancel).clicked.connect(self.cancel)
-        self.buttonBox.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self.defaults)
-        self.buttonBox.button(QDialogButtonBox.Apply).clicked.connect(self.apply)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).clicked.connect(self.ok)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel).clicked.connect(self.cancel)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.defaults)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply)
 
     def ok(self):
         self.apply()
         self.close()
 
     def apply(self):
-        QSettings().setValue(SETTINGS_NAME + "/tightness", self.splineTightnessSpinBox.value())
-        QSettings().setValue(SETTINGS_NAME + "/tolerance", self.splineToleranceSpinBox.value())
-        QSettings().setValue(SETTINGS_NAME + "/max_segments", self.max_segments_nr_sbox.value())
+        QgsSettings().setValue(SETTINGS_NAME + "/tightness", self.splineTightnessSpinBox.value())
+        QgsSettings().setValue(SETTINGS_NAME + "/tolerance", self.splineToleranceSpinBox.value())
+        QgsSettings().setValue(SETTINGS_NAME + "/max_segments", self.max_segments_nr_sbox.value())
         self.changed.emit()
 
     def cancel(self):

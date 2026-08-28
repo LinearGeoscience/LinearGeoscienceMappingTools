@@ -5,15 +5,15 @@ Pure geometry operations with no UI dependencies
 Enhanced with multipart splitting option and UUID regeneration
 """
 from qgis.core import (
+    Qgis,
     QgsFeature,
     QgsFeatureRequest,
     QgsField,
     QgsFields,
     QgsGeometry,
     QgsSpatialIndex,
-    QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QMetaType
 from qgis.analysis import QgsGeometrySnapper
 import uuid as uuid_module
 
@@ -100,11 +100,11 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
 
     # Handle GeometryCollection and similar multi-geometry types
     # This includes GeometryCollection, Unknown, and other mixed types
-    if geom_type in [QgsWkbTypes.GeometryCollection, QgsWkbTypes.Unknown] or \
-       geom.type() == QgsWkbTypes.UnknownGeometry:
+    if geom_type in [Qgis.WkbType.GeometryCollection, Qgis.WkbType.Unknown] or \
+       geom.type() == Qgis.GeometryType.Unknown:
         try:
             for part in geom.asGeometryCollection():
-                if part and part.type() == QgsWkbTypes.PolygonGeometry:
+                if part and part.type() == Qgis.GeometryType.Polygon:
                     # Recursively extract from each part in case it's also multi
                     if part.isMultipart():
                         sub_parts = extract_polygon_parts_from_geometry(QgsGeometry(part), min_area)
@@ -120,7 +120,7 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
             return polygon_parts
 
     # Handle MultiPolygon explicitly by WKB type first
-    if geom_type == QgsWkbTypes.MultiPolygon:
+    if geom_type == Qgis.WkbType.MultiPolygon:
         try:
             parts = geom.asMultiPolygon()
             if parts:
@@ -137,7 +137,7 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
 
     # Handle geometry that reports as multipart but might be Polygon type
     # This can happen after certain geometry operations
-    if geom.isMultipart() and geom.type() == QgsWkbTypes.PolygonGeometry:
+    if geom.isMultipart() and geom.type() == Qgis.GeometryType.Polygon:
         try:
             # Try asMultiPolygon first
             parts = geom.asMultiPolygon()
@@ -157,7 +157,7 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
         try:
             for part in geom.asGeometryCollection():
                 if part and not part.isEmpty():
-                    if part.type() == QgsWkbTypes.PolygonGeometry:
+                    if part.type() == Qgis.GeometryType.Polygon:
                         if part.isGeosValid():
                             area = part.area()
                             if area > min_area:
@@ -168,8 +168,8 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
             pass
 
     # Handle single Polygon
-    if geom_type == QgsWkbTypes.Polygon or \
-       (geom.type() == QgsWkbTypes.PolygonGeometry and not geom.isMultipart()):
+    if geom_type == Qgis.WkbType.Polygon or \
+       (geom.type() == Qgis.GeometryType.Polygon and not geom.isMultipart()):
         if geom.isGeosValid() and not geom.isEmpty():
             area = geom.area()
             if area > min_area:
@@ -177,7 +177,7 @@ def extract_polygon_parts_from_geometry(geom, min_area=MIN_AREA_THRESHOLD):
 
     # Last resort: if geometry is polygon type but we haven't extracted anything,
     # try to get it as a single polygon
-    if geom.type() == QgsWkbTypes.PolygonGeometry and not polygon_parts:
+    if geom.type() == Qgis.GeometryType.Polygon and not polygon_parts:
         try:
             # Try to convert to single polygon
             if geom.isGeosValid() and not geom.isEmpty():
@@ -200,7 +200,7 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
 
     Args:
         geom: QgsGeometry - the geometry to convert
-        layer_wkb_type: QgsWkbTypes - the layer's WKB type
+        layer_wkb_type: Qgis.WkbType - the layer's WKB type
         split_multipart: bool - if True, split multipart into multiple features
         original_feature: QgsFeature - original feature for attribute copying
 
@@ -240,7 +240,7 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
             # If extraction failed, try to return the geometry as a single-item list
             if geom and not geom.isEmpty() and geom.isGeosValid():
                 # Ensure it's a proper polygon for the layer type
-                if layer_wkb_type == QgsWkbTypes.Polygon and geom_type == QgsWkbTypes.MultiPolygon:
+                if layer_wkb_type == Qgis.WkbType.Polygon and geom_type == Qgis.WkbType.MultiPolygon:
                     # Force extraction using asMultiPolygon
                     try:
                         parts = geom.asMultiPolygon()
@@ -263,8 +263,8 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
     # Non-splitting mode below...
 
     # Handle GeometryCollection (can occur from difference operations)
-    if geom_type in [QgsWkbTypes.GeometryCollection, QgsWkbTypes.Unknown] or \
-       geom.type() == QgsWkbTypes.UnknownGeometry:
+    if geom_type in [Qgis.WkbType.GeometryCollection, Qgis.WkbType.Unknown] or \
+       geom.type() == Qgis.GeometryType.Unknown:
         polygon_parts = extract_polygon_parts_from_geometry(geom)
 
         if not polygon_parts:
@@ -275,7 +275,7 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
             geom_type = geom.wkbType()
         else:
             # Multiple parts - find largest or combine based on layer type
-            if layer_wkb_type == QgsWkbTypes.Polygon:
+            if layer_wkb_type == Qgis.WkbType.Polygon:
                 # Keep only largest part
                 largest_part = max(polygon_parts, key=lambda p: p.area())
                 geom = largest_part
@@ -290,7 +290,7 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
         return geom
 
     # Convert MultiPolygon to Polygon if layer expects Polygon (non-splitting mode)
-    if layer_wkb_type == QgsWkbTypes.Polygon and (geom_type == QgsWkbTypes.MultiPolygon or geom.isMultipart()):
+    if layer_wkb_type == Qgis.WkbType.Polygon and (geom_type == Qgis.WkbType.MultiPolygon or geom.isMultipart()):
         polygon_parts = extract_polygon_parts_from_geometry(geom)
 
         if not polygon_parts:
@@ -305,7 +305,7 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
             return largest_part
 
     # Convert Polygon to MultiPolygon if layer expects MultiPolygon
-    if layer_wkb_type == QgsWkbTypes.MultiPolygon and geom_type == QgsWkbTypes.Polygon:
+    if layer_wkb_type == Qgis.WkbType.MultiPolygon and geom_type == Qgis.WkbType.Polygon:
         try:
             # Convert single to multi
             multi_geom = QgsGeometry.fromMultiPolygonXY([geom.asPolygon()])
@@ -319,9 +319,9 @@ def convert_geometry_to_layer_type(geom, layer_wkb_type, split_multipart=False, 
 def _is_layer_singlepart(layer):
     """Check if layer expects singlepart polygon geometries."""
     return layer.wkbType() in [
-        QgsWkbTypes.Polygon, QgsWkbTypes.PolygonZ,
-        QgsWkbTypes.PolygonM, QgsWkbTypes.PolygonZM,
-        QgsWkbTypes.Polygon25D
+        Qgis.WkbType.Polygon, Qgis.WkbType.PolygonZ,
+        Qgis.WkbType.PolygonM, Qgis.WkbType.PolygonZM,
+        Qgis.WkbType.Polygon25D
     ]
 
 
@@ -399,7 +399,7 @@ def auto_snap_geometry(target_geom, reference_geom, tolerance):
         target_geom,
         tolerance,
         [reference_geom],
-        QgsGeometrySnapper.PreferNodes
+        QgsGeometrySnapper.SnapMode.PreferNodes
     )
 
     # Check if snapping actually changed the geometry
@@ -927,7 +927,7 @@ def get_layer_polygon_count(layer):
         return 0
 
     # Check if layer is polygon type
-    if layer.wkbType() not in [QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
+    if layer.wkbType() not in [Qgis.WkbType.Polygon, Qgis.WkbType.MultiPolygon]:
         return 0
 
     return layer.featureCount()
@@ -972,7 +972,7 @@ def find_polygon_overlaps(layer, progress_dialog=None):
     overlap_fields = QgsFields()
     for field in layer.fields():
         overlap_fields.append(field)
-    overlap_fields.append(QgsField('_type', QVariant.String))
+    overlap_fields.append(QgsField('_type', QMetaType.Type.QString))
 
     overlap_features = []
     overlap_count = 0
@@ -1010,7 +1010,7 @@ def find_polygon_overlaps(layer, progress_dialog=None):
                 intersection = geom_a.intersection(geom_b)
 
                 # Only keep polygon intersections (ignore line/point touches)
-                if not intersection.isEmpty() and intersection.type() == QgsWkbTypes.PolygonGeometry:
+                if not intersection.isEmpty() and intersection.type() == Qgis.GeometryType.Polygon:
                     intersection = convert_geometry_to_layer_type(intersection, layer.wkbType())
 
                     # Classify: check if clipping would bisect either polygon
@@ -1076,7 +1076,7 @@ def find_polygon_slivers(layer, max_area, min_area=0.0, snap_tolerance=0.001, pr
         result.error = "No layer provided"
         return result
 
-    if layer.wkbType() not in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+    if layer.wkbType() not in (Qgis.WkbType.Polygon, Qgis.WkbType.MultiPolygon):
         result.error = "Layer must be a polygon layer"
         return result
 
@@ -1105,7 +1105,7 @@ def find_polygon_slivers(layer, max_area, min_area=0.0, snap_tolerance=0.001, pr
     sliver_fields = QgsFields()
     for field in layer.fields():
         sliver_fields.append(field)
-    sliver_fields.append(QgsField('_type', QVariant.String))
+    sliver_fields.append(QgsField('_type', QMetaType.Type.QString))
 
     sliver_features = []
     for part in union.asGeometryCollection():
@@ -1119,7 +1119,7 @@ def find_polygon_slivers(layer, max_area, min_area=0.0, snap_tolerance=0.001, pr
             area = hole_geom.area()
             if area < MIN_AREA_THRESHOLD or area < min_area or area > max_area:
                 continue
-            if layer.wkbType() == QgsWkbTypes.MultiPolygon:
+            if layer.wkbType() == Qgis.WkbType.MultiPolygon:
                 hole_geom.convertToMultiType()
             feat = QgsFeature(sliver_fields)
             feat.setGeometry(hole_geom)

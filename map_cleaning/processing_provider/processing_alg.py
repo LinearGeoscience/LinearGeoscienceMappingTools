@@ -11,8 +11,10 @@
 ***************************************************************************
 """
 
-from qgis.PyQt.QtCore import QCoreApplication, QSettings
+from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
+    QgsSettings,
+    Qgis,
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
@@ -23,17 +25,16 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
-    QgsWkbTypes,
 )
 from ..core.spline_interp import interpolate
 
 SINGLE_LINE_TYPES = (
-    QgsWkbTypes.LineString,
-    QgsWkbTypes.LineStringM,
-    QgsWkbTypes.LineStringZ,
-    QgsWkbTypes.LineStringZM,
-    QgsWkbTypes.LineString25D,
-    QgsWkbTypes.LineGeometry,
+    Qgis.WkbType.LineString,
+    Qgis.WkbType.LineStringM,
+    Qgis.WkbType.LineStringZ,
+    Qgis.WkbType.LineStringZM,
+    Qgis.WkbType.LineString25D,
+    Qgis.GeometryType.Line,
 )
 
 from ..core.utils import DEFAULT_TIGHTNESS, DEFAULT_TOLERANCE, DEFAULT_MAX_SEGMENTS, SETTINGS_NAME
@@ -96,20 +97,20 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
         return self.tr(help_str)
 
     def initAlgorithm(self, config=None):
-        tension = QSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
-        tolerance = QSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
-        max_segments = QSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, float)
+        tension = QgsSettings().value(SETTINGS_NAME + "/tightness", DEFAULT_TIGHTNESS, float)
+        tolerance = QgsSettings().value(SETTINGS_NAME + "/tolerance", DEFAULT_TOLERANCE, float)
+        max_segments = QgsSettings().value(SETTINGS_NAME + "/max_segments", DEFAULT_MAX_SEGMENTS, float)
 
         self.addParameter(
             QgsProcessingParameterFeatureSource(
-                self.INPUT, self.tr("Input layer"), [QgsProcessing.TypeVectorLine]
+                self.INPUT, self.tr("Input layer"), [Qgis.ProcessingSourceType.VectorLine]
             )
         )
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.TENSION,
                 self.tr("Tension parameter"),
-                QgsProcessingParameterNumber.Double,
+                Qgis.ProcessingNumberParameterType.Double,
                 tension,
             )
         )
@@ -117,7 +118,7 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.TOLERANCE,
                 self.tr("Tolerance parameter"),
-                QgsProcessingParameterNumber.Double,
+                Qgis.ProcessingNumberParameterType.Double,
                 tolerance,
             )
         )
@@ -125,7 +126,7 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterNumber(
                 self.MAX_SEGMENTS,
                 self.tr("Max number of spline segments between vertices"),
-                QgsProcessingParameterNumber.Integer,
+                Qgis.ProcessingNumberParameterType.Integer,
                 max_segments,
             )
         )
@@ -162,12 +163,12 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             context,
         )
         has_z = source.wkbType() in (
-            QgsWkbTypes.LineStringZ,
-            QgsWkbTypes.LineStringZM,
+            Qgis.WkbType.LineStringZ,
+            Qgis.WkbType.LineStringZM,
         )
         has_m = source.wkbType() in (
-            QgsWkbTypes.LineStringM,
-            QgsWkbTypes.LineStringZM,
+            Qgis.WkbType.LineStringM,
+            Qgis.WkbType.LineStringZM,
         )
 
         total = 100.0 / source.featureCount() if source.featureCount() else 0
@@ -182,7 +183,7 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
             vertices_xy = [QgsPointXY(v) for v in cur_geom.vertices()]
             if len(vertices_xy) < 3:
                 # it is a 2 points line - keep it as is
-                sink.addFeature(feature, QgsFeatureSink.FastInsert)
+                sink.addFeature(feature, QgsFeatureSink.Flag.FastInsert)
                 continue
             spline_pts = [QgsPointXY(pt) for pt in interpolate(vertices_xy, tolerance, tension, max_segments)]
             spline_geom = QgsGeometry.fromPolylineXY(spline_pts)
@@ -225,7 +226,7 @@ class Lines2SplinesProcessingAlgorithm(QgsProcessingAlgorithm):
 
             spline_feat = QgsFeature(feature)
             spline_feat.setGeometry(spline_geom)
-            sink.addFeature(spline_feat, QgsFeatureSink.FastInsert)
+            sink.addFeature(spline_feat, QgsFeatureSink.Flag.FastInsert)
 
             feedback.setProgress(int(current * total))
 

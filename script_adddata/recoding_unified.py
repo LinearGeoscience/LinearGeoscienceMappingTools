@@ -122,7 +122,7 @@ class UnifiedRecodingDialog(QDialog):
 
         # Tab 1: Layer & Field Mapping
         mapping_tab = self._create_mapping_tab()
-        self.tab_widget.addTab(mapping_tab, "🔗 Layer & Field Mapping")
+        self.tab_widget.addTab(mapping_tab, "🔗 Layer && Field Mapping")
 
         # Tab 2: Value Recoding
         value_tab = self._create_value_recoding_tab()
@@ -143,8 +143,8 @@ class UnifiedRecodingDialog(QDialog):
         layout.addLayout(progress_layout)
 
         # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        preview_btn = buttons.addButton("Preview", QDialogButtonBox.ActionRole)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        preview_btn = buttons.addButton("Preview", QDialogButtonBox.ButtonRole.ActionRole)
         preview_btn.clicked.connect(self._preview_recoding)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -193,9 +193,9 @@ class UnifiedRecodingDialog(QDialog):
             "Source Field", "Source Type", "→", "Target Field", "Default Value"
         ])
         self.field_mapping_table.horizontalHeader().setStretchLastSection(False)
-        self.field_mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.field_mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.field_mapping_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.field_mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.field_mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.field_mapping_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.field_mapping_table.setAlternatingRowColors(True)
 
         # NOW connect signal and set initial value (after table exists)
@@ -223,18 +223,18 @@ class UnifiedRecodingDialog(QDialog):
         for row, (field_name, field) in enumerate(self.source_fields.items()):
             # Source field (read-only)
             source_item = QTableWidgetItem(field_name)
-            source_item.setFlags(source_item.flags() & ~Qt.ItemIsEditable)
+            source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.field_mapping_table.setItem(row, 0, source_item)
 
             # Source type (read-only)
             type_item = QTableWidgetItem(field.typeName())
-            type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.field_mapping_table.setItem(row, 1, type_item)
 
             # Arrow (read-only)
             arrow_item = QTableWidgetItem("→")
-            arrow_item.setTextAlignment(Qt.AlignCenter)
-            arrow_item.setFlags(arrow_item.flags() & ~Qt.ItemIsEditable)
+            arrow_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            arrow_item.setFlags(arrow_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.field_mapping_table.setItem(row, 2, arrow_item)
 
             # Target field combo
@@ -551,7 +551,7 @@ class UnifiedRecodingDialog(QDialog):
 
         raw_value is the actual source data value; source_value may carry a
         display suffix like " (123 records)". The raw value is stored in
-        Qt.UserRole so it is never reconstructed by parsing the display text
+        Qt.ItemDataRole.UserRole so it is never reconstructed by parsing the display text
         (which corrupts values that themselves contain " (").
         """
         row = self.value_mapping_table.rowCount()
@@ -559,15 +559,15 @@ class UnifiedRecodingDialog(QDialog):
 
         # Source value
         source_item = QTableWidgetItem(source_value)
-        source_item.setData(Qt.UserRole, raw_value if raw_value is not None else source_value)
+        source_item.setData(Qt.ItemDataRole.UserRole, raw_value if raw_value is not None else source_value)
         if read_only_source:
-            source_item.setFlags(source_item.flags() & ~Qt.ItemIsEditable)
+            source_item.setFlags(source_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.value_mapping_table.setItem(row, 0, source_item)
 
         # Arrow
         arrow_item = QTableWidgetItem("→")
-        arrow_item.setFlags(arrow_item.flags() & ~Qt.ItemIsEditable)
-        arrow_item.setTextAlignment(Qt.AlignCenter)
+        arrow_item.setFlags(arrow_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        arrow_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_mapping_table.setItem(row, 1, arrow_item)
 
         # Target value - use QComboBox if master values are available
@@ -591,11 +591,11 @@ class UnifiedRecodingDialog(QDialog):
         return item.text() if item else ""
 
     def _get_source_value(self, row: int) -> Optional[str]:
-        """Get the raw source value from a row (stored in Qt.UserRole)"""
+        """Get the raw source value from a row (stored in Qt.ItemDataRole.UserRole)"""
         item = self.value_mapping_table.item(row, 0)
         if item is None:
             return None
-        data = item.data(Qt.UserRole)
+        data = item.data(Qt.ItemDataRole.UserRole)
         return data if data is not None else item.text()
 
     def _read_value_table(self) -> Dict[str, str]:
@@ -718,9 +718,9 @@ class UnifiedRecodingDialog(QDialog):
             msg.setText(f"This field already has {existing_count} value mappings configured.\n"
                         f"Analysis found {len(value_counts)} unique values in source.")
             msg.setInformativeText("What would you like to do?")
-            merge_btn = msg.addButton("Merge (keep existing)", QMessageBox.AcceptRole)
-            replace_btn = msg.addButton("Replace all", QMessageBox.DestructiveRole)
-            msg.addButton(QMessageBox.Cancel)
+            merge_btn = msg.addButton("Merge (keep existing)", QMessageBox.ButtonRole.AcceptRole)
+            replace_btn = msg.addButton("Replace all", QMessageBox.ButtonRole.DestructiveRole)
+            msg.addButton(QMessageBox.StandardButton.Cancel)
             msg.exec()
             clicked = msg.clickedButton()
             if clicked == merge_btn:
@@ -862,7 +862,7 @@ class UnifiedRecodingDialog(QDialog):
             for template in templates:
                 self.template_combo.addItem(template['template_name'])
         except Exception as e:
-            QgsMessageLog.logMessage(f"Could not load templates: {e}", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage(f"Could not load templates: {e}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def _on_load_template(self, template_name: str):
         """Load a template"""

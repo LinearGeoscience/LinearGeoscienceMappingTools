@@ -10,9 +10,14 @@ from .panel import RecodeWorkflowWizard
 __all__ = ["run_recode_workflow", "RecodeWorkflowWizard"]
 
 
-def run_recode_workflow(iface):
-    """Singleton launcher – called from mainplugin.py."""
-    existing = getattr(iface, '_recode_wizard', None)
+def run_recode_workflow(iface, owner=None):
+    """Singleton launcher – called from mainplugin.py.
+
+    The singleton wizard is stored on `owner` (the plugin instance) as
+    `owner.recode_wizard`; unload() tears it down. Without an owner the
+    wizard is shown without singleton tracking.
+    """
+    existing = getattr(owner, 'recode_wizard', None) if owner else None
     if existing is not None:
         try:
             existing.show()
@@ -21,10 +26,11 @@ def run_recode_workflow(iface):
             return existing
         except RuntimeError:
             # C++ object deleted
-            iface._recode_wizard = None
+            owner.recode_wizard = None
 
     wizard = RecodeWorkflowWizard(iface, parent=iface.mainWindow())
-    iface._recode_wizard = wizard
+    if owner is not None:
+        owner.recode_wizard = wizard
     wizard.show()
     wizard.activateWindow()
     wizard.raise_()

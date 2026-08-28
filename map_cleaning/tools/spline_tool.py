@@ -17,7 +17,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QCursor, QPixmap, QColor
 from qgis.core import (
     Qgis,
@@ -29,7 +29,6 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
     QgsSettings,
-    QgsWkbTypes,
 )
 from qgis.gui import QgsRubberBand, QgsMapToolEdit, QgsVertexMarker
 
@@ -42,7 +41,7 @@ class SplineTool(QgsMapToolEdit):
         self.iface = iface
         self.canvas = self.iface.mapCanvas()
 
-        self.rb = QgsRubberBand(self.canvas, QgsWkbTypes.LineGeometry)
+        self.rb = QgsRubberBand(self.canvas, Qgis.GeometryType.Line)
         self.rb.setColor(QColor(255, 0, 0, 200))  # Default-style red
         self.rb.setWidth(1)
         self.rb.setFillColor(QColor(255, 0, 0, 0))  # Transparent fill for line previews
@@ -52,7 +51,7 @@ class SplineTool(QgsMapToolEdit):
         self.snapping_utils = self.canvas.snappingUtils()
 
         self.points = []  # digitized, not yet interpolated points
-        self.type = QgsWkbTypes.LineGeometry  # layer geometry type
+        self.type = Qgis.GeometryType.Line  # layer geometry type
         self.tolerance = None
         self.tightness = None
         self.is_polygon = None
@@ -113,14 +112,14 @@ class SplineTool(QgsMapToolEdit):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Spline preview update failed: {e}",
-                'Map Cleaning Toolkit', Qgis.Warning
+                'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
             )
 
     def canvasReleaseEvent(self, event):
         """Handle mouse click to add/finish digitizing points"""
         point = self.toMapCoordinates(event.pos())
 
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             # try to snap to a feature
             result = self.snapping_utils.snapToMap(point)
             if result.isValid():
@@ -134,7 +133,7 @@ class SplineTool(QgsMapToolEdit):
             except Exception as e:
                 QgsMessageLog.logMessage(
                     f"Spline preview update failed: {e}",
-                    'Map Cleaning Toolkit', Qgis.Warning
+                    'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                 )
         else:
             if len(self.points) >= 2:
@@ -146,14 +145,14 @@ class SplineTool(QgsMapToolEdit):
             self.canvas.refresh()
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Escape:
+        if e.key() == Qt.Key.Key_Escape:
             # Cancel the current digitizing session without a deactivate()/
             # activate() round-trip — tearing the tool down just to cancel
             # risks leaving the rubber band in a broken state.
             self.reset_points()
             self.reset_rubber_band()
             self.canvas.refresh()
-        elif e.key() == Qt.Key_Backspace:
+        elif e.key() == Qt.Key.Key_Backspace:
             if self.points:
                 self.points.pop()
 
@@ -195,7 +194,7 @@ class SplineTool(QgsMapToolEdit):
                     except Exception as e:
                         QgsMessageLog.logMessage(
                             f"CRS transformation failed for point, using untransformed coordinates: {e}",
-                            'Map Cleaning Toolkit', Qgis.Warning
+                            'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                         )
                         coords.append(point)  # Use untransformed point
 
@@ -222,7 +221,7 @@ class SplineTool(QgsMapToolEdit):
 
             layer.beginEditCommand("Feature added")
 
-            settings = QSettings()
+            settings = QgsSettings()
             disable_attributes = settings.value("/qgis/digitizing/disable_enter_attribute_values_dialog", False, type=bool)
 
             # Check if feature was added successfully
@@ -234,7 +233,7 @@ class SplineTool(QgsMapToolEdit):
                 layer.endEditCommand()
             else:
                 dlg = self.iface.getFeatureForm(layer, f)
-                if dlg.exec_():
+                if dlg.exec():
                     layer.endEditCommand()
                 else:
                     layer.destroyEditCommand()
@@ -242,7 +241,7 @@ class SplineTool(QgsMapToolEdit):
         except Exception as e:
             # Ensure edit command is cleaned up on any error
             QgsMessageLog.logMessage(
-                f"Error creating feature: {e}", 'Map Cleaning Toolkit', Qgis.Warning
+                f"Error creating feature: {e}", 'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
             )
             try:
                 layer.destroyEditCommand()
@@ -269,8 +268,8 @@ class SplineTool(QgsMapToolEdit):
         if layer is not None and hasattr(layer, 'geometryType'):
             self.type = layer.geometryType()
         else:
-            self.type = QgsWkbTypes.LineGeometry
-        self.is_polygon = (self.type == QgsWkbTypes.PolygonGeometry)
+            self.type = Qgis.GeometryType.Line
+        self.is_polygon = (self.type == Qgis.GeometryType.Polygon)
 
         # A rubber band whose item left the canvas scene can never paint
         # again — recreate it so the tool self-heals instead of staying
@@ -301,7 +300,7 @@ class SplineTool(QgsMapToolEdit):
             return
         self.rb.setColor(QColor(255, 0, 0, 200))
         self.rb.setWidth(1)
-        if self.type == QgsWkbTypes.PolygonGeometry:
+        if self.type == Qgis.GeometryType.Polygon:
             self.rb.setFillColor(QColor(255, 0, 0, 40))
         else:
             self.rb.setFillColor(QColor(255, 0, 0, 0))
@@ -359,7 +358,7 @@ class SplineTool(QgsMapToolEdit):
             # there briefly on first creation before setCenter() runs.
             self.snap_marker.hide()
             self.snap_marker.setIconSize(16)
-            self.snap_marker.setIconType(QgsVertexMarker.ICON_BOX)
+            self.snap_marker.setIconType(QgsVertexMarker.IconType.ICON_BOX)
             self.snap_marker.setPenWidth(3)
             self.snap_marker.setColor(self.snap_col)
 

@@ -48,7 +48,7 @@ class GeometryIssuesDialog(QDialog):
 
         # Make dialog non-modal to allow map interaction
         self.setModal(False)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
 
@@ -77,20 +77,20 @@ class GeometryIssuesDialog(QDialog):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Feature ID", "Issue Type", "Description"])
         self.table.setRowCount(len(self.issues))
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
         # Populate table
         for row, issue in enumerate(self.issues):
             # Feature ID
             fid_item = QTableWidgetItem(str(issue.fid))
-            fid_item.setTextAlignment(Qt.AlignCenter)
+            fid_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 0, fid_item)
 
             # Issue Type
             type_item = QTableWidgetItem(self.format_issue_type(issue.issue_type))
-            type_item.setTextAlignment(Qt.AlignCenter)
+            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             # Color code by severity
             if issue.issue_type == 'invalid':
                 type_item.setBackground(QColor(255, 200, 200))  # Light red

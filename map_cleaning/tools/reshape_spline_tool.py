@@ -16,7 +16,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QCursor, QPixmap, QColor
 from qgis.core import (
     QgsCoordinateTransform,
@@ -28,7 +28,6 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
     QgsSettings,
-    QgsWkbTypes,
     Qgis,
 )
 from qgis.gui import QgsRubberBand, QgsMapToolEdit, QgsVertexMarker
@@ -52,7 +51,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         # Rubber band for preview. Style is set here as the default, and is
         # re-applied in set_rubber_band_points() on every preview update —
         # some QGIS builds drop stroke styling across QgsRubberBand.reset().
-        self.rb = QgsRubberBand(self.canvas, QgsWkbTypes.LineGeometry)
+        self.rb = QgsRubberBand(self.canvas, Qgis.GeometryType.Line)
         self.rb.setColor(QColor(30, 144, 255, 200))  # Dodger blue
         self.rb.setWidth(2)
         self.rb.setFillColor(QColor(30, 144, 255, 0))  # Transparent fill
@@ -126,7 +125,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Reshape preview update failed: {e}",
-                'Map Cleaning Toolkit', Qgis.Warning
+                'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
             )
 
     def canvasReleaseEvent(self, event):
@@ -137,7 +136,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         """
         point = self.toMapCoordinates(event.pos())
 
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             # Left click - add control point
             result = self.snapping_utils.snapToMap(point)
             if result.isValid():
@@ -152,7 +151,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
                 except Exception as e:
                     QgsMessageLog.logMessage(
                         f"Reshape preview update failed: {e}",
-                        'Map Cleaning Toolkit', Qgis.Warning
+                        'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                     )
         else:
             # Right click - finish and perform reshape
@@ -168,12 +167,12 @@ class ReshapeSplineTool(QgsMapToolEdit):
         Args:
             e: Key press event
         """
-        if e.key() == Qt.Key_Escape:
+        if e.key() == Qt.Key.Key_Escape:
             # ESC - cancel current operation
             self.reset_points()
             self.reset_rubber_band()
             self.canvas.refresh()
-        elif e.key() == Qt.Key_Backspace:
+        elif e.key() == Qt.Key.Key_Backspace:
             # Backspace - remove last point
             if self.points:
                 self.points.pop()
@@ -192,11 +191,11 @@ class ReshapeSplineTool(QgsMapToolEdit):
         """
         layer = self.iface.activeLayer()
         if not layer:
-            self.show_message("No active layer", Qgis.Warning)
+            self.show_message("No active layer", Qgis.MessageLevel.Warning)
             return
 
         if not layer.isEditable():
-            self.show_message("Layer is not in edit mode", Qgis.Warning)
+            self.show_message("Layer is not in edit mode", Qgis.MessageLevel.Warning)
             return
 
         # Convert control points to smooth spline (in project / canvas CRS)
@@ -216,11 +215,11 @@ class ReshapeSplineTool(QgsMapToolEdit):
                 except Exception as e:
                     QgsMessageLog.logMessage(
                         f"CRS transform failed for reshape point: {e}",
-                        'Map Cleaning Toolkit', Qgis.Warning
+                        'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                     )
                     self.show_message(
                         "Could not transform spline to layer CRS — aborting reshape",
-                        Qgis.Critical
+                        Qgis.MessageLevel.Critical
                     )
                     return
             spline_points = transformed
@@ -250,7 +249,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
             if not features_to_reshape:
                 self.show_message(
                     "None of the selected features intersect with the reshape line",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
         else:
@@ -264,7 +263,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
             if not features_to_reshape:
                 self.show_message(
                     "No features intersect with the reshape line",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
 
@@ -293,13 +292,13 @@ class ReshapeSplineTool(QgsMapToolEdit):
                         error_count += 1
                         QgsMessageLog.logMessage(
                             f"Reshape created invalid geometry for feature {feature.id()}",
-                            'Map Cleaning Toolkit', Qgis.Warning
+                            'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                         )
                 elif result == 1:  # Error
                     error_count += 1
                     QgsMessageLog.logMessage(
                         f"reshapeGeometry returned error for feature {feature.id()}",
-                        'Map Cleaning Toolkit', Qgis.Warning
+                        'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
                     )
                 else:  # 2 = no change
                     no_change_count += 1
@@ -307,9 +306,9 @@ class ReshapeSplineTool(QgsMapToolEdit):
             layer.endEditCommand()
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Reshape error: {e}", 'Map Cleaning Toolkit', Qgis.Warning
+                f"Reshape error: {e}", 'Map Cleaning Toolkit', Qgis.MessageLevel.Warning
             )
-            self.show_message(f"Reshape failed: {e}", Qgis.Critical)
+            self.show_message(f"Reshape failed: {e}", Qgis.MessageLevel.Critical)
             try:
                 layer.destroyEditCommand()
             except Exception:
@@ -320,24 +319,24 @@ class ReshapeSplineTool(QgsMapToolEdit):
         if reshape_count > 0:
             self.show_message(
                 f"Successfully reshaped {reshape_count} feature(s){selection_note}",
-                Qgis.Success
+                Qgis.MessageLevel.Success
             )
         if error_count > 0:
             self.show_message(
                 f"Failed to reshape {error_count} feature(s)",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
         if reshape_count == 0 and no_change_count > 0:
             self.show_message(
                 "Reshape line did not modify the geometry — the spline must "
                 "cross each polygon's boundary at two points, or have both "
                 "endpoints outside the polygon",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
 
         self.canvas.refresh()
 
-    def show_message(self, message, level=Qgis.Info):
+    def show_message(self, message, level=Qgis.MessageLevel.Info):
         """Show a message in the QGIS message bar.
 
         Args:
@@ -378,14 +377,14 @@ class ReshapeSplineTool(QgsMapToolEdit):
         except RuntimeError:
             rb_usable = False
         if not rb_usable:
-            self.rb = QgsRubberBand(self.canvas, QgsWkbTypes.LineGeometry)
+            self.rb = QgsRubberBand(self.canvas, Qgis.GeometryType.Line)
             self.rb.setColor(QColor(30, 144, 255, 200))
             self.rb.setWidth(2)
             self.rb.setFillColor(QColor(30, 144, 255, 0))
 
         # Start from a clean, visible rubber band each activation so that
         # re-entering the tool never leaves a stale geometry or hidden state.
-        self.rb.reset(QgsWkbTypes.LineGeometry)
+        self.rb.reset(Qgis.GeometryType.Line)
         self.rb.show()
 
     def reset_rubber_band(self):
@@ -394,7 +393,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         # the active tool during unload, after cleanup has already run.
         if self.rb is None:
             return
-        self.rb.reset(QgsWkbTypes.LineGeometry)
+        self.rb.reset(Qgis.GeometryType.Line)
 
     def set_rubber_band_points(self, points):
         """Set rubber band points for preview.
@@ -450,7 +449,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
             # there briefly on first creation before setCenter() runs.
             self.snap_marker.hide()
             self.snap_marker.setIconSize(16)
-            self.snap_marker.setIconType(QgsVertexMarker.ICON_BOX)
+            self.snap_marker.setIconType(QgsVertexMarker.IconType.ICON_BOX)
             self.snap_marker.setPenWidth(3)
             self.snap_marker.setColor(self.snap_col)
 
@@ -461,7 +460,7 @@ class ReshapeSplineTool(QgsMapToolEdit):
         """Remove rubber band from the canvas scene."""
         try:
             if self.rb is not None:
-                self.rb.reset(QgsWkbTypes.LineGeometry)
+                self.rb.reset(Qgis.GeometryType.Line)
                 self.canvas.scene().removeItem(self.rb)
         except Exception:
             pass

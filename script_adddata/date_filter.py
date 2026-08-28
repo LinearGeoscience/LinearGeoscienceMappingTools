@@ -167,7 +167,7 @@ class EnhancedTimezoneSelector(QWidget):
         # Setup completer for search
         all_tz_list = ["UTC"] + all_tzs
         completer = QCompleter(all_tz_list)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.timezone_combo.setCompleter(completer)
 
         # Set default to Australia/Perth

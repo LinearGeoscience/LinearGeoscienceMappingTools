@@ -8,8 +8,8 @@ Utility functions, constants, and data classes for the GeoPackage Append Tool.
 import re
 import json
 from datetime import datetime, date, time
-from qgis.PyQt.QtCore import QVariant, QDateTime, QDate, QTime
-from qgis.core import QgsFeatureRequest
+from qgis.PyQt.QtCore import QMetaType, QDateTime, QDate, QTime
+from qgis.core import Qgis, QgsFeatureRequest
 
 # Bundled fuzzywuzzy for better UUID field detection
 try:
@@ -193,7 +193,7 @@ def is_date_field(field):
     """
     if hasattr(field, 'type'):
         field_type = field.type()
-        if field_type in [QVariant.Date, QVariant.DateTime]:
+        if field_type in [QMetaType.Type.QDate, QMetaType.Type.QDateTime]:
             return True
     if hasattr(field, 'typeName'):
         type_name = field.typeName().lower()
@@ -398,7 +398,7 @@ def analyze_unique_values(layer, field_name, max_unique=1000):
 
     # Only fetch the one attribute, no geometry - much faster on large layers
     request = (QgsFeatureRequest()
-               .setFlags(QgsFeatureRequest.NoGeometry)
+               .setFlags(Qgis.FeatureRequestFlag.NoGeometry)
                .setSubsetOfAttributes([field_idx]))
 
     for feature in layer.getFeatures(request):
@@ -435,18 +435,18 @@ def validate_field_type_compatibility(source_field, target_field):
     target_type = target_field.type()
 
     # String fields can accept most types
-    if target_type == QVariant.String:
+    if target_type == QMetaType.Type.QString:
         return (True, None)
 
     # Numeric types
-    numeric_types = [QVariant.Int, QVariant.LongLong, QVariant.Double]
+    numeric_types = [QMetaType.Type.Int, QMetaType.Type.LongLong, QMetaType.Type.Double]
     if source_type in numeric_types and target_type in numeric_types:
-        if source_type == QVariant.Double and target_type in [QVariant.Int, QVariant.LongLong]:
+        if source_type == QMetaType.Type.Double and target_type in [QMetaType.Type.Int, QMetaType.Type.LongLong]:
             return (True, "Warning: Mapping from Double to Integer may lose precision")
         return (True, None)
 
     # Date/time types
-    if source_type == QVariant.Date and target_type == QVariant.DateTime:
+    if source_type == QMetaType.Type.QDate and target_type == QMetaType.Type.QDateTime:
         return (True, None)
 
     # Types don't match

@@ -19,8 +19,8 @@ import os
 import re
 
 from qgis.core import (
+    Qgis,
     QgsProject, QgsVectorFileWriter, QgsCoordinateTransformContext,
-    QgsMapLayerType, QgsWkbTypes,
 )
 
 
@@ -80,9 +80,9 @@ def find_mapsheet_layer():
     """
     polygons = []
     for layer in QgsProject.instance().mapLayers().values():
-        if layer.type() != QgsMapLayerType.VectorLayer:
+        if layer.type() != Qgis.LayerType.Vector:
             continue
-        if layer.geometryType() != QgsWkbTypes.PolygonGeometry:
+        if layer.geometryType() != Qgis.GeometryType.Polygon:
             continue
         polygons.append(layer)
 
@@ -113,12 +113,12 @@ def export_mapsheet_to_gpkg(layer, output_gpkg, log=_noop):
     options.driverName = "GPKG"
     options.layerName = "Mapsheets"
     options.fileEncoding = "UTF-8"
-    options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+    options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
 
     error = QgsVectorFileWriter.writeAsVectorFormatV3(
         layer, output_gpkg, QgsCoordinateTransformContext(), options)
 
-    if error[0] != QgsVectorFileWriter.NoError:
+    if error[0] != QgsVectorFileWriter.WriterError.NoError:
         log(f"Failed to export mapsheet grid: {error[1]}", "ERROR")
         return False
 
@@ -133,7 +133,7 @@ def export_mapsheet_to_gpkg(layer, output_gpkg, log=_noop):
 def list_project_rasters():
     """Return the project's raster layers, sorted by name."""
     rasters = [layer for layer in QgsProject.instance().mapLayers().values()
-               if layer.type() == QgsMapLayerType.RasterLayer]
+               if layer.type() == Qgis.LayerType.Raster]
     rasters.sort(key=lambda l: l.name().lower())
     return rasters
 

@@ -31,7 +31,7 @@ from qgis.PyQt.QtGui import QFont, QColor
 from qgis.core import (QgsProject, QgsVectorLayer, QgsVectorFileWriter, QgsFeature,
                        QgsSymbol, QgsSingleSymbolRenderer, QgsSimpleMarkerSymbolLayer,
                        QgsPalLayerSettings, QgsVectorLayerSimpleLabeling,
-                       QgsTextBufferSettings, QgsMessageLog, Qgis, QgsWkbTypes)
+                       QgsTextBufferSettings, QgsMessageLog, Qgis)
 import os
 import shutil
 import datetime
@@ -41,6 +41,71 @@ try:
     from .layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 except ImportError:
     from layer_select import layer_candidates, populate_layer_combo, combo_current_layer
+
+
+def resolve_feature_photo_paths(feature, photo_path_field):
+    """Return an ordered, de-duplicated list of absolute photo paths for a feature.
+
+    Photo Points features bundle several photos per point: PhotoPath holds
+    only the first photo's absolute path, while PhotoFiles holds the
+    comma-separated basenames of ALL photos. Each basename is resolved
+    against dirname(PhotoPath); if the file isn't there (georeferencing
+    walks subfolders, so a point's photos can live in different folders),
+    the matching file:/// URL is recovered from PhotoHTML instead.
+    Unresolvable paths are kept so callers report them as missing. Layers
+    without a PhotoFiles field (e.g. the Photo Table) resolve to just
+    PhotoPath.
+    """
+    primary = feature[photo_path_field]
+    primary = str(primary) if primary else ""
+
+    if feature.fields().indexFromName('PhotoFiles') == -1:
+        return [primary] if primary else []
+
+    photo_files_value = feature['PhotoFiles']
+    photo_files = ([name.strip() for name in str(photo_files_value).split(',') if name.strip()]
+                   if photo_files_value else [])
+    if not photo_files:
+        return [primary] if primary else []
+
+    folder = os.path.dirname(primary)
+    primary_base = os.path.basename(primary) if primary else None
+
+    html_paths = None  # lazily built basename -> abs path map from PhotoHTML
+
+    def from_html(basename):
+        nonlocal html_paths
+        if html_paths is None:
+            html_paths = {}
+            if feature.fields().indexFromName('PhotoHTML') != -1:
+                html = feature['PhotoHTML']
+                if html:
+                    for url in re.findall(r'(?:href|src)="(file:///[^"]+)"', str(html)):
+                        local = QUrl(url).toLocalFile()
+                        if local:
+                            html_paths.setdefault(os.path.basename(local), local)
+        return html_paths.get(basename)
+
+    resolved = []
+    seen = set()
+    for basename in photo_files:
+        # Use PhotoPath verbatim for the first photo so its string matches
+        # the raw field value (path_mapping lookups depend on it)
+        if primary and basename == primary_base:
+            candidate = primary
+        else:
+            candidate = os.path.join(folder, basename) if folder else basename
+            if not os.path.isfile(candidate):
+                candidate = from_html(basename) or candidate
+        key = os.path.normcase(os.path.normpath(candidate))
+        if key not in seen:
+            seen.add(key)
+            resolved.append(candidate)
+
+    if primary and os.path.normcase(os.path.normpath(primary)) not in seen:
+        resolved.insert(0, primary)
+
+    return resolved
 
 
 class PhotoExportWorker(QThread):
@@ -65,48 +130,56 @@ class PhotoExportWorker(QThread):
             missing_photos = []
             missing_sampleids = []  # Track photos without SampleID
             sampleid_counts = {}    # Track counts for duplicate handling
-            total_photos = len(self.features_to_export)
+            feature_photos = [resolve_feature_photo_paths(f, self.photo_path_field)
+                              for f in self.features_to_export]
+            total_photos = max(sum(len(paths) for paths in feature_photos), 1)
+            copied_count = 0
+            done = 0
 
-            for i, feature in enumerate(self.features_to_export):
-                photo_path = feature[self.photo_path_field]
+            for feature, photo_paths in zip(self.features_to_export, feature_photos):
+                if not photo_paths:
+                    missing_photos.append("Empty path")
+                    self.log_message.emit("Missing: Empty path")
 
-                if not photo_path or not os.path.isfile(photo_path):
-                    missing_photos.append(photo_path or "Empty path")
-                    self.log_message.emit(f"Missing: {photo_path or 'Empty path'}")
-                else:
-                    try:
-                        # Determine output filename
-                        if self.rename_by_sampleid and self.sampleid_field:
-                            sampleid = feature[self.sampleid_field]
-                            if sampleid and str(sampleid).strip():
-                                # Capitalise and clean the SampleID
-                                base_name = str(sampleid).strip().upper()
-                                ext = os.path.splitext(photo_path)[1]
-
-                                # Handle duplicates
-                                if base_name in sampleid_counts:
-                                    sampleid_counts[base_name] += 1
-                                    filename = f"{base_name} ({sampleid_counts[base_name]}){ext}"
-                                else:
-                                    sampleid_counts[base_name] = 0
-                                    filename = f"{base_name}{ext}"
-                            else:
-                                # Missing SampleID - use original filename
-                                filename = os.path.basename(photo_path)
-                                missing_sampleids.append(photo_path)
-                                self.log_message.emit(f"Missing SampleID - keeping original name: {filename}")
-                        else:
-                            filename = os.path.basename(photo_path)
-
-                        dest_path = os.path.join(self.dest_folder, filename)
-                        shutil.copy(photo_path, dest_path)
-                        self.log_message.emit(f"Copied: {filename}")
-                    except Exception as e:
-                        self.log_message.emit(f"Error copying {photo_path}: {e}")
+                for photo_path in photo_paths:
+                    done += 1
+                    if not os.path.isfile(photo_path):
                         missing_photos.append(photo_path)
+                        self.log_message.emit(f"Missing: {photo_path}")
+                    else:
+                        try:
+                            # Determine output filename
+                            if self.rename_by_sampleid and self.sampleid_field:
+                                sampleid = feature[self.sampleid_field]
+                                if sampleid and str(sampleid).strip():
+                                    # Capitalise and clean the SampleID
+                                    base_name = str(sampleid).strip().upper()
+                                    ext = os.path.splitext(photo_path)[1]
 
-                progress_percent = int((i + 1) / total_photos * 90)  # 90% for copying
-                self.progress.emit(progress_percent)
+                                    # Handle duplicates
+                                    if base_name in sampleid_counts:
+                                        sampleid_counts[base_name] += 1
+                                        filename = f"{base_name} ({sampleid_counts[base_name]}){ext}"
+                                    else:
+                                        sampleid_counts[base_name] = 0
+                                        filename = f"{base_name}{ext}"
+                                else:
+                                    # Missing SampleID - use original filename
+                                    filename = os.path.basename(photo_path)
+                                    missing_sampleids.append(photo_path)
+                                    self.log_message.emit(f"Missing SampleID - keeping original name: {filename}")
+                            else:
+                                filename = os.path.basename(photo_path)
+
+                            dest_path = os.path.join(self.dest_folder, filename)
+                            shutil.copy(photo_path, dest_path)
+                            copied_count += 1
+                            self.log_message.emit(f"Copied: {filename}")
+                        except Exception as e:
+                            self.log_message.emit(f"Error copying {photo_path}: {e}")
+                            missing_photos.append(photo_path)
+
+                    self.progress.emit(int(done / total_photos * 90))  # 90% for copying
 
             # Export CSV
             self.log_message.emit("Exporting CSV...")
@@ -133,8 +206,8 @@ class PhotoExportWorker(QThread):
             self.progress.emit(100)
 
             summary = f"Export completed!\n"
-            summary += f"Total photos processed: {total_photos}\n"
-            summary += f"Successfully copied: {total_photos - len(missing_photos)}\n"
+            summary += f"Total photos processed: {sum(len(paths) for paths in feature_photos)}\n"
+            summary += f"Successfully copied: {copied_count}\n"
             summary += f"Missing/failed: {len(missing_photos)}\n"
             summary += f"CSV exported to: {csv_path}"
 
@@ -174,31 +247,42 @@ class PhotoPackageWorker(QThread):
             os.makedirs(photos_folder, exist_ok=True)
             self.log_message.emit(f"Created package folder: {package_folder}")
 
-            # 2. Copy photos and build path mapping
+            # 2. Copy photos and build path mapping. Each Photo Points feature
+            # can bundle several photos (PhotoFiles), not just PhotoPath.
             self.log_message.emit("Copying photos...")
-            path_mapping = {}  # old_path -> new_relative_path
+            path_mapping = {}  # old absolute path -> new relative path
             missing_photos = []
-            total_photos = len(self.features_to_export)
+            feature_photos = [resolve_feature_photo_paths(f, self.photo_path_field)
+                              for f in self.features_to_export]
+            total_photos = max(sum(len(paths) for paths in feature_photos), 1)
+            copied_count = 0
+            done = 0
 
-            for i, feature in enumerate(self.features_to_export):
-                old_path = feature[self.photo_path_field]
+            for paths in feature_photos:
+                if not paths:
+                    missing_photos.append("Empty path")
+                    self.log_message.emit("Missing: Empty path")
 
-                if not old_path or not os.path.isfile(old_path):
-                    missing_photos.append(old_path or "Empty path")
-                    self.log_message.emit(f"Missing: {old_path or 'Empty path'}")
-                else:
-                    try:
-                        filename = self._get_unique_filename(old_path, photos_folder)
-                        dest_path = os.path.join(photos_folder, filename)
-                        shutil.copy(old_path, dest_path)
-                        path_mapping[old_path] = f"./photos/{filename}"
-                        self.log_message.emit(f"Copied: {filename}")
-                    except Exception as e:
-                        self.log_message.emit(f"Error copying {old_path}: {e}")
+                for old_path in paths:
+                    done += 1
+                    if old_path in path_mapping:
+                        pass  # same photo referenced by an earlier point
+                    elif not os.path.isfile(old_path):
                         missing_photos.append(old_path)
+                        self.log_message.emit(f"Missing: {old_path}")
+                    else:
+                        try:
+                            filename = self._get_unique_filename(old_path, photos_folder)
+                            dest_path = os.path.join(photos_folder, filename)
+                            shutil.copy(old_path, dest_path)
+                            path_mapping[old_path] = f"./photos/{filename}"
+                            copied_count += 1
+                            self.log_message.emit(f"Copied: {filename}")
+                        except Exception as e:
+                            self.log_message.emit(f"Error copying {old_path}: {e}")
+                            missing_photos.append(old_path)
 
-                progress_percent = int((i + 1) / total_photos * 50)  # 50% for copying
-                self.progress.emit(progress_percent)
+                    self.progress.emit(int(done / total_photos * 50))  # 50% for copying
 
             # 3. Create GeoPackage with updated paths
             self.log_message.emit("Creating GeoPackage...")
@@ -225,7 +309,7 @@ class PhotoPackageWorker(QThread):
 
             summary = f"Package created successfully!\n\n"
             summary += f"Location: {package_folder}\n"
-            summary += f"Photos copied: {total_photos - len(missing_photos)}\n"
+            summary += f"Photos copied: {copied_count}\n"
             summary += f"Missing/failed: {len(missing_photos)}\n\n"
             summary += f"To share:\n"
             summary += f"1. Zip the folder and send to client\n"
@@ -281,47 +365,42 @@ class PhotoPackageWorker(QThread):
                 # Update PhotoHTML field - replace absolute paths with placeholder
                 # The placeholder {{GPKG_FOLDER}} will be replaced at runtime by the map tip template
                 # using QGIS expressions to build the full path based on the GeoPackage location
-                #
-                # Key insight: PhotoPath only contains the FIRST photo's path, but PhotoHTML contains
-                # ALL photos for the point. We need to use PhotoFiles field (comma-separated filenames)
-                # to find and replace ALL photo paths in the HTML.
                 if field_name == 'PhotoHTML' and value:
-                    # Get the photo folder from any path in path_mapping
-                    if path_mapping:
-                        sample_old_path = next(iter(path_mapping.keys()))
-                        photo_folder = os.path.dirname(sample_old_path)
+                    # Same resolver as the copy loop, so paths line up with
+                    # path_mapping keys exactly
+                    for old_abs_path in resolve_feature_photo_paths(feature, self.photo_path_field):
+                        new_rel = path_mapping.get(old_abs_path)
+                        if new_rel:
+                            # Use the actual copied filename - _get_unique_filename
+                            # may have renamed a duplicate basename
+                            copied_name = os.path.basename(new_rel)
+                        else:
+                            # Copy failed/missing: still rewrite so no local
+                            # path leaks into a client-facing package (the
+                            # image is broken either way)
+                            copied_name = os.path.basename(old_abs_path)
+                            self.log_message.emit(
+                                f"Warning: rewriting HTML for uncopied photo: {copied_name}")
+                        new_placeholder = '{{GPKG_FOLDER}}photos/' + copied_name
 
-                        # Get all photo files for this feature from PhotoFiles field
-                        photo_files_str = feature['PhotoFiles'] if 'PhotoFiles' in [f.name() for f in fields] else ''
-                        if photo_files_str:
-                            photo_files = [f.strip() for f in str(photo_files_str).split(',')]
+                        # Create all possible path variants for replacement
+                        old_fwd = old_abs_path.replace('\\', '/')
+                        old_bwd = old_abs_path.replace('/', '\\')
 
-                            for photo_file in photo_files:
-                                if photo_file:
-                                    # Construct the old absolute path
-                                    old_abs_path = os.path.join(photo_folder, photo_file)
-
-                                    # Create all possible path variants for replacement
-                                    old_fwd = old_abs_path.replace('\\', '/')
-                                    old_bwd = old_abs_path.replace('/', '\\')
-
-                                    # New relative placeholder
-                                    new_placeholder = '{{GPKG_FOLDER}}photos/' + photo_file
-
-                                    # Replace all variants in PhotoHTML
-                                    # Current georeference output: QUrl-encoded file URL
-                                    # (forward slashes + %20 etc.) — match this first.
-                                    old_url = QUrl.fromLocalFile(old_abs_path).toString()
-                                    value = value.replace(old_url, new_placeholder)
-                                    # Legacy/backward-compatible variants for layers built
-                                    # before the URL was encoded:
-                                    # Handle file:/// URLs with forward slashes (standard format)
-                                    value = value.replace(f'file:///{old_fwd}', new_placeholder)
-                                    # Handle file:/// URLs with backslashes (rare but possible)
-                                    value = value.replace(f'file:///{old_bwd}', new_placeholder)
-                                    # Handle paths in href/src attributes without file:/// prefix
-                                    value = value.replace(f'"{old_fwd}"', f'"{new_placeholder}"')
-                                    value = value.replace(f'"{old_bwd}"', f'"{new_placeholder}"')
+                        # Replace all variants in PhotoHTML
+                        # Current georeference output: QUrl-encoded file URL
+                        # (forward slashes + %20 etc.) — match this first.
+                        old_url = QUrl.fromLocalFile(old_abs_path).toString()
+                        value = value.replace(old_url, new_placeholder)
+                        # Legacy/backward-compatible variants for layers built
+                        # before the URL was encoded:
+                        # Handle file:/// URLs with forward slashes (standard format)
+                        value = value.replace(f'file:///{old_fwd}', new_placeholder)
+                        # Handle file:/// URLs with backslashes (rare but possible)
+                        value = value.replace(f'file:///{old_bwd}', new_placeholder)
+                        # Handle paths in href/src attributes without file:/// prefix
+                        value = value.replace(f'"{old_fwd}"', f'"{new_placeholder}"')
+                        value = value.replace(f'"{old_bwd}"', f'"{new_placeholder}"')
 
                 new_feature[field_name] = value
 
@@ -341,7 +420,7 @@ class PhotoPackageWorker(QThread):
             options
         )
 
-        if error[0] != QgsVectorFileWriter.NoError:
+        if error[0] != QgsVectorFileWriter.WriterError.NoError:
             raise Exception(f"Failed to write GeoPackage: {error[1]}")
 
         self.log_message.emit(f"GeoPackage created: {gpkg_path}")
@@ -436,7 +515,7 @@ class PhotoPackageWorker(QThread):
 
         symbol = QgsSymbol.defaultSymbol(layer.geometryType())
         marker = QgsSimpleMarkerSymbolLayer()
-        marker.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+        marker.setShape(Qgis.MarkerShape.Circle)
         marker.setSize(4.5)
         marker.setColor(QColor(255, 255, 255))   # white fill
         marker.setStrokeColor(charcoal)          # thin charcoal ring
@@ -702,7 +781,7 @@ class PhotoExportDialog(QDialog):
         layout.addWidget(options_group)
 
         # Create splitter for preview and log
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Preview table section
         preview_group = QGroupBox("Photos to Export - Preview")
@@ -714,10 +793,10 @@ class PhotoExportDialog(QDialog):
 
         # Set column widths
         header = self.preview_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-        header.setSectionResizeMode(2, QHeaderView.Stretch)           # Full Path
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)           # Full Path
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Status
 
         preview_layout.addWidget(self.preview_table)
         preview_group.setLayout(preview_layout)
@@ -802,7 +881,7 @@ class PhotoExportDialog(QDialog):
         """Repopulate the layer combo for the current export mode and load the selection"""
         if self.is_package_mode:
             # Package mode needs a spatial points layer
-            candidates = layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+            candidates = layer_candidates(geometry=Qgis.GeometryType.Point,
                                           required_fields=[self.PHOTO_PATH_FIELD])
             target_name = self.PHOTO_POINTS_NAME
         else:
@@ -849,9 +928,9 @@ class PhotoExportDialog(QDialog):
         self.layer_info_label.setText(f"✓ Layer: {self.current_layer.name()} ({feature_count} features) | {field_status}")
         self.layer_info_label.setStyleSheet("font-weight: bold; color: green;")
 
-        QgsMessageLog.logMessage(f"Field detection - SampleID: {'Found' if has_sampleid_field else 'Not found'}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"All fields: {field_names}", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Looking for field: '{self.SAMPLEID_FIELD}'", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Field detection - SampleID: {'Found' if has_sampleid_field else 'Not found'}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"All fields: {field_names}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Looking for field: '{self.SAMPLEID_FIELD}'", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Check if Favourite field exists and update radio button accordingly
         if self.FAVOURITE_FIELD not in field_names:
@@ -867,38 +946,38 @@ class PhotoExportDialog(QDialog):
         self.all_features = list(self.current_layer.getFeatures())
 
         # Force initial preview update
-        QgsMessageLog.logMessage("Forcing initial preview update...", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("Forcing initial preview update...", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
         # Also add debugging for radio button connections
-        QgsMessageLog.logMessage(f"Radio buttons connected: All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage(f"Radio buttons connected: All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
 
         # Add explicit check after a moment to ensure UI is ready
         try:
             QTimer.singleShot(100, self.delayed_preview_update)
         except NameError:
-            QgsMessageLog.logMessage("QTimer not available, skipping delayed update", 'Linear Geoscience', Qgis.Warning)
+            QgsMessageLog.logMessage("QTimer not available, skipping delayed update", 'Linear Geoscience', Qgis.MessageLevel.Warning)
             # Fallback: call delayed update directly
             self.delayed_preview_update()
 
     def delayed_preview_update(self):
         """Delayed preview update to ensure everything is initialized"""
-        QgsMessageLog.logMessage("=== DELAYED PREVIEW UPDATE ===", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Delayed check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("=== DELAYED PREVIEW UPDATE ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Delayed check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
     def manual_preview_update(self):
         """Manual preview update triggered by button"""
-        QgsMessageLog.logMessage("=== MANUAL PREVIEW UPDATE TRIGGERED ===", 'Linear Geoscience', Qgis.Info)
-        QgsMessageLog.logMessage(f"Manual check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+        QgsMessageLog.logMessage("=== MANUAL PREVIEW UPDATE TRIGGERED ===", 'Linear Geoscience', Qgis.MessageLevel.Info)
+        QgsMessageLog.logMessage(f"Manual check - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
         self.update_preview()
 
     def on_radio_changed(self):
         """Debug wrapper for radio button changes"""
         sender = self.sender()
         if sender.isChecked():  # Only respond to the button being checked, not unchecked
-            QgsMessageLog.logMessage(f"Radio button changed to: {sender.text()}", 'Linear Geoscience', Qgis.Info)
-            QgsMessageLog.logMessage(f"Current state - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.Info)
+            QgsMessageLog.logMessage(f"Radio button changed to: {sender.text()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
+            QgsMessageLog.logMessage(f"Current state - All={self.radio_all.isChecked()}, Sample={self.radio_sample.isChecked()}, Fav={self.radio_favourites.isChecked()}", 'Linear Geoscience', Qgis.MessageLevel.Info)
             self.update_preview()
 
     def get_filtered_features(self):
@@ -941,20 +1020,20 @@ class PhotoExportDialog(QDialog):
             self.preview_table.setHorizontalHeaderLabels(["Filename", "Type", "SampleID", "Full Path", "Status"])
             # Adjust column widths
             header = self.preview_table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # SampleID
-            header.setSectionResizeMode(3, QHeaderView.Stretch)  # Full Path
-            header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Status
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # SampleID
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # Full Path
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Status
         else:
             self.preview_table.setColumnCount(4)
             self.preview_table.setHorizontalHeaderLabels(["Filename", "Type", "Full Path", "Status"])
             # Adjust column widths
             header = self.preview_table.horizontalHeader()
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Filename
-            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Type
-            header.setSectionResizeMode(2, QHeaderView.Stretch)  # Full Path
-            header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Status
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Filename
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Type
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Full Path
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Status
 
         for row, feature in enumerate(features):
             col = 0
@@ -981,10 +1060,10 @@ class PhotoExportDialog(QDialog):
                 sampleid_item = QTableWidgetItem()
                 if sampleid_value.isdigit():
                     # For numeric SampleIDs, set the data as an integer for proper sorting
-                    sampleid_item.setData(Qt.DisplayRole, sampleid_value)
-                    sampleid_item.setData(Qt.UserRole, int(sampleid_value))
+                    sampleid_item.setData(Qt.ItemDataRole.DisplayRole, sampleid_value)
+                    sampleid_item.setData(Qt.ItemDataRole.UserRole, int(sampleid_value))
                 else:
-                    sampleid_item.setData(Qt.DisplayRole, sampleid_value)
+                    sampleid_item.setData(Qt.ItemDataRole.DisplayRole, sampleid_value)
                 self.preview_table.setItem(row, col, sampleid_item)
                 col += 1
 
@@ -1006,14 +1085,14 @@ class PhotoExportDialog(QDialog):
 
             status_item = QTableWidgetItem(status)
             # Use UserRole data for sorting - this ensures Found items come first, then Not Found, then Missing
-            status_item.setData(Qt.UserRole, sort_value)
+            status_item.setData(Qt.ItemDataRole.UserRole, sort_value)
 
             if status == "✓ Found":
-                status_item.setBackground(Qt.lightGray)
+                status_item.setBackground(Qt.GlobalColor.lightGray)
             elif status == "✗ Not Found":
-                status_item.setBackground(Qt.red)
+                status_item.setBackground(Qt.GlobalColor.red)
             else:
-                status_item.setBackground(Qt.yellow)
+                status_item.setBackground(Qt.GlobalColor.yellow)
 
             self.preview_table.setItem(row, col, status_item)
 
@@ -1057,8 +1136,8 @@ class PhotoExportDialog(QDialog):
             reply = QMessageBox.question(self, "Missing Photos",
                                        f"{missing_count} photos are missing or have invalid paths.\n"
                                        f"Do you want to continue with the export?",
-                                       QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.No:
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.No:
                 return
 
         # Check for missing SampleIDs if rename option is enabled
@@ -1075,8 +1154,8 @@ class PhotoExportDialog(QDialog):
                                            f"{missing_sampleid_count} photos are missing a SampleID.\n"
                                            f"These will be exported with their original filenames.\n\n"
                                            f"Do you want to continue?",
-                                           QMessageBox.Yes | QMessageBox.No)
-                if reply == QMessageBox.No:
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
                     return
 
         # Start export

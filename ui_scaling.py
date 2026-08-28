@@ -6,7 +6,7 @@ This module ensures consistent UI appearance across different devices and displa
 from 1080p to 4K displays, and handles Windows scaling settings properly.
 """
 
-from qgis.PyQt.QtCore import QSize
+from qgis.PyQt.QtCore import QSize, QT_VERSION_STR
 from qgis.PyQt.QtWidgets import QApplication
 from qgis.core import QgsMessageLog, Qgis
 
@@ -28,6 +28,14 @@ class UIScaleManager:
     # Minimum and maximum scale factors for safety
     MIN_SCALE_FACTOR = 0.5
     MAX_SCALE_FACTOR = 3.0
+
+    # Defaults so _log_scaling_info never trips over an unset attribute when
+    # _detect_scaling takes an early return (no QApplication / no screen,
+    # e.g. headless runs).
+    scale_factor = 1.0
+    logical_dpi = BASE_DPI
+    physical_dpi = BASE_DPI
+    device_pixel_ratio = 1.0
 
     def __new__(cls):
         """Singleton pattern implementation"""
@@ -54,7 +62,7 @@ class UIScaleManager:
                 QgsMessageLog.logMessage(
                     "No QApplication instance found, using default scale factor of 1.0",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
 
@@ -67,7 +75,7 @@ class UIScaleManager:
                 QgsMessageLog.logMessage(
                     "No primary screen found, using default scale factor of 1.0",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 return
 
@@ -77,23 +85,30 @@ class UIScaleManager:
             # Get physical DPI
             self.physical_dpi = screen.physicalDotsPerInchX()
 
-            # Calculate scale factor based on logical DPI
-            # Logical DPI already includes OS scaling settings
-            self.scale_factor = self.logical_dpi / self.BASE_DPI
+            if QT_VERSION_STR.startswith("6"):
+                # Qt6 always applies OS high-DPI scaling itself: widget
+                # geometry is already in device-independent pixels, so the
+                # manual logical-DPI multiplier used on Qt5 would
+                # double-scale the UI.
+                self.scale_factor = 1.0
+            else:
+                # Calculate scale factor based on logical DPI
+                # Logical DPI already includes OS scaling settings
+                self.scale_factor = self.logical_dpi / self.BASE_DPI
 
             # Clamp scale factor to reasonable bounds
             if self.scale_factor < self.MIN_SCALE_FACTOR:
                 QgsMessageLog.logMessage(
                     f"Scale factor {self.scale_factor:.2f} below minimum, clamping to {self.MIN_SCALE_FACTOR}",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 self.scale_factor = self.MIN_SCALE_FACTOR
             elif self.scale_factor > self.MAX_SCALE_FACTOR:
                 QgsMessageLog.logMessage(
                     f"Scale factor {self.scale_factor:.2f} above maximum, clamping to {self.MAX_SCALE_FACTOR}",
                     "LinearGeoscience",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
                 self.scale_factor = self.MAX_SCALE_FACTOR
 
@@ -109,7 +124,7 @@ class UIScaleManager:
             QgsMessageLog.logMessage(
                 f"Error detecting screen DPI: {str(e)}. Using scale factor of 1.0",
                 "LinearGeoscience",
-                Qgis.Critical
+                Qgis.MessageLevel.Critical
             )
 
     def _log_scaling_info(self):
@@ -120,7 +135,7 @@ class UIScaleManager:
             f"Scale Factor: {self.scale_factor:.2f}, "
             f"Device Pixel Ratio: {self.device_pixel_ratio:.2f}",
             "LinearGeoscience",
-            Qgis.Info
+            Qgis.MessageLevel.Info
         )
 
     def dimension(self, base_pixels):
@@ -276,7 +291,7 @@ class UIScaleManager:
             QgsMessageLog.logMessage(
                 f"Display scaling changed from {old_factor:.2f} to {self.scale_factor:.2f}",
                 "LinearGeoscience",
-                Qgis.Info
+                Qgis.MessageLevel.Info
             )
             return True
         return False

@@ -28,6 +28,7 @@ import sqlite3
 import traceback
 
 from ..recode_workflow.remove_unused import remove_unused_categories
+from ..script_setmapping import build_structural_labeling, is_lgs_structural_labeling
 from ..layer_select import layer_candidates, populate_layer_combo, combo_current_layer
 from .graphics_check import find_unembedded_graphics
 from .mapping_export import (
@@ -230,9 +231,9 @@ class LayerExporter:
         options.fileEncoding = "UTF-8"
 
         if file_exists:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
         else:
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+            options.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
 
         transform_context = QgsCoordinateTransformContext()
 
@@ -243,7 +244,7 @@ class LayerExporter:
             options
         )
 
-        if error[0] != QgsVectorFileWriter.NoError:
+        if error[0] != QgsVectorFileWriter.WriterError.NoError:
             self.log(f"Failed to export layer data: {error[1]}", "ERROR")
             return False
 
@@ -313,6 +314,16 @@ class LayerExporter:
                 self.log(f"  Reference scale set to 1:{reference_scale}", "SUCCESS")
             else:
                 self.log(f"  No renderer - reference scale skipped", "INFO")
+
+        # The LGS structural labeling bakes its offsets as map-unit ground
+        # distances for the scale Set Mapping Scale was last run at.
+        # Regenerate them at the export scale so labels sit next to their
+        # points instead of the old scale's distance away.
+        if reference_scale is not None and has_labeling:
+            if is_lgs_structural_labeling(target_layer.labeling()):
+                target_layer.setLabeling(build_structural_labeling(int(reference_scale)))
+                target_layer.setLabelsEnabled(True)
+                self.log(f"  Structural label offsets regenerated for 1:{reference_scale}", "SUCCESS")
 
         self._save_style_to_database(target_layer, has_renderer, has_labeling)
 
@@ -490,7 +501,7 @@ class StaticMappingExportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Mapping Export")
         self.setMinimumSize(820, 720)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
         if theme:
             self.setStyleSheet(theme.dialog_style() + theme.group_box_style())
 
@@ -573,7 +584,7 @@ class StaticMappingExportDialog(QDialog):
 
         self.layers_container = QWidget()
         self.layers_layout = QVBoxLayout(self.layers_container)
-        self.layers_layout.setAlignment(Qt.AlignTop)
+        self.layers_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll_area.setWidget(self.layers_container)
 
         layers_layout.addWidget(scroll_area)
@@ -691,7 +702,7 @@ class StaticMappingExportDialog(QDialog):
     # ------------------------------------------------------------------
     def _photo_layer_candidates(self):
         """Point photo layers in the project that carry a PhotoPath field."""
-        return layer_candidates(geometry=QgsWkbTypes.PointGeometry,
+        return layer_candidates(geometry=Qgis.GeometryType.Point,
                                 required_fields=[PHOTO_PATH_FIELD])
 
     def _build_photos_group(self):
@@ -745,7 +756,7 @@ class StaticMappingExportDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("Mapsheet layer:"))
         self.mapsheet_combo = QComboBox()
-        polygons = layer_candidates(geometry=QgsWkbTypes.PolygonGeometry)
+        polygons = layer_candidates(geometry=Qgis.GeometryType.Polygon)
         detected = find_mapsheet_layer()
         populate_layer_combo(
             self.mapsheet_combo, polygons, target_name="Mapsheets",
@@ -767,9 +778,9 @@ class StaticMappingExportDialog(QDialog):
         self.raster_list.setMaximumHeight(120)
         for raster in list_project_rasters():
             item = QListWidgetItem(raster.name())
-            item.setData(Qt.UserRole, raster.source())
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, raster.source())
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             self.raster_list.addItem(item)
         vbox.addWidget(self.raster_list)
         btn_row = QHBoxLayout()
@@ -795,8 +806,8 @@ class StaticMappingExportDialog(QDialog):
         self.layout_list.setMaximumHeight(110)
         for name in list_project_layouts():
             item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
             self.layout_list.addItem(item)
         if self.layout_list.count() == 0:
             self.layout_list.addItem(QListWidgetItem("(no print layouts in project)"))
@@ -922,9 +933,9 @@ class StaticMappingExportDialog(QDialog):
         for path in paths:
             name = os.path.splitext(os.path.basename(path))[0]
             item = QListWidgetItem(f"{name}  ({os.path.basename(path)})")
-            item.setData(Qt.UserRole, path)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
             self.raster_list.addItem(item)
         if paths:
             self.log(f"Added {len(paths)} raster file(s)", "INFO")
@@ -1150,11 +1161,11 @@ class StaticMappingExportDialog(QDialog):
             return True
 
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
+        box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Unembedded Symbol Graphics")
         box.setText(self._format_graphics_warning(findings_by_layer))
-        continue_btn = box.addButton("Continue Anyway", QMessageBox.AcceptRole)
-        cancel_btn = box.addButton("Cancel Export", QMessageBox.RejectRole)
+        continue_btn = box.addButton("Continue Anyway", QMessageBox.ButtonRole.AcceptRole)
+        cancel_btn = box.addButton("Cancel Export", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel_btn)
         box.exec()
         return box.clickedButton() is continue_btn
@@ -1201,8 +1212,8 @@ class StaticMappingExportDialog(QDialog):
         reply = QMessageBox.question(
             self, "Confirm Overwrite",
             f"Output file already exists:\n{path}\n\nOverwrite?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.No:
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.No:
             return False
         try:
             os.remove(path)
@@ -1330,10 +1341,10 @@ class StaticMappingExportDialog(QDialog):
         sources = []
         for i in range(self.raster_list.count()):
             item = self.raster_list.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 # Display text for files is "name  (file.tif)"; keep the name.
                 name = item.text().split("  (")[0]
-                sources.append((name, item.data(Qt.UserRole)))
+                sources.append((name, item.data(Qt.ItemDataRole.UserRole)))
         return sources
 
     def _run_raster_section(self, export_root):
@@ -1359,7 +1370,7 @@ class StaticMappingExportDialog(QDialog):
             return names
         for i in range(self.layout_list.count()):
             item = self.layout_list.item(i)
-            if item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.CheckState.Checked:
                 names.append(item.text())
         return names
 
