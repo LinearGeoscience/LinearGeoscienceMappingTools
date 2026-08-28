@@ -66,10 +66,17 @@ EXTENT_F = (
     "ELSE 1 END"
 )
 
+# Cover round 3: Transported Cover labels sit a step above the lithology
+# lettering (6.5 pt against the 5.5 pt static), the size half of the gold
+# identity that inject_cover_gold_round3.py paints. Written as a ratio so a
+# restyled static fontSize keeps cover proportionally larger.
+COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
+           "THEN (6.5 / 5.5) ELSE 1 END")
+
 LAYER_FACTORS = {
     "2 - Linework": [WEIGHT_F, WIDTH_F],
     "3 - Overlay": [WEIGHT_F, EXTENT_F],
-    "4 - Basemap": [EXTENT_F],
+    "4 - Basemap": [COVER_F, EXTENT_F],
 }
 
 
