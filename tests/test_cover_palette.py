@@ -208,16 +208,23 @@ class TestTemplateMatchesPalette(unittest.TestCase):
                 [cover_palette.rgb_hex(cover_palette.contact_of(code))], code)
 
     def test_label_token_is_data_defined_on_typelith1(self):
+        # It has to be QgsPalLayerSettings' dd_properties - the block after
+        # </text-style>. The text-style's own belongs to QgsTextFormat and
+        # is never consulted while a label is drawn: a Color written there
+        # parses, round-trips, and loads back inactive.
         style = re.search(r'<text-style\b.*?</text-style>', self.qml,
-                          re.S).group(0)
-        dd = re.search(r'<dd_properties>.*?</dd_properties>', style,
-                       re.S).group(0)
+                          re.S)
+        labeling = re.search(r'<labeling.*?</labeling>', self.qml, re.S)
+        dd = re.compile(r'<dd_properties>.*?</dd_properties>', re.S).search(
+            self.qml, style.end(), labeling.end()).group(0)
         self.assertIn('name="Color"', dd)
         self.assertIn(cover_palette.rgb_hex(cover_palette.LABEL_TOKEN), dd)
         self.assertIn(cover_palette.rgb_hex(cover_palette.LABEL_BEDROCK), dd)
         self.assertIn("TypeLith1", dd.replace("&quot;", '"'))
+        self.assertNotIn('name="Color"', style.group(0),
+                         "an inactive Color property is in the text-style")
         # The static colour still belongs to inject_label_cartography.py.
-        self.assertIn('textColor="26,26,26,255', style)
+        self.assertIn('textColor="26,26,26,255', style.group(0))
 
 
 if __name__ == "__main__":

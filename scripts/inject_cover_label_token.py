@@ -14,16 +14,27 @@ paler ochre is illegible on the darker cover fills.
 
 MECHANICS
 ---------
-A data-defined `Color` property on the '4 - Basemap' text-style, switching
-on TypeLith1 - the same field the cover-visibility toggle filters on, so
-the two always agree about what cover is. The static textColor attribute is
-left exactly as it is: it stays the bedrock colour, it is what
-inject_label_cartography.py owns and rewrites, and the data-defined
-property overrides it per feature without either script fighting the other.
+A data-defined `Color` property switching on TypeLith1 - the same field the
+cover-visibility toggle filters on, so the two always agree about what cover
+is. The static textColor attribute is left exactly as it is: it stays the
+bedrock colour, it is what inject_label_cartography.py owns and rewrites,
+and the data-defined property overrides it per feature without either
+script fighting the other.
 
-Idempotent: writes the property if the text-style has none, leaves it alone
-if it already carries this expression, and aborts if something else has
-claimed Color.
+WHICH dd_properties BLOCK - there are two, and only one works
+------------------------------------------------------------
+The labeling carries a <dd_properties> inside <text-style> (QgsTextFormat's
+own) and another as a direct child of <settings> (QgsPalLayerSettings', the
+one already holding LineAnchorClipping and friends). Label rendering
+evaluates the SETTINGS one. Writing Color into the text-style block parses
+fine, round-trips fine, survives every XML check - and loads back with
+`isActive() == False`, i.e. silently does nothing. That was this script's
+first version; the property must go in the settings block, and this one
+removes a stray text-style Color if it finds the older mistake.
+
+Idempotent: writes the property if the settings block has none, leaves it
+alone if it already carries this expression, and aborts if something else
+has claimed Color.
 
 Usage:  python scripts/inject_cover_label_token.py [path\\to\\gpkg]
         (defaults to Template/LGS_MappingTemplate.gpkg next to this repo)
@@ -69,38 +80,72 @@ def property_xml():
             '</Option>' % xml_attr(expression()))
 
 
-def text_style_dd(qml):
-    """(start, end) of the <dd_properties> block inside <text-style>.
-
-    The labeling carries several: one per symbol, one on the settings and
-    one on the callout. The text-style's is the first to appear AFTER the
-    <text-style> tag and BEFORE </text-style>.
-    """
+def _labeling(qml):
     lab = re.search(r'<labeling.*?</labeling>', qml, re.S)
     if not lab:
         bail("no <labeling> block on %r" % LAYER)
+    return lab
+
+
+def _text_style_span(qml):
+    lab = _labeling(qml)
     ts = re.search(r'<text-style\b.*?</text-style>', lab.group(0), re.S)
     if not ts:
         bail("no <text-style> block on %r" % LAYER)
-    base = lab.start() + ts.start()
-    dd = re.search(r'<dd_properties>.*?</dd_properties>', ts.group(0), re.S)
+    return lab.start() + ts.start(), lab.start() + ts.end(), ts.group(0)
+
+
+def settings_dd(qml):
+    """(start, end, text) of QgsPalLayerSettings' own <dd_properties>.
+
+    The one the label renderer reads: a direct child of <settings>, which
+    means the first <dd_properties> to appear AFTER </text-style> - the
+    text-style's own block belongs to QgsTextFormat and is not consulted
+    when a label is drawn.
+    """
+    _ts_start, ts_end, _ts = _text_style_span(qml)
+    lab = _labeling(qml)
+    dd = re.compile(r'<dd_properties>.*?</dd_properties>', re.S).search(
+        qml, ts_end, lab.end())
     if not dd:
-        bail("<text-style> carries no <dd_properties> block")
-    return base + dd.start(), base + dd.end(), dd.group(0)
+        bail("no settings-level <dd_properties> block after </text-style>")
+    return dd.start(), dd.end(), dd.group(0)
+
+
+def strip_text_style_color(qml):
+    """Remove a Color property mistakenly written into the text-style block.
+
+    The first version of this script put it there, where it parses and
+    round-trips but loads back inactive. Returns (qml, removed?).
+    """
+    start, end, block = _text_style_span(qml)
+    inner = re.search(r'<Option name="Color" type="Map">.*?'
+                      r'<Option name="type" type="int" value="3"/>\s*</Option>',
+                      block, re.S)
+    if not inner:
+        return qml, False
+    cleaned = block[:inner.start()] + block[inner.end():]
+    # An emptied properties Map goes back to the self-closing form QGIS
+    # writes when there is nothing in it.
+    cleaned = re.sub(r'<Option name="properties" type="Map">\s*</Option>',
+                     '<Option name="properties"/>', cleaned)
+    return qml[:start] + cleaned + qml[end:], True
 
 
 def apply(qml):
     """Returns (qml, 'applied'|'already')."""
-    start, end, block = text_style_dd(qml)
+    qml, stripped = strip_text_style_color(qml)
+    if stripped:
+        print("removed the inactive Color property from the text-style block")
+    start, end, block = settings_dd(qml)
     want = expression()
     if 'name="Color"' in block:
-        m = re.search(r'<Option name="Color" type="Map">.*?</Option>\s*'
-                      r'</Option>', block, re.S)
-        found = re.search(r'name="expression" type="QString" value="([^"]*)"',
-                          block)
+        found = re.search(r'<Option name="Color" type="Map">.*?'
+                          r'name="expression" type="QString" value="([^"]*)"',
+                          block, re.S)
         if found and found.group(1) == xml_attr(want):
-            return qml, "already"
-        bail("the text-style already carries a Color property with a "
+            return qml, ("applied" if stripped else "already")
+        bail("the labeling already carries a Color property with a "
              "different expression - refusing to overwrite: %s"
              % (found.group(1) if found else "<no expression>"))
 
@@ -113,7 +158,7 @@ def apply(qml):
     else:
         m = re.search(r'<Option name="properties" type="Map">', block)
         if not m:
-            bail("<text-style> dd_properties has no properties Option")
+            bail("settings dd_properties has no properties Option")
         new_block = (block[:m.end()] + property_xml() + block[m.end():])
     return qml[:start] + new_block + qml[end:], "applied"
 
@@ -159,9 +204,13 @@ def main():
         (LAYER,)).fetchone()[0]
     ET.fromstring(final)
 
-    _s, _e, block = text_style_dd(final)
+    _s, _e, block = settings_dd(final)
     assert 'name="Color"' in block, "Color property did not survive"
     assert xml_attr(expression()) in block
+    # ... and nowhere else: a text-style copy would be inert and confusing.
+    _ts_s, _ts_e, style_block = _text_style_span(final)
+    assert 'name="Color"' not in style_block, (
+        "an inactive Color property is still sitting in the text-style")
     # inject_label_cartography.py owns this attribute; it must be untouched.
     after = re.search(r'<text-style[^>]*\btextColor="([^"]*)"',
                       final).group(1)
