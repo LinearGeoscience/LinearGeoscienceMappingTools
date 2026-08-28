@@ -226,6 +226,23 @@ class TestTemplateMatchesPalette(unittest.TestCase):
         # The static colour still belongs to inject_label_cartography.py.
         self.assertIn('textColor="26,26,26,255', style.group(0))
 
+    def test_cover_labels_are_a_size_step_up(self):
+        # Round 3's second identity channel: the dd Size expression
+        # (inject_label_size_scaling.py) scales Transported Cover labels
+        # by 6.5/5.5 over the lithology base. Pin the branch, not the
+        # whole expression - the extent factor is that script's business.
+        style = re.search(r'<text-style\b.*?</text-style>', self.qml, re.S)
+        labeling = re.search(r'<labeling.*?</labeling>', self.qml, re.S)
+        dd = re.compile(r'<dd_properties>.*?</dd_properties>', re.S).search(
+            self.qml, style.end(), labeling.end()).group(0)
+        size = re.search(r'<Option name="Size" type="Map">.*?'
+                         r'name="expression" type="QString" value="([^"]*)"',
+                         dd, re.S)
+        self.assertIsNotNone(size, "no dd Size on the Basemap labeling")
+        expr = size.group(1).replace("&quot;", '"')
+        self.assertIn("\"TypeLith1\" = 'Transported Cover'", expr)
+        self.assertIn("6.5 / 5.5", expr)
+
 
 if __name__ == "__main__":
     unittest.main()
