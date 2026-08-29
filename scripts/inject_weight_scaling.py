@@ -10,9 +10,11 @@ scales every stroke width and marker/SVG size in a symbol:
                           WHEN "Weight" = 'Very Minor' THEN 0.3
                           ELSE 1 END
 
-Moderate (or NULL) renders at the symbol's authored size; intervals, offsets
-and dash patterns are deliberately NOT scaled (matches the pre-Weight
-Major/Minor symbol convention).  The tier list itself lives in the Weight
+Moderate (or NULL) renders at the symbol's authored size; intervals and
+offsets are deliberately NOT scaled here (matches the pre-Weight
+Major/Minor symbol convention).  Dash patterns DO scale since 29 Aug 2026
+- but that ramp is owned by inject_dash_weight_scaling.py (this script
+never touches customDash).  The tier list itself lives in the Weight
 ValueMap widget, authored by inject_weight_five_tiers.py.
 
 Weight is the ONLY thing that scales the drawn stroke. Linework

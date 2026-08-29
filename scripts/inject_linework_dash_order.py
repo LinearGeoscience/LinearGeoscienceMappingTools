@@ -25,7 +25,9 @@ Three cartographic fixes to the '2 - Linework' categorized renderer
       12;6.
 
 line_width is never touched, so inject_weight_scaling.py needs no re-run
-(it deliberately never scales customdash/capstyle either).
+(it never scales customdash/capstyle; the Weight dash ramp lives in
+inject_dash_weight_scaling.py, whose dd ELSE mirrors these statics - so
+re-run THAT after changing any customdash here).
 
 Idempotent and re-runnable: each edit group (8 formlines / 5 axial / 1
 orderby) must be exactly 0 (already applied) or its full count, anything
