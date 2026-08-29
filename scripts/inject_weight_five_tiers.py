@@ -1,8 +1,9 @@
-"""Grow the Weight scale to five tiers: Incipient / Minor / Moderate / Major / Regional.
+"""Grow the Weight scale to five tiers: Very Minor / Minor / Moderate / Major / Regional.
 
 User request, 27 Aug 2026: three thickness tiers are not enough in the
-field.  Two new tiers, named by the user - Incipient below Minor (a
-structure just beginning to develop) and Regional above Major (a
+field.  Two new tiers, named by the user - Very Minor below Minor (a
+structure just beginning to develop; named "Incipient" until 29 Aug
+2026, renamed by rename_weight_tier.py) and Regional above Major (a
 regional-scale structure).  Minor / Moderate / Major keep their names and
 factors, so no existing data migrates and Moderate stays the default and
 the NULL fallback everywhere.
@@ -11,7 +12,7 @@ Two edits per layer ("2 - Linework" and "3 - Overlay" - the only layers
 with a Weight column), applied to the live template:
 
   1. The Weight ValueMap widget gains the two tiers, listed descending:
-     Regional, Major, Moderate, Minor, Incipient.  The widget is the
+     Regional, Major, Moderate, Minor, Very Minor.  The widget is the
      single source of the tier list (there is no WeightCodes table);
      the legend and data_import discover the codes from it.
   2. The baked label fontSize WEIGHT_F CASE is patched in place from the
@@ -41,14 +42,14 @@ import xml.etree.ElementTree as ET
 LAYERS = ["2 - Linework", "3 - Overlay"]
 
 OLD_TIERS = ["Major", "Moderate", "Minor"]
-NEW_TIERS = ["Regional", "Major", "Moderate", "Minor", "Incipient"]
+NEW_TIERS = ["Regional", "Major", "Moderate", "Minor", "Very Minor"]
 
 OLD_WEIGHT_F = ("CASE WHEN \"Weight\" = 'Major' THEN 1.15 "
                 "WHEN \"Weight\" = 'Minor' THEN 0.8 ELSE 1 END")
 NEW_WEIGHT_F = ("CASE WHEN \"Weight\" = 'Regional' THEN 1.3 "
                 "WHEN \"Weight\" = 'Major' THEN 1.15 "
                 "WHEN \"Weight\" = 'Minor' THEN 0.8 "
-                "WHEN \"Weight\" = 'Incipient' THEN 0.7 ELSE 1 END")
+                "WHEN \"Weight\" = 'Very Minor' THEN 0.7 ELSE 1 END")
 
 
 def bail(msg):

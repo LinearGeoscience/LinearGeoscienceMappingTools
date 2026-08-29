@@ -41,7 +41,7 @@ DETAIL_GATE = ("(\"Category\" IN ('Veins','Lithology') "
 WEIGHT_F = ("CASE WHEN \"Weight\" = 'Regional' THEN 1.3 "
             "WHEN \"Weight\" = 'Major' THEN 1.15 "
             "WHEN \"Weight\" = 'Minor' THEN 0.8 "
-            "WHEN \"Weight\" = 'Incipient' THEN 0.7 ELSE 1 END")
+            "WHEN \"Weight\" = 'Very Minor' THEN 0.7 ELSE 1 END")
 
 # 0 counts as UNRECORDED, not "0 cm wide" - same guard as
 # inject_linework_vein_fields.WIDTH_TEXT, so a stray 0 cannot shrink the

@@ -1,13 +1,13 @@
 """Inject per-feature Weight scaling into the template's Linework/Overlay symbology.
 
-Adds data-defined overrides so the "Weight" field (Incipient / Minor /
+Adds data-defined overrides so the "Weight" field (Very Minor / Minor /
 Moderate / Major / Regional - five tiers since 27 Aug 2026, was three)
 scales every stroke width and marker/SVG size in a symbol:
 
     <static value> * CASE WHEN "Weight" = 'Regional' THEN 2.25
                           WHEN "Weight" = 'Major'    THEN 1.5
                           WHEN "Weight" = 'Minor'    THEN 0.5
-                          WHEN "Weight" = 'Incipient' THEN 0.3
+                          WHEN "Weight" = 'Very Minor' THEN 0.3
                           ELSE 1 END
 
 Moderate (or NULL) renders at the symbol's authored size; intervals, offsets
@@ -51,7 +51,7 @@ from collections import Counter
 # Branch order = dict order (descending tier); Moderate/NULL -> 1 (ELSE).
 # Steps are roughly x1.5-1.7 per tier ("balanced" span, user choice).
 FACTORS = {"Regional": "2.25", "Major": "1.5",
-           "Minor": "0.5", "Incipient": "0.3"}
+           "Minor": "0.5", "Very Minor": "0.3"}
 
 
 def weight_case(factors):
@@ -83,10 +83,10 @@ INTENSITY_WASH_ALPHA = {"1": "7", "2": "21", "3": "36", "4": "50", "5": "64"}
 INTENSITY_WASH_ALPHA_DEFAULT = "20"  # Intensity NULL = authored static alpha
 
 # Structure-zone Weight ramp: Major is deliberately subtle (the old Moderate look),
-# Moderate/Minor progressively lighter from there; Regional/Incipient extend
+# Moderate/Minor progressively lighter from there; Regional/Very Minor extend
 # the same gentle curve outward.
 OVERLAY_ZONE_FACTORS = {"Regional": "1.7", "Major": "1.32",
-                        "Minor": "0.65", "Incipient": "0.45"}
+                        "Minor": "0.65", "Very Minor": "0.45"}
 
 INTENSITY_PROPS = {
     "PointPatternFill": {"distance_x": "distanceX", "distance_y": "distanceY"},
