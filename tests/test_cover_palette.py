@@ -102,10 +102,13 @@ class TestPaletteRules(unittest.TestCase):
                                "%s at L* %.1f" % (code, lightness))
 
     def test_label_token_reads_on_every_cover_fill(self):
+        # Round 4 dropped this floor from 2.0: the amber label is carried
+        # by chroma on the near-neutral cream fills (the Ora Banda
+        # precedent), so the floor only guards the truly illegible.
         for code in cover_palette.COVER:
             ratio = cover_palette.contrast_ratio(
                 cover_palette.LABEL_TOKEN, cover_palette.fill_of(code))
-            self.assertGreater(ratio, 2.0, "%s at %.2f:1" % (code, ratio))
+            self.assertGreater(ratio, 1.8, "%s at %.2f:1" % (code, ratio))
 
     def test_label_token_is_not_the_bedrock_colour(self):
         self.assertGreater(

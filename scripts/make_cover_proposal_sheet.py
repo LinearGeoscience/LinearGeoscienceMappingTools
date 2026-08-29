@@ -54,23 +54,23 @@ def main():
 
     gold = cp.rgb_hex(cp.GOLD_CONTACT)
     token = cp.rgb_hex(cp.LABEL_TOKEN)
-    old_token = cp.rgb_hex(cp.ROUND2_LABEL_TOKEN)
+    old_token = cp.rgb_hex(cp.ROUND3_LABEL_TOKEN)
 
     parts = [HEAD]
     parts.append(
         '<header class="sheet-head">'
         '<p class="eyebrow">LGS mapping template &middot; Transported Cover'
-        ' &middot; round 3</p>'
+        ' &middot; round 4</p>'
         '<h1>The Gold Veil</h1>'
-        '<p class="lede">All %d cover codes turned down to a whisper: fills'
-        ' compressed into a near-paper band so the lithology and regolith'
-        ' carry the map, with one gold contact ink and one gold label for'
-        ' every cover polygon &mdash; the identity the Ora Banda sheets'
-        ' used. Hue still says how the material got there; blue is still'
-        ' alluvial, and colluvium is now buff-tan, not green.</p>'
+        '<p class="lede">All %d cover codes at true Ora Banda intensity:'
+        ' cream / near-paper fills (round 3&rsquo;s salmon lean is gone),'
+        ' the bright amber contact and label off the reference map, and'
+        ' cover textures printed as a faint watermark. Hue still whispers'
+        ' the mechanism; the amber says &ldquo;this is cover&rdquo;.</p>'
         '<p class="lede">Every number here is measured from'
         ' <code>cover_palette.py</code>: the audit passes with zero'
-        ' failures against all 265 bedrock fills.</p>'
+        ' failures against all 265 bedrock fills. Each card shows the'
+        ' round-3 fill it replaces.</p>'
         '</header>' % len(cp.COVER))
 
     # ------------------------------------------------ the gold identity
@@ -92,9 +92,9 @@ def main():
         '<span class="maplabel" style="color:%(t)s">TLGC</span>'
         '<span class="maplabel-lith">SST</span></div>'
         '<div class="ident-cap"><strong>Label %(t)s &middot; %(pt).1f pt</strong>'
-        '<span>gold and a step up from the %(lp).1f pt lithology black,'
-        ' replacing round 2&rsquo;s ochre %(ot)s. Worst case %(tw).2f:1'
-        ' on the deepest fill.</span></div></div>'
+        '<span>amber and a step up from the %(lp).1f pt lithology black,'
+        ' replacing round 3&rsquo;s antique %(ot)s. Worst case %(tw).2f:1'
+        ' on the deepest fill &mdash; chroma carries it.</span></div></div>'
         '</div></section>'
         % {"g": gold, "t": token, "ot": old_token,
            "cw": con_worst, "fl": cp.MIN_CONTACT_RATIO,
@@ -125,7 +125,7 @@ def main():
             % (html.escape(name), html.escape(tint), len(members)))
         for code in members:
             fill = cp.rgb_hex(cp.fill_of(code))
-            was = cp.rgb_hex(cp.ROUND2_FILLS[code])
+            was = cp.rgb_hex(cp.ROUND3_FILLS[code])
             parts.append(
                 '<figure class="card">'
                 '<div class="swatch" style="background:%(f)s;border-color:%(g)s">'
@@ -211,11 +211,11 @@ section h2{
 .ident-card{background:var(--surface); border:1px solid var(--line);
   border-radius:3px; box-shadow:var(--shadow); overflow:hidden}
 .ident-demo{
-  height:96px; background:#efd8c9; margin:.6rem; border-radius:2px;
+  height:96px; background:#f2e8da; margin:.6rem; border-radius:2px;
   border:2px dashed; display:flex; align-items:center; justify-content:center;
   gap:1.2rem;
 }
-.ident-plain{background:#cbc6b8; border:2px dashed}
+.ident-plain{background:#d6d2c6; border:2px dashed}
 .ident-cap{padding:.15rem .75rem .7rem; display:flex; flex-direction:column;
   gap:.15rem; font-size:.78rem; color:var(--muted); line-height:1.45}
 .ident-cap strong{color:var(--ink); font-weight:600;

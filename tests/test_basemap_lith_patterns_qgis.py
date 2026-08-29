@@ -221,12 +221,16 @@ def main():
     # heavy tiles really are aimed softer than the sparse ones, which is the
     # whole point of the change.
     tile_ink = _inj.load_tile_ink(tiles)
+    # Cover aims at the softened COVER_INK_TARGET, not the tile target -
+    # ask the injector's own ink_target() so the two cannot disagree.
+    type_of = {c: t for c, (_tex, _var, t)
+               in _inj.lith_palette.read_texture_map().items()}
     worst_gap, worst_code, lighter, below = 0.0, None, 0, []
     for code, (texture, _n, ink_name, _v) in tex_map.items():
         fill = fill_of.get(code)
         if fill is None or ink_name != "auto":
             continue
-        target = _inj.target_for_ink_pct(tile_ink[texture])
+        target = _inj.ink_target(code, texture, tile_ink, type_of)
         _rgb, ratio, direction = _inj.tint(fill, target)
         if direction == "lighter":
             lighter += 1

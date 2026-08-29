@@ -1,80 +1,66 @@
-"""The Transported Cover register: whisper fills, gold contacts, gold label.
+"""The Transported Cover register: cream fills, bright amber, faint texture.
 
-ROUND 1 (inject_basemap_cover_recolour.py) moved all 21 cover codes off the
-sandstone cream onto a near-neutral grey ladder, so cover stopped reading as
-bedrock. ROUND 2 (inject_cover_mechanism.py) added mechanism hues - pale
-blue for alluvial, olive-green for colluvial - with a tinted contact per
-family. On the map that round proved too loud: the colluvial green competed
-with the lithology and regolith units instead of sitting behind them.
+ROUND 1 moved cover off the sandstone cream onto a grey ladder. ROUND 2
+added mechanism hues with tinted contacts - too loud. ROUND 3 compressed
+the fills to a whisper and moved the identity to gold - but the tans still
+read salmon on the map (the rose-lean that kept them dE 7 clear of the
+creams, printed at full texture-ink strength), and the "gold" read brown:
+it had been darkened to hold a 2.0:1 luminance floor on the deepest fills.
 
-ROUND 3 - this module's current numbers - keeps the mechanism-hue idea but
-turns everything down to the register the old Ora Banda project used: fills
-are a WHISPER (near-paper, the hue barely-there but present), and the
-"this is cover" identity moves to GOLD - one gold contact ink and one gold
-label token for every cover code, the way that project drew TCO/TLGC.
+ROUND 4 - this module's current numbers - is the actual Ora Banda look the
+user keeps pointing at:
 
-  water / alluvial     whisper blue     (kept from round 2, lightened)
-  gravity / colluvial  whisper buff-tan (the green is gone; tan is what
-                                         colluvium actually looks like)
-  residual / lag       warm stone-grey  (round 1's greys, lifted)
-  aeolian              whisper rose
-  evaporitic           cool near-white  (kept)
-  glacial              whisper cyan
-  coastal / marine     whisper sand-teal
-  lacustrine / organic whisper green-teal (green is free now)
-  airfall              whisper violet
-  anthropogenic        whisper mauve
+* FILLS are true cream / near-paper (most L* 88-96, chroma cut hard; no
+  rose-lean, the tans are cream-buff). Cover may now sit CLOSE to the
+  bedrock creams - the user's call: on that old map the cover WAS cream,
+  and the amber edge + amber label did all the "this is cover" work.
+* GOLD is the bright amber off the reference map, not an antique.
+* The cover texture ink prints much softer than bedrock's - see
+  COVER_INK_TARGET in inject_basemap_lith_patterns.py.
 
-Every fill sits in a narrow near-paper band (L* ~80-97, low chroma): cover
-is a veil the map shows through, not a competing colour scheme. Within a
-family the codes still form a light-to-deeper ladder so same-tile pairs
-stay dE 7 apart, which is why the deepest rungs (TLSD, TLGC, TPEA) sit a
-little below pure whisper.
+Hue still whispers the mechanism: barely-blue alluvial, cream-buff
+colluvial, stone-grey residual, rose aeolian, and so on.
 
-THREE PROPERTIES CARRY THE REGISTER
------------------------------------
-* FILL      - per code, this module's `COVER`.
-* CONTACT   - ONE gold ink for every family, drawn where bedrock draws
-              #2a2a2a. The ContactType mechanism is untouched - Solid /
-              Dashed / None still choose the dash, the width and the
-              transparency exactly as before, and only the COLOUR moves.
-              (Round 2's per-family inks are gone: the fill already says
-              which mechanism; the gold edge says "cover, not bedrock".)
-* LABEL     - ONE gold token for every cover code, a shade deeper than the
-              contact so text carries more weight than a hairline.
+THE FLOORS, AND WHY TWO OF THEM DROPPED
+---------------------------------------
+MIN_CONTACT_RATIO fell 2.0 -> 1.35. The 2.0 was luminance-thinking: it
+forced the gold down to #9a7118, which is brown. On the reference map the
+amber edge holds ~1.4:1 on the cream and is perfectly legible, because a
+saturated 40deg-hue line on a near-neutral field is carried by CHROMA, not
+by darkness. The floor now only guards against the truly invisible; the
+hard-coded 2.0 against the bedrock contact #2a2a2a stays (amber ~5.8:1).
 
-WHY THESE EXACT NUMBERS
------------------------
-Fills: every same-tile pair (cover-vs-cover and cover-vs-bedrock alike)
-clears CIE76 dE 7, no cover fill sits within dE 7 of the sandstone creams
-on any tile, and every anchor is unique so `lith_palette.build()` passes it
-through byte-for-byte. The buff-tans are the tight squeeze - they must stay
-clear of the SST creams and the regolith warm tones while still reading as
-earth - which is why they lean grey-rose rather than yellow. `audit()`
-below is the executable form of this paragraph; tests/test_cover_palette.py
-runs it.
+The dE floors split three ways:
+* MIN_FILL_DE 7.0 stays wherever inject_basemap_lith_patterns.py HARD
+  FAILS anyway: cover vs bedrock sharing a texture tile. That is the real
+  protection, and it is why TCOS (sandstone tile, vs SSTS), TCOD
+  (claystone tile, vs the RSPL/RFSP saprolite peaches), TLOE (siltstone,
+  vs SSL/SSLS), TSI (vs SSL), TEVS (vs SEV) and TDLP/TLTP (laterite, vs
+  RDLN/RDLM) lean grey-mushroom instead of cream - the exceptions that
+  keep their distance the audit still enforces at 7.
+* CREAM_DE 4.5: cover vs the sandstone creams on OTHER tiles. Relaxed
+  from 7 by the user's decision above - the gold identity now does the
+  cover-vs-bedrock work, the fill only has to not be IDENTICAL.
+* COVER_PAIR_DE 4.5: cover vs cover on a shared tile. The patterns
+  injector only warns there; rungs of one family may sit closer now that
+  the register is this pale - the code label tells them apart.
 
-Contacts: the gold must hold >= 2.0:1 in luminance against the DARKEST fill
-in every family (a 0.1 mm hairline needs it), which caps how bright it can
-be: the Ora Banda amber (~#d0a028) manages only ~1.4:1 on the deep rungs.
-The antique gold here clears 2.0:1 on every fill (2.04:1 on TLSD, the
-deepest rung) and sits 3.25:1 from the bedrock contact #2a2a2a, so a gold
-cover edge never reads as a bedrock contact.
+Unique anchors remain mandatory: lith_palette.build() offsets any shared
+anchor, and the cover ladder depends on passing through byte-for-byte.
 
-Label token: deeper gold than the contact. Round 2 needed a dark ochre
-because the fills ran down to L* ~68; with every fill lifted into the
-whisper band the gold holds 2.7:1 on the deepest rung (TLSD) and 4.5-5.4:1
-on the pale rungs, while reading as clearly-gold beside bedrock's #1a1a1a.
+Label token: the amber #b3922e holds >=1.84:1 on the deepest rung (TLSD)
+and ~2.8:1 on the pale ones; tests/test_cover_palette.py's floor is 1.8.
+It reads as unmistakably gold beside bedrock's #1a1a1a (5.9:1 apart).
 
 Pure stdlib: injectors, tests and the contact sheets all import it, and
 none of them may need QGIS to know what colour something is.
 """
 
-# The one gold contact ink, and the one gold label token. GOLD_CONTACT is
-# kept per-family in FAMILY_CONTACT below so contact_of() and the injector
-# machinery are unchanged from round 2 - every family simply maps to the
-# same ink now.
-GOLD_CONTACT = (0x9a, 0x71, 0x18)
+# The one amber contact ink and the one amber label token, sampled off the
+# reference map. GOLD_CONTACT is kept per-family in FAMILY_CONTACT so
+# contact_of() and the injector machinery are unchanged - every family
+# simply maps to the same ink.
+GOLD_CONTACT = (0xcf, 0x9d, 0x28)
 FAMILY_CONTACT = {
     "water":     GOLD_CONTACT,
     "gravity":   GOLD_CONTACT,
@@ -90,97 +76,97 @@ FAMILY_CONTACT = {
 
 # The one identity colour every cover label takes; bedrock keeps the near
 # black it has always had.
-LABEL_TOKEN = (0x83, 0x5f, 0x11)
+LABEL_TOKEN = (0xb3, 0x92, 0x2e)
 LABEL_BEDROCK = (0x1a, 0x1a, 0x1a)
 
 # code -> (fill, family, tile, variety, description, note)
 # `tile`, `variety` and `note` mirror Template/patterns/lith_textures.tsv;
 # `description` is the BasemapCodes text, stored as "CODE - description".
 COVER = {
-    # --- water / alluvial: whisper blue ------------------------------
-    "TALL":  ((0xe8, 0xee, 0xf5), "water", "alluvium", "",
+    # --- water / alluvial: barely-blue -------------------------------
+    "TALL":  ((0xec, 0xf1, 0xf6), "water", "alluvium", "",
               "Alluvium", "alluvium"),
-    "TSW":   ((0xcb, 0xd9, 0xe9), "water", "alluvium", "",
+    "TSW":   ((0xdd, 0xe6, 0xee), "water", "alluvium", "",
               "Sheetwash", "alluvium"),
-    "TSA":   ((0xee, 0xf2, 0xf7), "water", "sandstone", "",
+    "TSA":   ((0xf1, 0xf4, 0xf8), "water", "sandstone", "",
               "Sand", "sandy cover"),
-    "TSAC":  ((0xd6, 0xdf, 0xea), "water", "sandstone", "",
+    "TSAC":  ((0xe2, 0xe8, 0xef), "water", "sandstone", "",
               "Clayey Sand", "sandy cover"),
-    "TGRV":  ((0xdf, 0xe8, 0xf2), "water", "gravel", "",
+    "TGRV":  ((0xe7, 0xed, 0xf4), "water", "gravel", "",
               "Gravel", "gravel / lag"),
-    "TSI":   ((0xd2, 0xdc, 0xe8), "water", "siltstone", "",
+    "TSI":   ((0xd3, 0xde, 0xea), "water", "siltstone", "",
               "Silt", "silt"),
-    "TCY":   ((0xe4, 0xec, 0xf3), "water", "claystone", "",
+    "TCY":   ((0xe9, 0xef, 0xf5), "water", "claystone", "",
               "Clay", "clay / loam / hardpan"),
 
-    # --- gravity / colluvial: whisper buff-tan -----------------------
-    "TCO":   ((0xef, 0xd8, 0xc9), "gravity", "colluvium", "colluvium",
+    # --- gravity / colluvial: cream-buff, no salmon ------------------
+    "TCO":   ((0xf2, 0xe8, 0xda), "gravity", "colluvium", "colluvium",
               "Colluvium", "colluvial / scree"),
-    "TCOC":  ((0xea, 0xcc, 0xb4), "gravity", "colluvium", "colluvium",
+    "TCOC":  ((0xee, 0xe0, 0xcc), "gravity", "colluvium", "colluvium",
               "Colluvium, Coarse", "colluvial / scree"),
-    "TCOS":  ((0xd6, 0xc4, 0xac), "gravity", "sandstone", "",
+    "TCOS":  ((0xdc, 0xd3, 0xc6), "gravity", "sandstone", "",
               "Colluvium, Sands", "sandy cover"),
-    "TCOD":  ((0xdc, 0xc3, 0xae), "gravity", "claystone", "",
+    "TCOD":  ((0xd2, 0xce, 0xc9), "gravity", "claystone", "",
               "Colluvium, Fine silt & Clay", "clay / loam / hardpan"),
-    "TLSC":  ((0xd3, 0xbc, 0x9e), "gravity", "colluvium", "",
+    "TLSC":  ((0xe4, 0xd1, 0xb0), "gravity", "colluvium", "",
               "Lithic Scree", "colluvial / scree"),
-    "TLSD":  ((0xbe, 0xae, 0x9a), "gravity", "colluvium", "",
+    "TLSD":  ((0xd8, 0xca, 0xb5), "gravity", "colluvium", "",
               "Landslide & Debris Flow", "colluvial / scree"),
 
-    # --- residual / lag / duricrust: warm stone-grey -----------------
-    "TRSL":  ((0xda, 0xd8, 0xd0), "residual", "colluvium", "residual_soil",
+    # --- residual / lag / duricrust: light stone-grey ----------------
+    "TRSL":  ((0xe0, 0xde, 0xd7), "residual", "colluvium", "residual_soil",
               "Residual Soil, Lithic Fragments", "colluvial / scree"),
-    "TRSS":  ((0xdb, 0xda, 0xd6), "residual", "sandstone", "residual_soil",
+    "TRSS":  ((0xe3, 0xe2, 0xde), "residual", "sandstone", "residual_soil",
               "Residual Soil, Sandy", "sandy cover"),
-    "TRSLM": ((0xe8, 0xe5, 0xdb), "residual", "claystone", "",
+    "TRSLM": ((0xed, 0xea, 0xe1), "residual", "claystone", "",
               "Residual Soil, Loam", "clay / loam / hardpan"),
-    "THP":   ((0xd6, 0xd8, 0xd9), "residual", "claystone", "",
+    "THP":   ((0xde, 0xe0, 0xe1), "residual", "claystone", "",
               "Hard Pan", "clay / loam / hardpan"),
-    "TLG":   ((0xe0, 0xde, 0xd6), "residual", "gravel", "",
+    "TLG":   ((0xe6, 0xe4, 0xdd), "residual", "gravel", "",
               "Lag", "gravel / lag"),
-    "TLGC":  ((0xcb, 0xc6, 0xb8), "residual", "gravel", "",
+    "TLGC":  ((0xd6, 0xd2, 0xc6), "residual", "gravel", "",
               "Lag on Colluvium", "gravel / lag"),
-    "TDLP":  ((0xde, 0xd6, 0xcb), "residual", "laterite", "",
+    "TDLP":  ((0xe3, 0xde, 0xd6), "residual", "laterite", "",
               "Duricrust of Transported Pisoliths", "transported pisoliths"),
-    "TLTP":  ((0xcc, 0xc2, 0xb0), "residual", "laterite", "",
+    "TLTP":  ((0xd8, 0xd0, 0xc1), "residual", "laterite", "",
               "Transported Pisoliths", "transported pisoliths"),
 
-    # --- aeolian: whisper rose ---------------------------------------
-    "TAES":  ((0xf3, 0xe2, 0xdc), "wind", "sandstone", "",
+    # --- aeolian: faint rose -----------------------------------------
+    "TAES":  ((0xf5, 0xeb, 0xe5), "wind", "sandstone", "",
               "Aeolian Sand", "aeolian"),
-    "TLOE":  ((0xee, 0xd5, 0xcd), "wind", "siltstone", "",
+    "TLOE":  ((0xf0, 0xde, 0xd4), "wind", "siltstone", "",
               "Loess", "aeolian"),
 
-    # --- evaporitic: cool near-whites, kept --------------------------
+    # --- evaporitic: cool near-whites --------------------------------
     "TSP":   ((0xf7, 0xf6, 0xf4), "evaporite", "evaporite", "",
               "Salt Pan", "salt pan / evaporitic / gypsum dunes"),
-    "TGYP":  ((0xdc, 0xe4, 0xec), "evaporite", "evaporite", "",
+    "TGYP":  ((0xe4, 0xea, 0xef), "evaporite", "evaporite", "",
               "Gypsum dunes, Kopai", "salt pan / evaporitic / gypsum dunes"),
-    "TEVS":  ((0xcc, 0xd4, 0xcd), "evaporite", "evaporite", "",
+    "TEVS":  ((0xcc, 0xd7, 0xd0), "evaporite", "evaporite", "",
               "Evaporitic Sediments", "salt pan / evaporitic / gypsum dunes"),
 
-    # --- glacial: whisper cyan ---------------------------------------
-    "TTIL":  ((0xdf, 0xeb, 0xea), "ice", "conglomerate", "",
+    # --- glacial: faint cyan -----------------------------------------
+    "TTIL":  ((0xe6, 0xef, 0xee), "ice", "conglomerate", "",
               "Glacial Till", "glacial"),
-    "TGFO":  ((0xc4, 0xd9, 0xda), "ice", "gravel", "",
+    "TGFO":  ((0xd3, 0xe2, 0xe3), "ice", "gravel", "",
               "Glaciofluvial Outwash", "glacial"),
 
-    # --- coastal / marine: whisper sand-teal -------------------------
-    "TBCH":  ((0xd5, 0xe6, 0xe0), "coast", "sandstone", "",
+    # --- coastal / marine: faint sand-teal ---------------------------
+    "TBCH":  ((0xde, 0xeb, 0xe6), "coast", "sandstone", "",
               "Beach & Coastal Sand", "coastal / marine"),
-    "TMUD":  ((0xd2, 0xdc, 0xd8), "coast", "mudstone", "",
+    "TMUD":  ((0xda, 0xe2, 0xdf), "coast", "mudstone", "",
               "Tidal & Estuarine Mud", "coastal / marine"),
 
-    # --- standing water / organic: whisper green-teal ----------------
-    "TLAC":  ((0xd5, 0xe7, 0xdc), "lake", "claystone", "",
+    # --- standing water / organic: faint green-teal ------------------
+    "TLAC":  ((0xdf, 0xeb, 0xe4), "lake", "claystone", "",
               "Lacustrine Clay", "lacustrine"),
-    "TPEA":  ((0xc9, 0xd1, 0xc1), "lake", "marl", "",
+    "TPEA":  ((0xd3, 0xd9, 0xcb), "lake", "marl", "",
               "Peat & Organic Soil", "organic"),
 
     # --- airfall / anthropogenic -------------------------------------
-    "TASH":  ((0xe6, 0xe2, 0xf0), "air", "tuff", "",
+    "TASH":  ((0xea, 0xe7, 0xf2), "air", "tuff", "",
               "Volcanic Ash", "airfall"),
-    "TFIL":  ((0xec, 0xdf, 0xe7), "human", "crosshatch", "",
+    "TFIL":  ((0xf0, 0xe5, 0xeb), "human", "crosshatch", "",
               "Anthropogenic Fill", "anthropogenic"),
 }
 
@@ -259,13 +245,40 @@ ROUND2_CONTACT = {
 }
 ROUND2_LABEL_TOKEN = (0x6f, 0x64, 0x36)
 
+# Round 3's whisper fills and antique gold - the "old" side of round 4's
+# idempotency check.
+ROUND3_FILLS = {
+    "TALL": (0xe8, 0xee, 0xf5), "TSW": (0xcb, 0xd9, 0xe9),
+    "TSA": (0xee, 0xf2, 0xf7), "TSAC": (0xd6, 0xdf, 0xea),
+    "TGRV": (0xdf, 0xe8, 0xf2), "TSI": (0xd2, 0xdc, 0xe8),
+    "TCY": (0xe4, 0xec, 0xf3), "TCO": (0xef, 0xd8, 0xc9),
+    "TCOC": (0xea, 0xcc, 0xb4), "TCOS": (0xd6, 0xc4, 0xac),
+    "TCOD": (0xdc, 0xc3, 0xae), "TLSC": (0xd3, 0xbc, 0x9e),
+    "TLSD": (0xbe, 0xae, 0x9a), "TRSL": (0xda, 0xd8, 0xd0),
+    "TRSS": (0xdb, 0xda, 0xd6), "TRSLM": (0xe8, 0xe5, 0xdb),
+    "THP": (0xd6, 0xd8, 0xd9), "TLG": (0xe0, 0xde, 0xd6),
+    "TLGC": (0xcb, 0xc6, 0xb8), "TDLP": (0xde, 0xd6, 0xcb),
+    "TLTP": (0xcc, 0xc2, 0xb0), "TAES": (0xf3, 0xe2, 0xdc),
+    "TLOE": (0xee, 0xd5, 0xcd), "TSP": (0xf7, 0xf6, 0xf4),
+    "TGYP": (0xdc, 0xe4, 0xec), "TEVS": (0xcc, 0xd4, 0xcd),
+    "TTIL": (0xdf, 0xeb, 0xea), "TGFO": (0xc4, 0xd9, 0xda),
+    "TBCH": (0xd5, 0xe6, 0xe0), "TMUD": (0xd2, 0xdc, 0xd8),
+    "TLAC": (0xd5, 0xe7, 0xdc), "TPEA": (0xc9, 0xd1, 0xc1),
+    "TASH": (0xe6, 0xe2, 0xf0), "TFIL": (0xec, 0xdf, 0xe7),
+}
+ROUND3_CONTACT = (0x9a, 0x71, 0x18)
+ROUND3_LABEL_TOKEN = (0x83, 0x5f, 0x11)
+
 # The contact colour every category carried before round 2 - bedrock's, and
 # still bedrock's.
 CONTACT_BEDROCK = (0x2a, 0x2a, 0x2a)
 
-MIN_FILL_DE = 7.0                 # inject_basemap_lith_patterns.MIN_FILL_DE
+MIN_FILL_DE = 7.0        # cover vs SAME-TILE bedrock - the patterns
+                         # injector hard-fails here, the audit mirrors it
+CREAM_DE = 4.5           # cover vs the sandstone creams, other tiles
+COVER_PAIR_DE = 4.5      # cover vs cover on a shared tile
 SANDSTONE_CREAMS = ("SST", "SSTL", "SSTM", "SSTS")
-MIN_CONTACT_RATIO = 2.0           # hairline legibility on its own fills
+MIN_CONTACT_RATIO = 1.35  # chroma carries the amber edge; see docstring
 
 
 def rgb_hex(rgb):
@@ -361,9 +374,9 @@ def audit(bedrock_fills=None, bedrock_tiles=None):
             if variety_of(a) and variety_of(a) == variety_of(b):
                 continue
             de = delta_e(fills[a], fills[b])
-            if de < MIN_FILL_DE:
+            if de < COVER_PAIR_DE:
                 bad.append("%s / %s share tile %s at dE %.1f < %.1f"
-                           % (a, b, tile_of(a), de, MIN_FILL_DE))
+                           % (a, b, tile_of(a), de, COVER_PAIR_DE))
 
     for fam, ink in sorted(FAMILY_CONTACT.items()):
         members = [c for c in COVER if family_of(c) == fam]
@@ -385,8 +398,12 @@ def audit(bedrock_fills=None, bedrock_tiles=None):
             for cream in SANDSTONE_CREAMS:
                 if cream not in bedrock_fills:
                     continue
+                # Same-tile creams fall under the hard MIN_FILL_DE below;
+                # this is the relaxed cross-tile floor.
+                if bedrock_tiles and bedrock_tiles.get(cream) == tile_of(a):
+                    continue
                 de = delta_e(fills[a], bedrock_fills[cream])
-                if de < MIN_FILL_DE:
+                if de < CREAM_DE:
                     bad.append("%s sits dE %.1f from the %s cream"
                                % (a, de, cream))
             if not bedrock_tiles:

@@ -346,6 +346,25 @@ COVER_COLOUR_ABORTS = True
 COVER_TYPE = "Transported Cover"
 COVER_ADVISORY_DE = 5.0
 
+# Cover round 4: the cover texture prints as a faint watermark, not at
+# bedrock strength. The user's call off the deployed round-3 map - the
+# salmon TCO clasts at INK_BASE strength were half of what made cover
+# "too intense". Cover is a veil; its motifs only need to whisper, the
+# amber contact and label carry the identity. The weak-ink floor at the
+# use site is max(WEAK_INK_FLOOR, target * WEAK_INK_MARGIN), computed
+# from the SAME per-code target, so this stays self-consistent - and
+# tests/test_basemap_lith_patterns_qgis.py calls ink_target() too, so
+# the two cannot disagree.
+COVER_INK_TARGET = 1.28
+
+
+def ink_target(code, texture, tile_ink, type_of):
+    """The ink contrast target for one code: the tile's target for
+    bedrock, the softened flat target for Transported Cover."""
+    if type_of.get(code) == COVER_TYPE:
+        return COVER_INK_TARGET
+    return target_for_ink_pct(tile_ink[texture])
+
 
 def _hue_gap(a, b):
     """Smallest angle between two colours' hues, in degrees."""
@@ -629,7 +648,7 @@ def main():
     for code, (texture, _note, ink_name, _var) in tex_map.items():
         by_texture.setdefault(texture, []).append(code)
         by_width.setdefault("%.3f" % widths[texture], []).append(code)
-        target = target_for_ink_pct(tile_ink[texture])
+        target = ink_target(code, texture, tile_ink, type_of)
         fill = fill_of[code]
         if ink_name and ink_name != "auto":
             if ink_name not in inks:
