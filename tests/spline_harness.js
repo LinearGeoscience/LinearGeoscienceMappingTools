@@ -27,7 +27,7 @@ const code = ['splinePointScalar', 'splinePointsAdd', 'splineTangent',
   'splinePerpDist', 'splineSimplify', 'splineDecimate', 'splineSamePoint',
   'splineCacheEntries', 'splineCacheLookup', 'splineHermiteOpen',
   'splineHermiteClosed', 'splineBuildSequence', 'splineConfirmSequence',
-  'splineCommonPrefixLength']
+  'splineCommonPrefixLength', 'splineRingIdleSequence', 'splineSeqToWkt']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
@@ -39,6 +39,8 @@ const buildSequence = globalThis.splineBuildSequence
 const confirmSequence = globalThis.splineConfirmSequence
 const commonPrefix = globalThis.splineCommonPrefixLength
 const decimate = globalThis.splineDecimate
+const ringIdle = globalThis.splineRingIdleSequence
+const seqToWkt = globalThis.splineSeqToWkt
 
 let failures = 0
 function check(label, ok, detail) {
@@ -289,6 +291,65 @@ check('cache: params change invalidates and stays correct',
   sameJson(hermiteOpen(wiggle, 0.8, 0, 8, cacheParams),
            hermiteOpen(wiggle, 0.8, 0, 8)) &&
   cacheParams.p[0] === 0.8)
+
+// --- v26 ring-aligned idle sequence ---------------------------------
+// The polygon-confirm fix: the idle upgrade writes the CONFIRM ring
+// plus the crosshair as floating tail, so the confirm sequence is a
+// full prefix of what the model already holds and the confirm write
+// collapses to a tail rewrite.
+const cacheRing = {}
+const crossPt = pt(3, -4)
+const idleSeq = ringIdle(square, crossPt, 0.5, 0, 8, cacheRing)
+const confSeq = confirmSequence(square, true, 0.5, 0, 8, cacheRing)
+check('ring idle: confirm ring is a full prefix of the idle sequence',
+  commonPrefix(idleSeq, confSeq) === confSeq.length,
+  'prefix ' + commonPrefix(idleSeq, confSeq) + ' of ' + confSeq.length)
+check('ring idle: exactly one extra vertex, the crosshair',
+  idleSeq.length === confSeq.length + 1 &&
+  samePt(idleSeq[idleSeq.length - 1], crossPt))
+check('ring idle: cache does not change the sequence',
+  sameJson(ringIdle(square, crossPt, 0.5, 0, 8), idleSeq))
+check('ring idle: null below 3 distinct controls',
+  ringIdle([pt(0, 0), pt(10, 0), pt(10, 0)], crossPt, 0.5, 0, 8) === null)
+
+// Write-cost simulation pinned to splineWriteSequence's cap arithmetic
+// in lgs_companion.qml: after the idle write the model holds idleSeq
+// (vertexCount = idleSeq.length, last vertex floating). The confirm
+// write of confSeq must take the incremental branch with exactly
+// 1 removeVertex + 1 addVertexFromPoint (+ the trailing removeVertex).
+{
+  const lastSeq = idleSeq
+  const modelCount = idleSeq.length
+  const seq = confSeq
+  let prefix = commonPrefix(lastSeq, seq)
+  prefix = Math.min(prefix, lastSeq.length - 1, modelCount - 1,
+                    seq.length - 1)
+  const pops = modelCount - (prefix + 1)
+  const incrementalCost = pops + (seq.length - prefix) + 1
+  const fullCost = seq.length + 2
+  check('ring idle: confirm takes the incremental branch',
+    prefix > 0 && incrementalCost < fullCost && pops >= 0,
+    'prefix ' + prefix + ' pops ' + pops)
+  check('ring idle: confirm write is 1 pop + 1 add',
+    pops === 1 && seq.length - prefix === 1,
+    'pops ' + pops + ' adds ' + (seq.length - prefix))
+}
+
+// --- v26 WKT builder (bulk confirm write) ---------------------------
+check('wkt: 2D linestring',
+  seqToWkt([pt(0, 0), pt(1.5, 2)], false) === 'LINESTRING (0 0, 1.5 2)')
+check('wkt: z emitted only when every vertex has finite z',
+  seqToWkt([pt(0, 0, 5), pt(1, 1, 6)], false) ===
+    'LINESTRING Z (0 0 5, 1 1 6)' &&
+  seqToWkt([pt(0, 0, 5), pt(1, 1, NaN)], false) ===
+    'LINESTRING (0 0, 1 1)')
+check('wkt: polygon appends the closing duplicate',
+  seqToWkt([pt(0, 0), pt(10, 0), pt(5, 8)], true) ===
+  'POLYGON ((0 0, 10 0, 5 8, 0 0))')
+check('wkt: already-closed polygon input is not double-closed',
+  seqToWkt([pt(0, 0), pt(10, 0), pt(5, 8), pt(0, 0)], true) ===
+  'POLYGON ((0 0, 10 0, 5 8, 0 0))')
+check('wkt: empty sequence is null', seqToWkt([], false) === null)
 
 // --- numeric parity fixtures (generated from the desktop algorithm) --
 if (fixturePath) {

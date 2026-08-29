@@ -4832,6 +4832,7 @@ Item {
   property var splineLastSeq: null    // sequence last written to the model
   property bool splineLastSeqFull: false // splineLastSeq is at full density
   property var splineFullCache: ({})  // full-density segment cache
+  property var splineWriteStats: null // {mode,prefix,pops,adds} of last write (v26)
   property var splineMarkerPositions: []
 
   // ----------------------------------------------------------------
@@ -5181,6 +5182,58 @@ Item {
                                cache).points
   }
 
+  // Ring idle-upgrade sequence (v26): the confirm ring (committed
+  // controls only) with the crosshair appended as the floating tail.
+  // Writing THIS at idle time — instead of the crosshair-rotated live
+  // ring — leaves the model's committed vertices bit-identical to the
+  // confirm sequence (the segment cache replays identical doubles), so
+  // the confirm-time prefix diff collapses to a tail rewrite for rings
+  // exactly as it does for open lines. The visible cost: while idle the
+  // crosshair is pinned into the ring by two straight seam chords
+  // instead of riding the curve — any crosshair move restores the
+  // smooth live preview via the normal rebuild. Returns null below 3
+  // distinct controls (same fallback as splineConfirmSequence).
+  function splineRingIdleSequence(controls, cross, tightness, tolerance, maxSegments, cache) {
+    const confirm = splineConfirmSequence(controls, true, tightness,
+        tolerance, maxSegments, cache)
+    if (confirm === null)
+      return null
+    return confirm.concat([cross])
+  }
+
+  // WKT for a vertex sequence — LINESTRING (open) or single-ring
+  // POLYGON with the closing duplicate appended (closed). Z is emitted
+  // only when EVERY vertex carries a finite z (2D layers deliver NaN z,
+  // which WKT cannot express). Default JS number formatting round-trips
+  // doubles exactly, so the parsed geometry is bit-identical.
+  function splineSeqToWkt(seq, closed) {
+    if (seq.length === 0)
+      return null
+    let hasZ = true
+    for (let i = 0; i < seq.length; i++) {
+      const z = seq[i].z
+      if (z === undefined || z === null || !isFinite(z)) {
+        hasZ = false
+        break
+      }
+    }
+    const coords = []
+    for (let i = 0; i < seq.length; i++) {
+      const p = seq[i]
+      coords.push(hasZ ? p.x + ' ' + p.y + ' ' + p.z
+                       : p.x + ' ' + p.y)
+    }
+    if (closed) {
+      if (seq[0].x !== seq[seq.length - 1].x ||
+          seq[0].y !== seq[seq.length - 1].y)
+        coords.push(coords[0])
+      return (hasZ ? 'POLYGON Z ((' : 'POLYGON ((') +
+             coords.join(', ') + '))'
+    }
+    return (hasZ ? 'LINESTRING Z (' : 'LINESTRING (') +
+           coords.join(', ') + ')'
+  }
+
   // ----------------------------------------------------------------
   // Model acquisition + session state
   // ----------------------------------------------------------------
@@ -5426,7 +5479,11 @@ Item {
   // which fires QField-side signal handlers. The model currently holds
   // [splineLastSeq[0..n-2] committed, floating = live crosshair] — the
   // floating vertex is never trusted for the diff.
-  function splineWriteSequence(seq) {
+  // allowBulk (v26): permit the one-call setDataFromGeometry fast path
+  // in the full-reset branch — confirm-freeze only, never live rebuilds
+  // (a bulk write mid-draw could fight the crosshair binding).
+  function splineWriteSequence(seq, allowBulk) {
+    splineWriteStats = null
     let prefix = 0
     let modelCount = 0
     try {
@@ -5465,18 +5522,68 @@ Item {
           splineModel.addVertexFromPoint(
               GeometryUtils.point(seq[i].x, seq[i].y, seq[i].z))
         splineModel.removeVertex()
+        splineWriteStats = { mode: 'tail', prefix: prefix, pops: pops,
+                             adds: seq.length - prefix }
+      } else if (allowBulk === true && seq.length >= 200 &&
+                 splineBulkWrite(seq)) {
+        splineWriteStats = { mode: 'bulk', prefix: 0, pops: 0,
+                             adds: seq.length }
       } else {
         splineModel.reset(true)
         for (let i = 0; i < seq.length; i++)
           splineModel.addVertexFromPoint(
               GeometryUtils.point(seq[i].x, seq[i].y, seq[i].z))
         splineModel.removeVertex()
+        splineWriteStats = { mode: 'reset', prefix: 0, pops: 0,
+                             adds: seq.length }
       }
       splineExpected = Number(splineModel.vertexCount)
       splineLastSeq = seq
       return true
     } catch (error) {
       splineLastSeq = null
+      return false
+    }
+  }
+
+  // Bulk fast path (v26): one setDataFromGeometry call instead of
+  // seq.length per-vertex invokables (each of which makes QField rebuild
+  // its screen rubberband — the O(N^2) that made large cold confirms
+  // crawl). The setter is NOT a QField API the sidecar can rely on
+  // (neither reference build's QML uses it), so it is feature-detected
+  // and the outcome strictly verified; ANY surprise returns false and
+  // the caller falls back to reset + the per-vertex loop, costing at
+  // most one wasted call on an incompatible build. The sequence is
+  // written as a LINESTRING — the model is a flat vertex list, and a
+  // 1:1 geometry avoids guessing how a build treats polygon closing
+  // duplicates (a build that appends one anyway is detected and healed
+  // with a single removeVertex).
+  function splineBulkWrite(seq) {
+    try {
+      if (typeof splineModel.setDataFromGeometry !== 'function')
+        return false
+      const wkt = splineSeqToWkt(seq, false)
+      if (wkt === null)
+        return false
+      const geom = GeometryUtils.createGeometryFromWkt(wkt)
+      splineModel.setDataFromGeometry(geom, splineModel.crs)
+      let verts = splineModel.vertices
+      if (verts.length === seq.length + 1 &&
+          verts[verts.length - 1].x === seq[0].x &&
+          verts[verts.length - 1].y === seq[0].y) {
+        splineModel.removeVertex()
+        verts = splineModel.vertices
+      }
+      if (verts.length !== seq.length)
+        return false
+      const first = verts[0]
+      const last = verts[verts.length - 1]
+      if (first.x !== seq[0].x || first.y !== seq[0].y ||
+          last.x !== seq[seq.length - 1].x ||
+          last.y !== seq[seq.length - 1].y)
+        return false
+      return true
+    } catch (error) {
       return false
     }
   }
@@ -5523,11 +5630,16 @@ Item {
   // splineIdleTimer.interval), rewrite the model at the full confirm
   // density: the expensive many-vertex write happens while the user is
   // reaching for ✓, and the confirm rewrite then only has to diff the
-  // crosshair tail — for open lines that is a handful of invokable
-  // calls instead of the whole curve. (Closed rings gain nothing from
-  // the diff — their sequence is rotated to end on the crosshair, so
-  // the confirm ring never shares a prefix — but the shared segment
-  // cache still spares them the full-density math.)
+  // crosshair tail — a handful of invokable calls instead of the whole
+  // curve. Open lines get that for free (idle and confirm curves share
+  // everything but the crosshair segment). Closed rings (v26) write the
+  // CONFIRM-shaped ring plus the crosshair as floating tail
+  // (splineRingIdleSequence) instead of the crosshair-rotated live
+  // ring: no rotation of the crosshair-free confirm ring can share a
+  // prefix with a sequence that must END on the crosshair, so aligning
+  // the idle write to the confirm shape is the only way rings get the
+  // tail-only confirm — previously every polygon ✓ was a full
+  // reset + per-vertex rewrite, O(N^2) in QField signal handling.
   function splineIdleUpgrade() {
     if (splineMutating || !splineArmed || splineModel === null)
       return
@@ -5546,10 +5658,16 @@ Item {
     } catch (error) {
       return
     }
-    const seq = splineBuildSequence(
-        splineControls.concat([cross]), closed,
-        splineTightness, splineTolerance, splineMaxSegments,
-        splineFullCache)
+    let seq = null
+    if (closed)
+      seq = splineRingIdleSequence(splineControls, cross,
+          splineTightness, splineTolerance, splineMaxSegments,
+          splineFullCache)
+    if (seq === null)
+      seq = splineBuildSequence(
+          splineControls.concat([cross]), closed,
+          splineTightness, splineTolerance, splineMaxSegments,
+          splineFullCache)
     if (seq.length < 2)
       return
     splineMutating = true
@@ -5557,6 +5675,8 @@ Item {
       if (splineWriteSequence(seq)) {
         splineLastCross = cross
         splineLastSeqFull = true
+        console.log('LGS spline idle: ' + seq.length + ' pts' +
+                    (closed ? ' (ring)' : ''))
       }
     } finally {
       splineMutating = false
@@ -5611,9 +5731,12 @@ Item {
     // This runs synchronously inside the ✓ tap — it must be FAST or the
     // button feels dead. The segment cache (warmed while drawing) makes
     // the full-density math ~free, and splineWriteSequence prefix-diffs
-    // against the idle upgrade's full-density write so an open line only
-    // rewrites the crosshair tail.
+    // against the idle upgrade's full-density write so lines AND rings
+    // (v26: the idle write is confirm-shaped for rings too) only rewrite
+    // the crosshair tail. Cold confirms (no idle pause) may take the
+    // one-call bulk path instead of the per-vertex loop.
     const started = Date.now()
+    const wasWarm = splineLastSeqFull  // read BEFORE the write clears it
     const seq = splineConfirmSequence(splineControls, closed,
         splineTightness, splineTolerance, splineMaxSegments,
         splineFullCache)
@@ -5623,7 +5746,7 @@ Item {
     try {
       splineModel.frozen = false
       try {
-        splineWriteSequence(seq)
+        splineWriteSequence(seq, true)
         splineLastSeq = null
       } finally {
         splineModel.frozen = true  // relock before confirm() resumes
@@ -5632,9 +5755,15 @@ Item {
     } finally {
       splineMutating = false
     }
-    // On-device diagnosis line — confirms should be a few ms once warm.
+    // On-device diagnosis line — warm confirms should be 'mode tail'
+    // with prefix ≈ pts and a few ms; 'mode reset' + cold on a big ring
+    // means the idle upgrade never landed before ✓.
+    const stats = splineWriteStats
     console.log('LGS spline confirm: ' + (Date.now() - started) + ' ms, ' +
-                seq.length + ' pts')
+                seq.length + ' pts' +
+                (stats !== null ? ', mode ' + stats.mode +
+                                  ', prefix ' + stats.prefix : '') +
+                (wasWarm ? ', warm' : ', cold'))
   }
 
   // Same confirm fixup for NATIVE (spline-off) line/polygon digitizing —
