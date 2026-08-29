@@ -9,7 +9,7 @@ authored markers wrong, soft, and drifting:
   * The sinistral/dextral couples were bare bent polylines with no
     arrowheads, hand-mirrored onto 500- and 501-unit canvases.  (After
     comparing redraws and the original on 30 Aug 2026, the user settled
-    on the filled-arrowhead redraw below.)
+    on the plain half-arrow redraw - shaft + 45-degree barb line.)
   * Marker size was Weight-scaled but the perpendicular offsets were
     constants (-1.4 teeth, +0.2/+0.6 overturned folds, 2.0 stem arrows),
     so ornaments floated off the stroke at Very Minor and buried into it
