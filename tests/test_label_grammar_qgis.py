@@ -171,6 +171,26 @@ BASEMAP = [
     ("prefix + sulphides",     dict(Lithology1="FGR", LithologyPrefix="H",
                                     **{"Sulphides/Mineralisation": "*"}),
                                "* H-FGR"),
+    # The suffix is a LINE, not a token: the prefix joins the unit's name,
+    # the suffix drops below every lith line as a bracketed aside.
+    ("lith + suffix",          dict(Lithology1="FGR",
+                                    LithologySuffix="strongly weathered"),
+                               "FGR | (strongly weathered)"),
+    ("prefix + suffix",        dict(Lithology1="FGR", LithologyPrefix="H",
+                                    LithologySuffix="sheared"),
+                               "H-FGR | (sheared)"),
+    ("suffix under two liths", dict(Lithology1="VQ", Lithology2="FGR",
+                                    Lith2Mineral1="Bt",
+                                    LithologySuffix="cut by late carbonate"),
+                               "VQ | FGR (Bt) | (cut by late carbonate)"),
+    # A note long enough to need breaking wraps itself, at 40 characters and
+    # on a word boundary.  The break MUST be <br>: the label is HTML and
+    # swallows a raw newline, which is what wordwrap() alone emits.
+    ("long suffix wraps",      dict(Lithology1="FGR", LithologySuffix=(
+                                    "sheared and boudinaged with strong "
+                                    "limonite staining on joint faces")),
+                               "FGR | (sheared and boudinaged with strong<br>"
+                               "limonite staining on joint faces)"),
     ("vein + selvedge",        dict(Lithology1="VN", Selvedge_cm=100.0,
                                     SelvedgeMineral="Py"), "VN, Slv: 1m Py"),
     ("vein + gen + selvedge",  dict(Lithology1="VN", VeinGen="V3",
@@ -191,6 +211,11 @@ BASEMAP = [
                                     Selvedge_cm=3.0), "FGR"),
     ("uncoded free text",      dict(UncodedLithology="odd grey rock"),
                                "odd grey rock"),
+    # The suffix sits OUTSIDE the uncoded override, so an uncoded unit keeps
+    # its note rather than silently losing it.
+    ("uncoded + suffix",       dict(UncodedLithology="odd grey rock",
+                                    LithologySuffix="fine grained"),
+                               "odd grey rock | (fine grained)"),
 ]
 
 OVERLAY = [
