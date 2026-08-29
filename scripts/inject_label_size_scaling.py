@@ -94,17 +94,22 @@ COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
 # zoom, and leaves it untouched at the reference scale itself.
 #
 # QGIS exposes no reference-scale expression variable (@map_scale is the only
-# scale in the context), so the plugin publishes one: script_setmapping writes
-# @lgs_reference_scale whenever it sets the reference scale, and
-# script_loadtemplate seeds it for a project that never runs Set Mapping Scale.
-# TEMPLATE_REFERENCE_SCALE is the fallback for anything older, and
-# tests/test_label_size_invariance_qgis.py pins it to the referencescale the
-# template actually carries so the two cannot drift apart in silence.
+# scale in the context), so the plugin publishes one: mainplugin republishes
+# @lgs_reference_scale whenever a project is read, script_setmapping writes it
+# whenever it sets the reference scale, and script_loadtemplate seeds it for a
+# new project.
 #
-# Both coalesce guards are load-bearing: a NULL number reads as 0 in a QGIS
-# expression, and an unguarded divide would take every label to zero.
-TEMPLATE_REFERENCE_SCALE = 5000
-REF_SCALE = "coalesce(to_real(@lgs_reference_scale), %d)" % TEMPLATE_REFERENCE_SCALE
+# When it is MISSING the factor is 1, i.e. exactly the old behaviour. It must
+# never fall back to a CONSTANT reference scale: a project sitting at 1:100,000
+# with no variable would then be compensated as though it were at 1:5000, and
+# every label would draw 20x too big - worse than the bug this fixes, and the
+# way it actually shipped for one round. Degrade to the old behaviour, never to
+# a guess about which scale someone is working at.
+#
+# Both coalesce guards are load-bearing beyond that: a NULL number reads as 0
+# in a QGIS expression, and an unguarded divide would take every label to zero.
+TEMPLATE_REFERENCE_SCALE = 5000        # the template's own bake; not a fallback
+REF_SCALE = "coalesce(to_real(@lgs_reference_scale), 0)"
 PAPER_F = ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + REF_SCALE + " > 0 "
            "THEN @map_scale / " + REF_SCALE + " ELSE 1 END")
 

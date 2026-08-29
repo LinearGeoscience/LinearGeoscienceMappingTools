@@ -106,7 +106,8 @@ def map_settings(scale):
     return ms
 
 
-def paper_size(layer, settings, feature, reference_scale, map_scale):
+def paper_size(layer, settings, feature, reference_scale, map_scale,
+               publish=True):
     """The point size this label actually lands on paper at this zoom.
 
     Evaluates the layer's own dd Size expression, then converts it the way
@@ -124,7 +125,8 @@ def paper_size(layer, settings, feature, reference_scale, map_scale):
     # the template layers ship empty, so the fields come from the schema
     # rather than from a row.
     ectx.appendScope(QgsExpressionContextUtils.layerScope(layer))
-    ectx.lastScope().setVariable(REFERENCE_SCALE_VAR, reference_scale)
+    if publish:
+        ectx.lastScope().setVariable(REFERENCE_SCALE_VAR, reference_scale)
     ectx.setFields(layer.fields())
     if feature is not None:
         ectx.setFeature(feature)
@@ -230,6 +232,43 @@ def test_small_polygons_still_shrink():
         check(small < big,
               "%-14s a sliver labels smaller than a big polygon "
               "(%.2f pt vs %.2f pt)" % (layer_name, small, big))
+
+
+def test_a_missing_variable_degrades_to_the_old_behaviour():
+    """No @lgs_reference_scale must mean NO compensation, never a guess.
+
+    This is the case the rest of this file could not catch, because every
+    other check sets the variable itself. It shipped once falling back to a
+    constant 1:5000, so a project sitting at 1:100,000 with no variable was
+    compensated as though it were at 1:5000 and drew every label at 110 pt -
+    twenty times too big, and far worse than the bug being fixed.
+    """
+    print("\n6. a project with no variable is left alone, not guessed at")
+    for layer_name in SIZED_LAYERS:
+        layer = load(layer_name)
+        settings = QgsPalLayerSettings(layer.labeling().settings())
+        feature = probe_feature(layer)
+        for reference_scale in (5000, 100000):
+            # unset: paper_size() only sets the variable when asked to
+            bare = paper_size(layer, settings, feature, reference_scale,
+                              reference_scale, publish=False)
+            published = paper_size(layer, settings, feature, reference_scale,
+                                   reference_scale)
+            check(abs(bare - published) < 0.01,
+                  "%-14s ref 1:%-7d at the reference scale, variable or not, "
+                  "%.2f pt either way" % (layer_name, reference_scale, bare))
+
+            # Zoomed in 5x with no variable you should get the OLD behaviour
+            # exactly - 5x too big. The shipped bug compensated by a constant
+            # 1:5000 instead, which pinned the size at a flat 110 pt whatever
+            # the zoom, so this ratio was 1.0 and not 5.0. That is the tell.
+            zoomed = paper_size(layer, settings, feature, reference_scale,
+                                reference_scale / 5.0, publish=False)
+            ratio = zoomed / bare if bare else 0
+            check(abs(ratio - 5.0) < 0.05,
+                  "%-14s ref 1:%-7d no variable at 5x zoom grows 5x (%.2fx), "
+                  "the old behaviour and no worse"
+                  % (layer_name, reference_scale, ratio))
 
 
 def test_fallback_matches_the_template():
@@ -357,6 +396,7 @@ def main():
     test_fieldnotebook_is_untouched()
     test_the_engine_agrees()
     test_small_polygons_still_shrink()
+    test_a_missing_variable_degrades_to_the_old_behaviour()
     print("\n%d passed, %d failed" % (_passed, _failed))
     return 1 if _failed else 0
 

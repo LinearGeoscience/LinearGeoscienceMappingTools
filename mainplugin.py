@@ -285,6 +285,20 @@ class LinearGeosciencePluginMain:
         except Exception:
             pass  # settings migration is best-effort, never blocks load
 
+        # Republish @lgs_reference_scale on every project read, and once for
+        # the project already open. The label size expressions divide by it to
+        # hold their point size across zooms; without it they fall back to no
+        # compensation at all, which is merely the old behaviour rather than a
+        # wrong one - but every project deserves the fix, including ones made
+        # before it existed and ones that never run Set Mapping Scale.
+        try:
+            from qgis.core import QgsProject
+            QgsProject.instance().readProject.connect(
+                self._publish_reference_scale)
+            self._publish_reference_scale()
+        except Exception:
+            pass  # never block plugin load on this
+
         self.toolbar = self.iface.addToolBar("Linear Geoscience Mapping Tools")
         self.toolbar.setObjectName("LinearGeoscienceMappingTools")
 
@@ -333,6 +347,40 @@ class LinearGeosciencePluginMain:
         core.initGui()
         self.stereonet_core = core
         return core
+
+    def _publish_reference_scale(self, *args):
+        """Set @lgs_reference_scale from the mapping layers' own renderers.
+
+        Read off the layers rather than stored anywhere, so it is always the
+        truth even if someone changes the reference scale in layer properties
+        instead of through Set Mapping Scale.
+        """
+        try:
+            from qgis.core import QgsProject
+            try:
+                from .lgs_layers import base_name, CANONICAL_LAYERS
+                from .script_setmapping import set_project_variable
+            except ImportError:
+                from lgs_layers import base_name, CANONICAL_LAYERS
+                from script_setmapping import set_project_variable
+
+            wanted = {base_name(name) for name in CANONICAL_LAYERS}
+            project = QgsProject.instance()
+            scale = 0
+            for layer in project.mapLayers().values():
+                if base_name(layer.name()) not in wanted:
+                    continue
+                renderer = getattr(layer, "renderer", None)
+                renderer = renderer() if callable(renderer) else None
+                if renderer is not None:
+                    scale = max(scale, renderer.referenceScale())
+            if scale > 0:
+                set_project_variable(project, scale)
+        except Exception as e:
+            from qgis.core import QgsMessageLog, Qgis
+            QgsMessageLog.logMessage(
+                f"Could not publish the reference scale variable: {e}",
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
     def unload(self):
         if self.main_dialog:
