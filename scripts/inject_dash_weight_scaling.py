@@ -35,8 +35,10 @@ parse cost - see the parser-nesting trap):
     becomes Confidence-outer / Weight-inner (6 branches); the inner
     ELSE keeps the authored dash for Moderate/NULL and the outer ELSE
     keeps MEGA_DASH unscaled (it is a solid stand-in - scaling it is
-    pointless bytes).  Reaches the Shear Zone Boundary flip nested
-    inside its wave GeometryGenerator like any other layer.
+    pointless bytes).  Shear Zone Boundary is NOT one of them: its
+    stroke's customDash is pinned to the bare mega-dash (PINNED_SOLID)
+    because its tilde generator owns the Inferred rendering - see
+    inject_linework_shear_wave.py - and this script skips it.
 
 Dot patterns (the axial-trace 22;7;0.5;7 family, round caps) scale
 proportionally with no floor: the rendered dot is dash element + cap
@@ -57,7 +59,7 @@ Idempotent and re-runnable: like inject_weight_scaling, expressions are
 rebuilt from each layer's CURRENT customdash static (the flip layers
 keep theirs - apply_flip never clears it), so re-run this script after
 retuning a dash in inject_linework_dash_order.py or QGIS.  The run must
-find exactly 118 dash-bearing strokes (62 static + 56 flips); a
+find exactly 117 dash-bearing strokes (62 static + 55 flips); a
 byte-identical rebuild is a no-op.
 
 Usage:
@@ -78,8 +80,13 @@ LW = "2 - Linework"
 MEGA_DASH = "100000;1"
 INFERRED_TEST = "\"Confidence\" IN ('Inferred','Queried')"
 
+# A customDash dd that is the bare quoted mega-dash is pinned solid on
+# purpose (Shear Zone Boundary: the tilde generator owns its dashing -
+# inject_linework_shear_wave.py).  Not a flip, not scalable: skipped.
+PINNED_SOLID = "'%s'" % MEGA_DASH
+
 EXPECT_STATIC = 62
-EXPECT_FLIPS = 56
+EXPECT_FLIPS = 55
 
 BACKUP_DATE = "2026-08-29"
 BACKUP_NAME = "LGS_MappingTemplate_pre-dash-weight_%s.gpkg" % BACKUP_DATE
@@ -265,6 +272,8 @@ def main():
         authored = val("customdash")
         if custom is None and val("use_custom_dash") != "1":
             continue  # solid stroke (incl. the SOLID-code outlineStyle dd)
+        if custom == PINNED_SOLID:
+            continue  # Shear Zone Boundary: tilde generator owns dashing
         if not authored or not re.match(r"^[\d.;]+$", authored):
             bail("dash-bearing layer with unusable customdash static %r"
                  % authored)
@@ -329,7 +338,7 @@ def main():
     for s, e in simpleline_layers(rr):
         dd = dd_expressions(rr[s:e])
         custom = dd.get("customDash")
-        if custom is None:
+        if custom is None or custom == PINNED_SOLID:
             continue
         assert '"Weight"' in custom, "unscaled customDash survived"
         scaled += 1

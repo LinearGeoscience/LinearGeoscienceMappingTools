@@ -90,6 +90,8 @@ def dash_layers(qml):
         custom = dd.get("customDash")
         if custom is None and val("use_custom_dash") != "1":
             continue
+        if custom == _inj.PINNED_SOLID:
+            continue  # Shear Zone Boundary: tilde generator owns dashing
         out.append((val("customdash"), custom,
                     custom is not None and _inj.MEGA_DASH in custom))
     return out

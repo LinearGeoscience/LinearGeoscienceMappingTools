@@ -1,13 +1,22 @@
-"""Give the Shear Zone Boundary linework a wavy stroke.
+"""Give the Shear Zone Boundary linework a wavy stroke of whole tildes.
 
 The Shear Zone Boundary symbol on "2 - Linework" draws a straight red
 stroke with an inward-pointing arrow MarkerLine.  This injector replaces
 only the straight backbone: the existing SimpleLine - with every static
-option and both of its data-defined properties (the confidence customDash
-and the Weight outlineWidth) - is wrapped byte-for-byte inside a
-GeometryGenerator whose modifier is wave($geometry, ...), so the stroke
-itself undulates.  The arrow MarkerLine is not touched and keeps riding
-the ORIGINAL geometry.
+option and its Weight outlineWidth dd - is wrapped byte-for-byte inside
+a GeometryGenerator, so the stroke itself undulates.  The arrow
+MarkerLine is not touched and keeps riding the ORIGINAL geometry.
+
+The generator also OWNS the Inferred/Queried rendering.  A dash pattern
+applied to a waved line has no phase relationship to the wave, so dashes
+cut tildes at arbitrary points.  Instead the modifier is a CASE: for
+Inferred/Queried it emits only whole tildes - one full wave period per
+TILDE_MM-long substring of the base line, GAP_MM of nothing between
+them - so every dash IS a '~' by construction, with zero drift on long
+or bent lines.  Anything else (including NULL) waves continuously.  The
+stroke's customDash dd is pinned to the mega-dash (solid) so nothing
+dashes the tildes a second time; "Shear Zone Boundary" is accordingly
+absent from inject_confidence_system.py FLIP_CODES.
 
 The wrapper is emitted in exactly the shape the template already ships
 for the Unconformity family (symbol 42): GeometryGenerator, SymbolType
@@ -15,11 +24,10 @@ Line, units MM (so the renderer's referenceScale applies), one line
 sub-symbol.  That precedent is also the proof that no neighbouring
 injector needs changing:
 
-* inject_confidence_system.py finds SimpleLines by regex over the whole
-  symbol span, nested or not, and the moved layer is base-solid, so
-  apply_flip re-runs no-op on it while the preserved customDash dd keeps
-  the Inferred/Queried dashing working along the wavy path.  Run order
-  with this script does not matter.
+* inject_confidence_system.py no longer lists this code (the generator
+  handles Inferred/Queried itself), so it never touches the symbol; the
+  moved stroke is base-solid so apply_flip would skip it anyway.  Run
+  order with this script does not matter.
 * inject_weight_scaling.py likewise recurses into sub-symbols (symbol 42
   carries its Weight dd on the nested SimpleLine).  The generator layer
   gets its own empty data_defined_properties block because
@@ -37,9 +45,9 @@ QField renders wave generators already (Vein - Shear, the Unconformity
 family), so nothing export-side is needed.
 
 Idempotent: a re-run that finds the generator with the same expression
-is a no-op; one that finds a DIFFERENT expression refreshes it in place,
-which is the tuning path - edit WAVELENGTH_MM / AMPLITUDE_MM below and
-re-run.
+and a neutral customDash is a no-op; anything else refreshes in place,
+which is the tuning path - edit WAVELENGTH_MM / AMPLITUDE_MM / GAP_MM
+below and re-run.
 
 Never point this at LGS_MappingTemplate_Patterns.gpkg - that file is
 re-baked wholesale by inject_basemap_lith_patterns.py (see the footer).
@@ -66,8 +74,30 @@ LW = "2 - Linework"
 # bold undulating boundary rather than a squiggle.
 WAVELENGTH_MM = 10.0
 AMPLITUDE_MM = 0.7
-WAVE_EXPR = ("wave($geometry, wavelength:=%s, amplitude:=%s)"
-             % (WAVELENGTH_MM, AMPLITUDE_MM))
+TILDE_MM = WAVELENGTH_MM     # one Inferred dash = exactly one wave period
+GAP_MM = 5.0                 # blank base-line between tildes (~67% ink)
+
+# What the stroke's customDash dd is pinned to: effectively solid.  Keeping
+# the dd key (rather than deleting it) preserves the MEGA_DASH the
+# confidence validator counts and the dd block inject_weight_scaling needs.
+NEUTRAL_DASH = "'100000;1'"
+
+_SOLID_WAVE = ("wave($geometry, wavelength:=%s, amplitude:=%s)"
+               % (WAVELENGTH_MM, AMPLITUDE_MM))
+_TILDE_WAVE = ("wave(line_substring($geometry, @element, @element + %s), "
+               "wavelength:=%s, amplitude:=%s)"
+               % (TILDE_MM, WAVELENGTH_MM, AMPLITUDE_MM))
+# NULL Confidence falls to ELSE (NULL AND x is never true); lines shorter
+# than one tilde wave continuously rather than hitting the empty
+# generate_series edge (it returns NULL below its range).  Flat on purpose:
+# QgsExpression parse cost doubles per with_variable nesting level.
+WAVE_EXPR = (
+    "CASE WHEN \"Confidence\" IN ('Inferred','Queried') "
+    "AND length($geometry) >= %s "
+    "THEN collect_geometries(array_foreach("
+    "generate_series(0, length($geometry) - %s, %s), %s)) "
+    "ELSE %s END"
+    % (TILDE_MM, TILDE_MM, TILDE_MM + GAP_MM, _TILDE_WAVE, _SOLID_WAVE))
 
 GEN_ID = "{%s}" % uuid.uuid5(uuid.NAMESPACE_URL, "lgs-shear-wave-gen:" + CODE)
 
@@ -209,12 +239,13 @@ def convert(sym_xml, sym_name):
         bail("the SimpleLine in symbol %r is nested inside a sub-symbol - "
              "already converted by hand? Refusing to guess." % sym_name)
     stroke = sym_xml[s:e]
+    # On a from-scratch rebuild neither dd need exist yet: the generator
+    # owns dashing now, and inject_weight_scaling recurses in later.
     for needle, what in (("customDash", "confidence customDash dd"),
                          ("outlineWidth", "Weight outlineWidth dd")):
         if needle not in stroke:
-            bail("the stroke is missing its %s - run "
-                 "inject_confidence_system.py / inject_weight_scaling.py "
-                 "first so there is something to preserve" % what)
+            print("note: the stroke has no %s yet - fine, carrying on"
+                  % what)
     return sym_xml[:s] + generator_wrapper(sym_name, stroke) + sym_xml[e:]
 
 
@@ -232,6 +263,29 @@ def refresh_expression(sym_xml):
             bail("generator found but its geometryModifier option was not")
         return sym_xml[:s] + new_layer + sym_xml[e:]
     bail("refresh called with no generator present")
+
+
+def neutralize_custom_dash(sym_xml):
+    """Pin the stroke's customDash dd to NEUTRAL_DASH (solid).
+
+    The generator emits the gaps itself; a live confidence dash on top
+    would cut the tildes a second time.  A stroke with no customDash dd
+    at all (from-scratch rebuild order) needs nothing.
+    """
+    hits = sym_xml.count('<Option name="customDash" type="Map">')
+    if hits == 0:
+        return sym_xml
+    if hits > 1:
+        bail("expected at most one customDash dd in the symbol, found %d"
+             % hits)
+    new, n = re.subn(
+        r'(<Option name="customDash" type="Map">.*?'
+        r'<Option name="expression" type="QString" value=)"[^"]*"',
+        lambda m: m.group(1) + quoteattr(NEUTRAL_DASH),
+        sym_xml, count=1, flags=re.S)
+    if n != 1:
+        bail("customDash dd present but its expression option was not")
+    return new
 
 
 # ---------------------------------------------------------------------------
@@ -273,22 +327,31 @@ def main():
     gen_count_before = renderer.count('class="GeometryGenerator"')
 
     if GEN_ID in sym_xml:
-        cur_expr = None
+        cur_expr = cur_dash = None
         for el in ET.fromstring(sym_xml).iter("layer"):
             if el.get("id") == GEN_ID:
                 for o in el.find("Option").findall("Option"):
                     if o.get("name") == "geometryModifier":
                         cur_expr = o.get("value")
-        if cur_expr == WAVE_EXPR:
+                for sl in el.iter("layer"):
+                    if sl.get("class") != "SimpleLine":
+                        continue
+                    for entry in sl.iter("Option"):
+                        if entry.get("name") != "customDash":
+                            continue
+                        for o in entry.findall("Option"):
+                            if o.get("name") == "expression":
+                                cur_dash = o.get("value")
+        if cur_expr == WAVE_EXPR and cur_dash in (None, NEUTRAL_DASH):
             print("already applied: %s carries %s - nothing to do"
                   % (CODE, WAVE_EXPR))
             con.close()
             return
         print("refreshing wave parameters: %r -> %r" % (cur_expr, WAVE_EXPR))
-        new_sym = refresh_expression(sym_xml)
+        new_sym = neutralize_custom_dash(refresh_expression(sym_xml))
         gen_delta = 0
     else:
-        new_sym = convert(sym_xml, sym_name)
+        new_sym = neutralize_custom_dash(convert(sym_xml, sym_name))
         gen_delta = 1
 
     # The arrows are critical: their bytes must survive verbatim.
@@ -356,14 +419,20 @@ def main():
     assert statics["use_custom_dash"] == "0"
     dd = ET.tostring(stroke.find("data_defined_properties"),
                      encoding="unicode")
-    assert "customDash" in dd and "100000;1" in dd and "20;5" in dd, \
-        "confidence dd lost"
-    assert "outlineWidth" in dd and "Weight" in dd, "weight dd lost"
+    if "customDash" in dd:
+        assert "100000;1" in dd, "customDash dd not neutral"
+        assert "Inferred" not in dd, \
+            "a live confidence dash would cut the tildes a second time"
+    assert "Inferred" in opts["geometryModifier"], \
+        "the generator should own the Inferred rendering"
+    if "outlineWidth" in dd:
+        assert "Weight" in dd, "weight dd mangled"
     for el in (sym_el, gen, marker, sub, stroke):
         assert el.find("data_defined_properties") is not None
     print("round-trip ok: %s = wavy stroke (wavelength %s mm, amplitude "
-          "%s mm) under untouched arrows" % (CODE, WAVELENGTH_MM,
-                                             AMPLITUDE_MM))
+          "%s mm), Inferred as whole %s mm tildes with %s mm gaps, "
+          "under untouched arrows"
+          % (CODE, WAVELENGTH_MM, AMPLITUDE_MM, TILDE_MM, GAP_MM))
 
     print()
     print("NOW RE-BAKE THE PATTERNS GPKG so its mirrored Linework style "

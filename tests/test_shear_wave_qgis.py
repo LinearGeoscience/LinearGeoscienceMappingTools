@@ -140,8 +140,12 @@ def test_structure():
           "base stroke stays solid (confidence flips it per-feature)")
     dd = ET.tostring(stroke.find("data_defined_properties"),
                      encoding="unicode")
-    check("customDash" in dd and "100000;1" in dd and "20;5" in dd,
-          "confidence customDash dd preserved on the nested stroke")
+    check("customDash" in dd and "100000;1" in dd,
+          "customDash dd pinned to the neutral mega-dash")
+    check("Inferred" not in dd,
+          "no live confidence dash left to cut the tildes a second time")
+    check("Inferred" in opts.get("geometryModifier", ""),
+          "the generator owns the Inferred rendering")
     check("outlineWidth" in dd and "Weight" in dd,
           "Weight outlineWidth dd preserved on the nested stroke")
     for el in (sym, gen, marker, gen.find("symbol"), stroke):
@@ -181,11 +185,16 @@ def test_expressions_parse():
 # 3. the wave evaluates
 # ---------------------------------------------------------------------------
 
-def evaluate(expr, wkt):
+def evaluate(expr, wkt, conf=None):
+    """Drive the "Confidence" field through a same-named variable - fields
+    are unavailable without a layer (the selvedge as_vars trick)."""
+    expr = expr.replace('"Confidence"', "@Confidence")
     f = QgsFeature()
     f.setGeometry(QgsGeometry.fromWkt(wkt))
     ctx = QgsExpressionContext()
-    ctx.appendScope(QgsExpressionContextScope())
+    scope = QgsExpressionContextScope()
+    scope.setVariable("Confidence", conf)
+    ctx.appendScope(scope)
     e = QgsExpression(expr)
     if e.hasParserError():
         return None, "parse: " + e.parserErrorString()
@@ -204,16 +213,21 @@ def is_blank(g):
 
 def test_wave_evaluates():
     print("wave evaluates:")
-    straight = "LINESTRING(0 0, 200 0)"
-    curved = "LINESTRING(0 0, 60 25, 120 -10, 200 0)"
-    crossing = "LINESTRING(0 0, 100 40, 100 -40, 0 10)"
-    for label, wkt in (("straight", straight), ("curved", curved),
-                       ("self-crossing", crossing)):
-        out, err = evaluate(_inj.WAVE_EXPR, wkt)
-        check(err is None, "%s line: %s" % (label, err))
-        check(not is_blank(out), "%s line produces geometry" % label)
+    straight = "LINESTRING(0 0, 47 0)"
+    curved = "LINESTRING(0 0, 15 6, 30 -4, 47 0)"
+    crossing = "LINESTRING(0 0, 30 12, 30 -12, 0 4)"
+    for conf in (None, "Observed"):
+        for label, wkt in (("straight", straight), ("curved", curved),
+                           ("self-crossing", crossing)):
+            out, err = evaluate(_inj.WAVE_EXPR, wkt, conf)
+            check(err is None, "%s/%s line: %s" % (conf, label, err))
+            if not check(not is_blank(out),
+                         "%s/%s line produces geometry" % (conf, label)):
+                continue
+            check(len(list(out.parts())) == 1,
+                  "%s/%s waves continuously, one part" % (conf, label))
 
-    out, err = evaluate(_inj.WAVE_EXPR, straight)
+    out, err = evaluate(_inj.WAVE_EXPR, straight, "Observed")
     if not is_blank(out):
         pts = list(out.vertices())
         check(len(pts) > 2,
@@ -221,7 +235,37 @@ def test_wave_evaluates():
         dev = max(abs(p.y()) for p in pts)
         check(dev > 0, "and actually deviates from y=0 (%.3f)" % dev)
 
-    _, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(50 50, 50 50)")
+    # Inferred: whole tildes, phase-locked by construction.  A 47-unit
+    # line at tilde 10 / gap 5 yields exactly 0-10, 15-25, 30-40.
+    for conf in ("Inferred", "Queried"):
+        out, err = evaluate(_inj.WAVE_EXPR, straight, conf)
+        check(err is None, "%s tildes: %s" % (conf, err))
+        if is_blank(out):
+            check(False, "%s produces geometry" % conf)
+            continue
+        parts = list(out.parts())
+        check(len(parts) == 3, "%s: 3 whole tildes on a 47-unit line (%d)"
+              % (conf, len(parts)))
+        spans = sorted((min(p.x() for p in part.points()),
+                        max(p.x() for p in part.points())) for part in parts)
+        want = [(0.0, 10.0), (15.0, 25.0), (30.0, 40.0)]
+        ok = len(spans) == len(want) and all(
+            abs(a - c) < 0.01 and abs(b - d) < 0.01
+            for (a, b), (c, d) in zip(spans, want))
+        check(ok, "%s: tildes sit at %s (got %s)" % (conf, want, spans))
+        full_period = all(
+            min(p.y() for p in part.points()) < -0.01
+            and max(p.y() for p in part.points()) > 0.01
+            for part in parts)
+        check(full_period, "%s: every tilde carries a crest AND a trough"
+              % conf)
+
+    out, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(0 0, 8 0)", "Inferred")
+    check(err is None and not is_blank(out)
+          and len(list(out.parts())) == 1,
+          "a line shorter than one tilde waves continuously instead")
+
+    _, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(50 50, 50 50)", "Observed")
     check(err is None, "zero-length line does not error (%s)" % err)
 
 
@@ -323,15 +367,39 @@ def test_render(tmp_gpkg):
           "the arrows add ink beyond the bare stroke (%d > %d)"
           % (observed_red, stroke_red))
 
-    # Confidence dashing rides the wavy path.
+    # Inferred renders as separated whole tildes, still arrow-free here.
     seed(lw, mm_line(80), dict(base, Confidence="Inferred"))
-    inferred_red = len(red_pixels(render(lw, REF_SCALE, project)))
+    inf_img = render(lw, REF_SCALE, project)
+    inf_px = red_pixels(inf_img)
+    inferred_red = len(inf_px)
     seed(lw, mm_line(80), dict(base, Confidence="Observed"))
     solid_red = len(red_pixels(render(lw, REF_SCALE, project)))
     print("    red ink: observed=%d inferred=%d" % (solid_red, inferred_red))
-    check(0 < inferred_red < solid_red * 0.95,
-          "Inferred dashes the wavy stroke (%d < %d)"
+    check(0 < inferred_red < solid_red * 0.85,
+          "Inferred drops ink for the gaps (%d < %d)"
           % (inferred_red, solid_red))
+    # Group inferred ink into contiguous x-runs: each is one tilde and
+    # must carry BOTH a crest and a trough around the base line's y.
+    cols = sorted({x for x, _ in inf_px})
+    runs, start, prev = [], cols[0], cols[0]
+    for x in cols[1:]:
+        if x - prev > 3:
+            runs.append((start, prev))
+            start = x
+        prev = x
+    runs.append((start, prev))
+    print("    inferred tildes on screen: %d runs %s" % (len(runs), runs))
+    check(len(runs) >= 3, "the dashes separate into tildes (%d runs)"
+          % len(runs))
+    cy = PX_H / 2.0
+    whole = 0
+    for lo, hi in runs:
+        ys = [y for x, y in inf_px if lo <= x <= hi]
+        if min(ys) < cy - 1.5 and max(ys) > cy + 1.5:
+            whole += 1
+    check(whole == len(runs),
+          "every rendered dash is a whole ~ with crest and trough (%d/%d)"
+          % (whole, len(runs)))
 
     # Weight thickening rides it too.
     seed(lw, mm_line(80), dict(base, Weight="Major"))

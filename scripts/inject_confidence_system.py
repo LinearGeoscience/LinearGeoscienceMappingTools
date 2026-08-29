@@ -78,7 +78,9 @@ FLIP_CODES = {
     "Fault - Strike-Slip": "38;7",
     "Shear": "38;7", "Shear - Dextral": "38;7", "Shear - Normal": "38;7",
     "Shear - Reverse": "38;7", "Shear - Sinistral": "38;7",
-    "Shear Zone Boundary": "20;5",
+    # Shear Zone Boundary is NOT here: its Inferred/Queried rendering is
+    # whole-tilde gaps emitted by the geometry generator - see
+    # inject_linework_shear_wave.py.
     "Contact - Faulted": "25;4", "Contact - Sheared": "12;4",
     "Anticline": "30;10", "Antiform": "30;10",
     "Antiform - Overturned": "30;10", "Antiformal Syncline": "30;10",
