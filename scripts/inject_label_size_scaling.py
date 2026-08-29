@@ -40,8 +40,12 @@ DETAIL_GATE = ("(\"Category\" IN ('Veins','Lithology') "
                "OR \"Type\" IN ('Shear Zone Boundary','Detachment'))")
 
 # Kept in step with the baked label fontSize expression by
-# inject_weight_five_tiers.py (this script itself is not safely
-# re-runnable - it multiplies factors into current statics).
+# inject_weight_five_tiers.py, which is the one that is NOT safely
+# re-runnable - it multiplies factors into current statics. THIS file is,
+# because it rebuilds the whole expression from the static fontSize rather
+# than from whatever expression is already there. Worth being explicit:
+# the sentence used to say "this script itself", and a second pair of eyes
+# read it as a warning against re-running this one.
 WEIGHT_F = ("CASE WHEN \"Weight\" = 'Regional' THEN 1.3 "
             "WHEN \"Weight\" = 'Major' THEN 1.15 "
             "WHEN \"Weight\" = 'Minor' THEN 0.8 "
