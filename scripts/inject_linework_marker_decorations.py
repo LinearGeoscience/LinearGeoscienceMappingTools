@@ -6,10 +6,10 @@ authored markers wrong, soft, and drifting:
   * Antiformal Syncline shared Antiform - Overturned's SVG byte-for-byte
     (and Synformal Anticline shared Synform - Overturned's) - four codes,
     two glyphs.  Thrust and Reverse shared the same filled triangle.
-  * The sinistral/dextral couples were hand-mirrored onto 500- and
-    501-unit canvases, so the pair never registered exactly.  (Their
-    bent-polyline artwork itself is deliberate - redrawn heads were
-    tried 30 Aug 2026 and the user chose the original flick back.)
+  * The sinistral/dextral couples were bare bent polylines with no
+    arrowheads, hand-mirrored onto 500- and 501-unit canvases.  (After
+    comparing redraws and the original on 30 Aug 2026, the user settled
+    on the filled-arrowhead redraw below.)
   * Marker size was Weight-scaled but the perpendicular offsets were
     constants (-1.4 teeth, +0.2/+0.6 overturned folds, 2.0 stem arrows),
     so ornaments floated off the stroke at Very Minor and buried into it
@@ -104,7 +104,7 @@ FOLD = dict(kind="svg", size="1.2", color=BLACK, outline=BLACK, ow="0.35",
 FOLD_OV = dict(kind="svg", size="8.4", color=BLACK, outline=BLACK, ow="0.5",
                interval="56", along="6", aal="4.6")
 TOOTH = dict(kind="svg", size="2.6", interval="16", along="7", aal="4.6")
-SLIP = dict(kind="svg", size="12", ow="1", placements="CentralPoint",
+SLIP = dict(kind="svg", size="12", ow="0.6", placements="CentralPoint",
             aal="4.6")
 STEM = dict(kind="svg", svg="stem_arrow.svg", ow="0.5", aal="4")
 
