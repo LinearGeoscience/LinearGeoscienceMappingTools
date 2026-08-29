@@ -1,13 +1,15 @@
 """Thin the fault/shear family (30 Aug 2026 field feedback).
 
-Faults and shears rendered a little too heavy at every Weight tier -
-the user compared Major-weight GSWA imports at 1:100k against the
-published GSWA sheet and settled on trimming the family base 2.26 ->
-2.0 Point, keeping the deliberate hierarchy (veins 1.46 < dykes/sills
-1.8 < faults/shears 2.0; the Weight FACTORS stay global and untouched).
-Terrane Boundary scales down proportionally (3 -> 2.65, its 0.8 second
-stroke -> 0.71).  Shear Zone Boundary (1.46) is not part of the heavy
-family and stays.
+Faults and shears rendered too heavy against the published GSWA 100k
+sheet (~0.3-0.4 mm faults).  Two trims on 30 Aug 2026: first 2.26 ->
+2.0 Point, then - "still much too thick at major weight" - down to
+1.0, putting Major at 1.5 pt (0.53 mm) and Moderate at 1.0 pt
+(0.35 mm), the GSWA standard fault ink.  Terrane Boundary scales
+proportionally (3 -> 2.65 -> 1.33; its second stroke 0.8 -> 0.71 ->
+0.36).  The Weight FACTORS stay global and untouched; Shear Zone
+Boundary (1.46) is not part of the heavy family and stays.  NOTE this
+inverts the old hierarchy - veins (1.46) and dykes/sills (1.8) now
+outweigh faults; flagged to the user, rebalancing is a separate call.
 
 Dashes deliberately keep their authored lengths ('38;7' etc.): thinning
 the stroke under a constant dash nudges the dash:width ratio up, the
@@ -48,8 +50,8 @@ FAMILY = [
     "Shear", "Shear - Dextral", "Shear - Normal", "Shear - Reverse",
     "Shear - Sinistral", "Detachment",
 ]
-WIDTHS = {code: [("2.26", "2")] for code in FAMILY}
-WIDTHS["Terrane Boundary"] = [("3", "2.65"), ("0.8", "0.71")]
+WIDTHS = {code: [("2", "1")] for code in FAMILY}
+WIDTHS["Terrane Boundary"] = [("2.65", "1.33"), ("0.71", "0.36")]
 
 BACKUP_DATE = "2026-08-30"
 BACKUP_NAME = "LGS_MappingTemplate_pre-fault-thin_%s.gpkg" % BACKUP_DATE

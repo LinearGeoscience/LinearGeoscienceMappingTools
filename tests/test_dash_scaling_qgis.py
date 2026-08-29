@@ -50,7 +50,7 @@ from inject_weight_scaling import FACTORS  # noqa: E402
 GPKG = os.path.join(REPO_ROOT, "Template", "LGS_MappingTemplate.gpkg")
 LW = _inj.LW
 REF_SCALE = 5000
-PX_W, PX_H, DPI = 1280, 200, 192.0  # 2x DPI: a Very Minor 0.68 pt line must survive the ink threshold
+PX_W, PX_H, DPI = 2560, 200, 384.0  # 4x DPI: a Very Minor fault is 0.3 pt (0.11 mm) since the 30 Aug thinning and must survive the ink threshold
 
 TIERS = dict(FACTORS, Moderate="1")
 
@@ -206,7 +206,8 @@ def render(lyr, scale, project, w=PX_W, h=PX_H):
 
 
 def inky(c):
-    return (c.red() + c.green() + c.blue()) / 3 < 120
+    # generous threshold: a 1 px antialiased hairline renders light grey
+    return (c.red() + c.green() + c.blue()) / 3 < 215
 
 
 def dash_runs(img):
