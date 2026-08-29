@@ -22,10 +22,18 @@ user-reviewed classification, 2026-08-15):
       customDash (ELSE a '100000;1' mega-dash == solid; empirically a
       dd customDash applies even with use_custom_dash=0, and an empty
       ELSE erases the line - hence the mega-dash).
-    - SOLID codes: dd outlineStyle 'dash' when Inferred/Queried, on
-      backbone SimpleLine layers whose base is solid (decorative dashed
-      layers like Vein - Shear's wavy selvage are skipped by that
-      condition).
+    - SOLID codes: the same customDash flip, with the dash computed
+      from the symbol's widest solid backbone at the plain-Fault
+      proportions (38;7 on a 2.26 stroke).  Originally these flipped
+      via dd outlineStyle 'dash' - Qt's preset is only ~4x the pen
+      width, which read as stubby half-dashes at heavy weights and
+      small scales (user call, 30 Aug 2026, GSWA 100k sheet); a re-run
+      migrates any old outlineStyle dd away.  Every layer of one
+      symbol shares the widest layer's dash so stacked strokes stay in
+      phase.  Decorative dashed layers (e.g. Vein - Shear's wavy
+      selvage) are skipped by the solid-base condition.  Run
+      inject_dash_weight_scaling.py afterwards to put the new dashes
+      on the Weight ramp.
     - EXCLUDED (dash encodes identity, not certainty): fold-generation
       dash-dots, gradational-contact dots, trend/formline styles,
       marker patterns, and the existing '- Inferred/Queried/Concealed'
@@ -48,6 +56,11 @@ from xml.sax.saxutils import quoteattr
 QUERIED_SUFFIX = "CASE WHEN \"Confidence\" = 'Queried' THEN '?' ELSE '' END"
 INFERRED_TEST = "\"Confidence\" IN ('Inferred','Queried')"
 MEGA_DASH = "100000;1"
+
+# SOLID-code Inferred dash proportions = the plain-Fault authored look
+# (38;7 on its 2.26 base width).
+DASH_RATIO = 38 / 2.26
+GAP_RATIO = 7 / 2.26
 
 # layer -> (anchor form field, place '?' handling key)
 LAYERS = ["1 - FieldNotebook", "2 - Linework", "3 - Overlay", "4 - Basemap"]
@@ -283,9 +296,50 @@ def apply_flip(sym_xml, code, expected_dash):
     return out, changed
 
 
+def remove_dd_prop(layer_xml, key):
+    """Delete one property from the layer's dd block, if present."""
+    ddm = re.search(r'<data_defined_properties>.*?</data_defined_properties>',
+                    layer_xml, re.S)
+    if not ddm:
+        return layer_xml
+    root = ET.fromstring(ddm.group(0))
+    outer = root.find("Option")
+    changed = False
+    if outer is not None:
+        for props in outer.findall("Option"):
+            if props.get("name") != "properties":
+                continue
+            for entry in list(props.findall("Option")):
+                if entry.get("name") == key:
+                    props.remove(entry)
+                    changed = True
+    if not changed:
+        return layer_xml
+    return (layer_xml[:ddm.start()] + ET.tostring(root, encoding="unicode")
+            + layer_xml[ddm.end():])
+
+
+def solid_dash_for(sym_xml, code):
+    """One dash per symbol, from its widest solid backbone."""
+    widths = []
+    for s, e in simpleline_layers(sym_xml):
+        val = statics_of(sym_xml[s:e])
+        if val("line_style") == "solid" and val("use_custom_dash") == "0":
+            try:
+                widths.append(float(val("line_width")))
+            except (TypeError, ValueError):
+                pass
+    if not widths:
+        bail(f"{code}: no solid backbone to derive a dash from")
+    w = max(widths)
+    return "%g;%g" % (round(DASH_RATIO * w, 1), round(GAP_RATIO * w, 1))
+
+
 def apply_solid(sym_xml, code):
+    """The customDash flip for codes with no authored dash of their own."""
     changed = False
     out = sym_xml
+    dash = solid_dash_for(sym_xml, code)
     while True:
         edited = False
         for s, e in simpleline_layers(out):
@@ -293,11 +347,15 @@ def apply_solid(sym_xml, code):
             val = statics_of(lx)
             if val("line_style") != "solid" or val("use_custom_dash") == "1":
                 continue  # decorative dashed layer (e.g. selvage) - skip
-            if '"outlineStyle"' in lx or "name=\"outlineStyle\"" in lx:
-                continue  # already applied
+            if "customDash" in lx and MEGA_DASH in lx:
+                continue  # already applied (Weight-wrapped or plain)
+            lx = remove_dd_prop(lx, "outlineStyle")   # migrate the old flip
+            # the static records the authored dash so
+            # inject_dash_weight_scaling rebuilds the same ramp from it
+            lx = set_static(lx, "customdash", dash)
             lx = merge_dd_into_layer_xml(lx, {
-                "outlineStyle": "CASE WHEN %s THEN 'dash' ELSE 'solid' END"
-                                % INFERRED_TEST})
+                "customDash": "CASE WHEN %s THEN '%s' ELSE '%s' END"
+                              % (INFERRED_TEST, dash, MEGA_DASH)})
             out = out[:s] + lx + out[e:]
             changed = edited = True
             break
@@ -446,8 +504,7 @@ def main():
 
     q, = cur.execute("SELECT styleQML FROM layer_styles "
                      "WHERE f_table_name='2 - Linework'").fetchone()
-    assert q.count(MEGA_DASH) >= len(FLIP_CODES), "flip dd missing"
-    assert q.count("outlineStyle") >= len(SOLID_CODES), "solid dd missing"
+    assert q.count(MEGA_DASH) >= len(FLIP_CODES) + len(SOLID_CODES),         "confidence customDash dd missing"
     # excluded variants untouched: their symbols contain no Confidence dd
     rm = re.search(r'<renderer-v2\b.*?</renderer-v2>', q, re.S)
     renderer = rm.group(0)
@@ -457,6 +514,7 @@ def main():
         sym = re.search(r'symbol="(\d+)"', cm.group(0)).group(1)
         s, e = symbol_span(renderer, sym)
         assert "Confidence" not in renderer[s:e], f"{code} was touched!"
+    assert 'name="outlineStyle"' not in renderer,         "old outlineStyle flip still present - migration incomplete"
     print("round-trip ok: dash dd counts, excluded codes untouched")
     con.close()
 

@@ -99,12 +99,12 @@ ISOGRAD = "230,145,20,255"
 # rows (list of placement overrides -> that many MarkerLine layers).
 # ---------------------------------------------------------------------------
 
-FOLD = dict(kind="svg", size="1.2", color=BLACK, outline=BLACK, ow="0.35",
+FOLD = dict(kind="svg", size="1.2", color=BLACK, outline=BLACK, ow="0.5",
             interval="56", along="6", aal="4.6")
 FOLD_OV = dict(kind="svg", size="8.4", color=BLACK, outline=BLACK, ow="0.5",
                interval="56", along="6", aal="4.6")
 TOOTH = dict(kind="svg", size="2.6", interval="16", along="7", aal="4.6")
-SLIP = dict(kind="svg", size="12", ow="0.6", placements="CentralPoint",
+SLIP = dict(kind="svg", size="12", ow="1", placements="CentralPoint",
             aal="4.6")
 STEM = dict(kind="svg", svg="stem_arrow.svg", ow="0.5", aal="4")
 
@@ -121,9 +121,9 @@ SPEC = {
     "Fault - Thrust":  dict(TOOTH, svg="fault_tooth_filled.svg",
                             color=BLACK, outline=BLACK, ow="1"),
     "Fault - Reverse": dict(TOOTH, svg="fault_tooth_open.svg",
-                            color=BLACK, outline=BLACK, ow="0.26"),
+                            color=BLACK, outline=BLACK, ow="0.45"),
     "Shear - Reverse": dict(TOOTH, svg="fault_tooth_open.svg",
-                            color=RED, outline=RED, ow="0.26"),
+                            color=RED, outline=RED, ow="0.45"),
     "Fault - Normal":  dict(TOOTH, svg="fault_tick_normal.svg",
                             color=BLACK, outline=BLACK, ow="1"),
     "Shear - Normal":  dict(TOOTH, svg="fault_tick_normal.svg",
@@ -152,8 +152,8 @@ SPEC = {
     "Costean": dict(kind="svg", svg="costean_chevron.svg", size="30",
                     size_unit="Point", ow="0.9", aal="4", angle="-90",
                     color=NEAR, outline=NEAR,
-                    rows=[dict(placements="FirstVertex"),
-                          dict(placements="LastVertex")]),
+                    rows=[dict(placements="FirstVertex", angle="90"),
+                          dict(placements="LastVertex", angle="-90")]),
 
     # SimpleMarker / FontMarker decorations: same drift/zoom fixes.
     "Detachment":     dict(kind="simple", shape="semi_circle", size="1.8",

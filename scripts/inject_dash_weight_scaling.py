@@ -13,9 +13,12 @@ also removes the inconsistency between the two confidence mechanisms.
 
 Rule: a SimpleLine's dash scales with Weight iff its width does - i.e.
 the layer already carries a Weight outlineWidth override.  In the live
-template that is every dashed Linework stroke (94 layers), Point and MM
+template that is every dashed Linework stroke (118 layers), Point and MM
 units alike (the factor is unitless).  Moderate/NULL keeps the authored
-dash byte-for-byte, so default data renders pixel-identical.
+dash byte-for-byte, so default data renders pixel-identical.  The flip
+count includes the 24 SOLID-code layers inject_confidence_system.py
+migrated onto the customDash mechanism on 30 Aug 2026 - run that script
+first on a template that predates the migration.
 
 Two shapes, both flat CASEs over precomputed literal strings (constant
 parse cost - see the parser-nesting trap):
@@ -54,7 +57,7 @@ Idempotent and re-runnable: like inject_weight_scaling, expressions are
 rebuilt from each layer's CURRENT customdash static (the flip layers
 keep theirs - apply_flip never clears it), so re-run this script after
 retuning a dash in inject_linework_dash_order.py or QGIS.  The run must
-find exactly 94 dash-bearing strokes (62 static + 32 flips); a
+find exactly 118 dash-bearing strokes (62 static + 56 flips); a
 byte-identical rebuild is a no-op.
 
 Usage:
@@ -76,7 +79,7 @@ MEGA_DASH = "100000;1"
 INFERRED_TEST = "\"Confidence\" IN ('Inferred','Queried')"
 
 EXPECT_STATIC = 62
-EXPECT_FLIPS = 32
+EXPECT_FLIPS = 56
 
 BACKUP_DATE = "2026-08-29"
 BACKUP_NAME = "LGS_MappingTemplate_pre-dash-weight_%s.gpkg" % BACKUP_DATE
