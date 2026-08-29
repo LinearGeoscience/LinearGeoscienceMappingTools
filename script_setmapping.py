@@ -30,6 +30,25 @@ except ImportError:
     from lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
 
 
+#: Project variable carrying the reference scale into label expressions.
+#: The data-defined label Size baked by scripts/inject_label_size_scaling.py
+#: divides by it to cancel QGIS' referenceScale/mapScale multiplier, so
+#: lettering keeps its authored point size at every zoom while symbols go on
+#: scaling with the ground. QGIS has no such variable of its own - @map_scale
+#: is the only scale in a render expression context - so the plugin publishes
+#: one. Kept in step with inject_label_size_scaling.REF_SCALE, whose fallback
+#: covers projects predating this.
+REFERENCE_SCALE_VAR = "lgs_reference_scale"
+
+
+def set_project_variable(project, scale_value):
+    """Publish the reference scale for the label size expressions to read."""
+    if project is None:
+        return
+    QgsExpressionContextUtils.setProjectVariable(
+        project, REFERENCE_SCALE_VAR, int(scale_value))
+
+
 def get_over_point_placement():
     """OverPoint label placement (Qgis.LabelPlacement; QGIS 3.26+ and 4.x)."""
     return Qgis.LabelPlacement.OverPoint
@@ -459,7 +478,17 @@ class LayerConfigurator:
         The one that matters is the Basemap 'Lithology texture' rule: its
         cutoff is a plain number on the rule, not an expression, so nothing
         else can move it when the mapping scale changes.
+
+        The second is the label lettering, which has to move the OTHER way.
+        Symbols are meant to scale with the reference scale; text is meant
+        to stay legible, so the data-defined label Size baked by
+        scripts/inject_label_size_scaling.py divides by the reference scale
+        to cancel the multiplier out. QGIS publishes no reference-scale
+        expression variable, so we publish it here as @lgs_reference_scale
+        and the expression reads it back.
         """
+        set_project_variable(self.project, scale_value)
+
         updated = 0
         gates = 0
         for role, layer_id in layers_dict.items():

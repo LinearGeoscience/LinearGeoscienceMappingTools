@@ -468,6 +468,7 @@ class TemplateLoaderDialog(QDialog):
             template_group = root.addGroup(group_name)
 
             # Load each spatial layer into the main group
+            reference_scale = 0
             for layer_name in layer_names:
                 layer_uri = f"{gpkg_path}|layername={layer_name}"
                 layer = QgsVectorLayer(layer_uri, layer_name, "ogr")
@@ -475,6 +476,19 @@ class TemplateLoaderDialog(QDialog):
                 if layer.isValid():
                     QgsProject.instance().addMapLayer(layer, False)
                     template_group.addLayer(layer)
+                    renderer = layer.renderer()
+                    if renderer is not None:
+                        reference_scale = max(reference_scale,
+                                              renderer.referenceScale())
+
+            # The label size expressions divide by this to hold their point
+            # size across zooms; without it they fall back to the constant
+            # baked at injection time. Read off the template's own renderers
+            # rather than hardcoded, so a re-baked template cannot drift from
+            # the projects made out of it. Set Mapping Scale rewrites it
+            # whenever the reference scale changes.
+            if reference_scale > 0:
+                self.set_reference_scale_variable(reference_scale)
 
             # Create a "Codes" subgroup for non-spatial tables
             codes_group = template_group.addGroup("Codes")
@@ -495,6 +509,21 @@ class TemplateLoaderDialog(QDialog):
         except Exception as e:
             # Non-critical error
             QgsMessageLog.logMessage(f"Warning: Could not load layers into project: {str(e)}", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
+    def set_reference_scale_variable(self, reference_scale):
+        """Publish @lgs_reference_scale for the label size expressions."""
+        try:
+            try:
+                from .script_setmapping import set_project_variable
+            except ImportError:
+                from script_setmapping import set_project_variable
+            set_project_variable(QgsProject.instance(), reference_scale)
+        except Exception as e:
+            # A project without the variable still draws; the expressions
+            # fall back to the scale baked at injection time.
+            QgsMessageLog.logMessage(
+                f"Warning: could not set reference scale variable: {str(e)}",
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
 def run_template_loader():

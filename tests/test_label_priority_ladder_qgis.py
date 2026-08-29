@@ -105,15 +105,23 @@ def main():
               "Overlay overlap %s, want AllowOverlapIfRequired"
               % s.placementSettings().overlapHandling())
 
-    # Basemap: mobile, short-leadered, cost-paying, non-obstacle, rung 6
+    # Basemap: mobile, short-leadered, droppable, non-obstacle, rung 6
     bm = load("4 - Basemap")
     if bm is not None and check(bm.labeling() is not None, "Basemap labeled"):
         s = bm.labeling().settings()
         check(s.priority == 6, "Basemap priority %s, want 6" % s.priority)
+        # Alone among the four, a lithology label may be dropped. It restates
+        # what the fill and texture already say, so on a crowded sheet it is
+        # the one thing that can be spared, and it comes back on zoom-in.
+        # Linework and Overlay keep AllowOverlapIfRequired above: a vein
+        # width is a measurement, not a restatement.
         check(s.placementSettings().overlapHandling()
-              == Qgis.LabelOverlapHandling.AllowOverlapIfRequired,
-              "Basemap overlap %s, want AllowOverlapIfRequired"
+              == Qgis.LabelOverlapHandling.PreventOverlap,
+              "Basemap overlap %s, want PreventOverlap"
               % s.placementSettings().overlapHandling())
+        check(round(s.minFeatureSize, 4) == 2.0,
+              "Basemap minFeatureSize %s, want 2 mm - a polygon must be able "
+              "to hold its lettering before it earns any" % s.minFeatureSize)
         check(s.placement == Qgis.LabelPlacement.Horizontal,
               "Basemap placement %s, want Horizontal" % s.placement)
         check(int(s.polygonPlacementFlags()) == 3,

@@ -10,6 +10,10 @@ expression into the simple-labeling settings of three layers:
     3 - Overlay    base * Weight factor * on-screen-extent factor
     4 - Basemap    base * on-screen-extent factor
 
+Every layer also carries the paper factor, which takes label text out of
+QGIS' reference-scale multiplier so lettering holds its authored point
+size at any zoom.  See PAPER_F below for why that is needed at all.
+
 The extent factor is screen-relative (sqrt($area)*1000/@map_scale =
 the polygon's characteristic size in mm at the current map scale), so
 it behaves identically at UG 1:100 and surface 1:10,000 without any
@@ -73,10 +77,37 @@ EXTENT_F = (
 COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
            "THEN (6.5 / 5.5) ELSE 1 END")
 
+# Undo QGIS' reference-scale multiplier, for label text only.
+#
+# QGIS multiplies EVERY rendered size by referenceScale/mapScale - measured
+# against QgsRenderContext.convertToPainterUnits, Points, Millimeters, Pixels,
+# MapUnits, MetersInMapUnits and Inches all take the same factor, so there is
+# no unit to escape into.  That is right for symbols: a 30 pt structural
+# marker is meant to cover a fixed patch of ground.  It is wrong for lettering,
+# which has to stay legible rather than stay proportional, and at a 1:100,000
+# reference scale a 5.5 pt label draws at 27 pt by the time you are in at
+# 1:20,000.  Multiplying by the inverse leaves the authored point size at every
+# zoom, and leaves it untouched at the reference scale itself.
+#
+# QGIS exposes no reference-scale expression variable (@map_scale is the only
+# scale in the context), so the plugin publishes one: script_setmapping writes
+# @lgs_reference_scale whenever it sets the reference scale, and
+# script_loadtemplate seeds it for a project that never runs Set Mapping Scale.
+# TEMPLATE_REFERENCE_SCALE is the fallback for anything older, and
+# tests/test_label_size_invariance_qgis.py pins it to the referencescale the
+# template actually carries so the two cannot drift apart in silence.
+#
+# Both coalesce guards are load-bearing: a NULL number reads as 0 in a QGIS
+# expression, and an unguarded divide would take every label to zero.
+TEMPLATE_REFERENCE_SCALE = 5000
+REF_SCALE = "coalesce(to_real(@lgs_reference_scale), %d)" % TEMPLATE_REFERENCE_SCALE
+PAPER_F = ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + REF_SCALE + " > 0 "
+           "THEN @map_scale / " + REF_SCALE + " ELSE 1 END")
+
 LAYER_FACTORS = {
-    "2 - Linework": [WEIGHT_F, WIDTH_F],
-    "3 - Overlay": [WEIGHT_F, EXTENT_F],
-    "4 - Basemap": [COVER_F, EXTENT_F],
+    "2 - Linework": [WEIGHT_F, WIDTH_F, PAPER_F],
+    "3 - Overlay": [WEIGHT_F, EXTENT_F, PAPER_F],
+    "4 - Basemap": [COVER_F, EXTENT_F, PAPER_F],
 }
 
 

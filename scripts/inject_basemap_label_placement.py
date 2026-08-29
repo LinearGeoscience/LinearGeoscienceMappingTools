@@ -21,9 +21,14 @@ switches the "4 - Basemap" simple labeling to the proven Overlay pattern
       maximumDistance is kept mirrored at 5x dist purely for consistency
       (inert for polygon placement). minLength 1 MM so no stub is drawn
       on inside-placed labels.
-    - overlapHandling=AllowOverlapIfRequired: lithology labels never
-      vanish, but now pay full cost for covering other text and
-      obstacles, so they make way for the fixed dip labels.
+    - overlapHandling=PreventOverlap: a lithology label that has nowhere
+      free is dropped rather than stamped over its neighbours. It was
+      AllowOverlapIfRequired, which on a 1141-polygon sheet meant "never
+      vanish" resolved to "pile up" - the polygon still carries its colour
+      and its texture, so the code is the one thing that can be spared,
+      and it comes back as soon as zooming in opens up room. Linework and
+      Overlay deliberately keep AllowOverlapIfRequired: a vein width is a
+      measurement, not a restatement of the fill.
     - priority=6: below the structure lettering (dip 10, suffix 8),
       above Linework 5 / Overlay 4 / comments 3.
     - rendering obstacle=0: Basemap fills tile the whole map, so
@@ -75,7 +80,7 @@ PLACEMENT_ATTRS = {
     "distUnits": "MapUnit",
     "maximumDistance": "93.75",     # 5 x dist
     "maximumDistanceUnit": "MapUnit",
-    "overlapHandling": "AllowOverlapIfRequired",
+    "overlapHandling": "PreventOverlap",
     "priority": "6",
 }
 CALLOUT_TYPE = "simple"             # straight leader; manhattan's elbow reads badly
@@ -90,6 +95,14 @@ CALLOUT_OPTS = {
 }
 RENDERING_ATTRS = {
     "obstacle": "0",
+    # A polygon has to be 2 mm across on the rendered page before it is
+    # worth lettering. This was hand-authored in the template and owned by
+    # no script, so clearing it in QGIS would have stuck; it is asserted
+    # here now. The number is deliberately unchanged - raising it thins the
+    # long tail of leader lines, but it also changes what a 1:1000 field
+    # project draws, so tune it against a rendered sheet, not in the
+    # abstract.
+    "minFeatureSize": "2",
 }
 
 
