@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Antiformal Syncline (refolded): outer arrows diverge (antiform now),
+     inner arrows converge (synclinal younging). Line = y 1300. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="2600" viewBox="0 0 500 2600">
+  <line x1="250" y1="560" x2="250" y2="2040" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+  <polygon points="250,20 60,600 440,600" fill="param(fill) #131313"/>
+  <polygon points="250,1240 60,700 440,700" fill="param(fill) #131313"/>
+  <polygon points="250,2580 440,2000 60,2000" fill="param(fill) #131313"/>
+  <polygon points="250,1360 440,1900 60,1900" fill="param(fill) #131313"/>
+</svg>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fault/Shear - Reverse: OPEN tooth (fill locked to none), base on the
+     line (y 300). The filled/open pair distinguishes thrust from reverse. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="600" viewBox="0 0 500 600">
+  <polygon points="20,292 480,292 250,35" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+</svg>

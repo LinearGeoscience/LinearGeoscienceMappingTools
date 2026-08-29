@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Costean end tick: chevron at each end of the trench line (rotated -90
+     in the spec). The old 1 mm nudge is baked as the off-centre glyph. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <path d="M 155,95 L 250,315 L 345,95" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 18"/>
+</svg>

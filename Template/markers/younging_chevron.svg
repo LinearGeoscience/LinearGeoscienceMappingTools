@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Formline - S0 (Younging Known): stem across the trace (y 250) with a
+     chevron opening away on the younging side. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <line x1="250" y1="10" x2="250" y2="255" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+  <path d="M 130,495 L 250,290 L 370,495" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+</svg>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fault/Shear - Normal: filled bar sitting on the line (y 300), on the
+     same side as the thrust teeth. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="600" viewBox="0 0 500 600">
+  <polygon points="10,60 490,60 490,300 10,300" fill="param(fill) #131313"/>
+</svg>

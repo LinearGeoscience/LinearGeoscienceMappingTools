@@ -115,7 +115,9 @@ def test_structure():
     mopts = {o.get("name"): o.get("value")
              for o in marker.find("Option").findall("Option")}
     check(mopts.get("interval") == "14", "arrow interval untouched")
-    check(mopts.get("offset") == "2.0", "arrow offset untouched")
+    # The 2.0 mm standoff moved INTO the stem_arrow.svg canvas on 30 Aug
+    # 2026 (inject_linework_marker_decorations) so it scales with Weight.
+    check(mopts.get("offset") == "0", "arrow MarkerLine offset baked to 0")
     check(mopts.get("rotate") == "1", "arrows still rotate with the line")
     svg = [l for l in marker.iter("layer") if l.get("class") == "SvgMarker"]
     check(len(svg) == 1, "the inward-arrow SvgMarker survived")

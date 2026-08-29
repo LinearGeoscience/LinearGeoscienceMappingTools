@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synform - Overturned: hoop over the trace, limbs arrowed back toward
+     it, stems continuing through the line. Line = y 190. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="380" viewBox="0 0 500 380">
+  <path d="M 48,215 C 48,60 140,20 250,20 C 360,20 452,60 452,215" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+  <polygon points="48,200 10,320 86,320" fill="param(fill) #131313"/>
+  <line x1="48" y1="320" x2="48" y2="368" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+  <polygon points="452,200 414,320 490,320" fill="param(fill) #131313"/>
+  <line x1="452" y1="320" x2="452" y2="368" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+</svg>

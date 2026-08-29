@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fault - Thrust: filled tooth, base ON the line (y 300), apex to the
+     hanging wall. Lower half of the canvas is the far side of the line. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="600" viewBox="0 0 500 600">
+  <polygon points="0,300 500,300 250,20" fill="param(fill) #131313"/>
+</svg>

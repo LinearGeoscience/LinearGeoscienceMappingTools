@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Antiform - Overturned: hoop over the trace, both limbs arrowed away
+     (down through the line). Line = y 190. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="380" viewBox="0 0 500 380">
+  <path d="M 48,250 V 210 C 48,70 140,25 250,25 C 360,25 452,70 452,210 V 250" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 15"/>
+  <polygon points="48,365 10,245 86,245" fill="param(fill) #131313"/>
+  <polygon points="452,365 414,245 490,245" fill="param(fill) #131313"/>
+</svg>

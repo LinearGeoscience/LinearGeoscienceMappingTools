@@ -177,8 +177,11 @@ class TestInjectorConstantsAgree(unittest.TestCase):
         # override and both offset curves of the selvedge rings.  Built
         # via the shared weight_case() so tier additions (five tiers
         # since 27 Aug 2026) keep this in step automatically.
+        # 288 -> 364 on 30 Aug 2026: inject_linework_marker_decorations
+        # added 76 placement ramps (interval / offsetAlongLine /
+        # averageAngleLength / offset) so ornaments zoom with the tier.
         self._assert_baked(module.weight_case(module.FACTORS), self.linework,
-                           'inject_weight_scaling.FACTORS weight tier', 288)
+                           'inject_weight_scaling.FACTORS weight tier', 364)
 
     def test_label_size_scaling_gate(self):
         module = _load('inject_label_size_scaling.py')

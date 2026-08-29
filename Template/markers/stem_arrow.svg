@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Monocline / Shear Zone Boundary / Stockwork Zone Boundary: stem rooted
+     just off the line, arrow pointing away into the zone (the old +2 mm
+     MarkerLine offset side). Line = y 830; the glyph lives in the lower
+     half so the standoff scales with Weight instead of riding a fixed
+     offset. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="1660" viewBox="0 0 500 1660">
+  <line x1="250" y1="850" x2="250" y2="1330" fill="none" stroke="param(outline) #131313" stroke-width="param(outline-width) 100"/>
+  <polygon points="250,1600 105,1290 395,1290" fill="param(fill) #131313"/>
+</svg>
