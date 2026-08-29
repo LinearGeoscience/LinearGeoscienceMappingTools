@@ -18,11 +18,19 @@ stroke's customDash dd is pinned to the mega-dash (solid) so nothing
 dashes the tildes a second time; "Shear Zone Boundary" is accordingly
 absent from inject_confidence_system.py FLIP_CODES.
 
-The wrapper is emitted in exactly the shape the template already ships
-for the Unconformity family (symbol 42): GeometryGenerator, SymbolType
-Line, units MM (so the renderer's referenceScale applies), one line
-sub-symbol.  That precedent is also the proof that no neighbouring
-injector needs changing:
+The wrapper is emitted in the shape the template already ships for the
+Unconformity family (symbol 42) - GeometryGenerator, SymbolType Line,
+one line sub-symbol - EXCEPT the units: this generator runs in MapUnit,
+not MM.  A geometryModifier evaluates in the generator's own units
+space at the current render scale and ignores the renderer
+referenceScale (stroke widths honour it; modifier numerics do not), so
+a mm wave re-flows on every zoom.  Ground units derived from
+@lgs_reference_scale lock the curve to the map: zoom magnifies it, pan
+cannot re-phase it (clip_to_extent is switched off on the symbol), and
+render simplification is disabled layer-wide (simplifyDrawingHints=0,
+as FieldNotebook already ships) so the base line the wave follows is
+identical at every scale.  Symbol-42 precedent still proves the
+neighbouring injectors need no changes:
 
 * inject_confidence_system.py no longer lists this code (the generator
   handles Inferred/Queried itself), so it never touches the symbol; the
@@ -82,22 +90,44 @@ GAP_MM = 5.0                 # blank base-line between tildes (~67% ink)
 # confidence validator counts and the dd block inject_weight_scaling needs.
 NEUTRAL_DASH = "'100000;1'"
 
+# The wave is GROUND-LOCKED: the generator runs in MapUnit space and every
+# distance is ground units derived from the mapping scale, so zoom purely
+# magnifies a fixed curve.  units=MM would NOT do this - a geometryModifier
+# evaluates in the generator's own paper-mm space at the CURRENT scale and
+# ignores the renderer referenceScale (unlike stroke widths), so a mm wave
+# re-flows on every zoom.  The mapping scale comes from the project
+# variable Set Mapping Scale maintains (script_setmapping.py), with the
+# template's authored 1:5000 as the fallback - same shape as
+# inject_label_size_scaling.py.
+GEN_UNITS = "MapUnit"
+FALLBACK_SCALE = 5000
+REF = "coalesce(to_real(@lgs_reference_scale), %s)" % FALLBACK_SCALE
+
+
+def _ground(mm):
+    """Paper mm at the mapping scale, as a ground-units expression."""
+    return "%s*%s" % (mm / 1000.0, REF)
+
+
 _SOLID_WAVE = ("wave($geometry, wavelength:=%s, amplitude:=%s)"
-               % (WAVELENGTH_MM, AMPLITUDE_MM))
+               % (_ground(WAVELENGTH_MM), _ground(AMPLITUDE_MM)))
 _TILDE_WAVE = ("wave(line_substring($geometry, @element, @element + %s), "
                "wavelength:=%s, amplitude:=%s)"
-               % (TILDE_MM, WAVELENGTH_MM, AMPLITUDE_MM))
+               % (_ground(TILDE_MM), _ground(WAVELENGTH_MM),
+                  _ground(AMPLITUDE_MM)))
 # NULL Confidence falls to ELSE (NULL AND x is never true); lines shorter
 # than one tilde wave continuously rather than hitting the empty
 # generate_series edge (it returns NULL below its range).  Flat on purpose:
-# QgsExpression parse cost doubles per with_variable nesting level.
+# QgsExpression parse cost doubles per with_variable nesting level, so the
+# coalesce is repeated inline rather than bound once.
 WAVE_EXPR = (
     "CASE WHEN \"Confidence\" IN ('Inferred','Queried') "
     "AND length($geometry) >= %s "
     "THEN collect_geometries(array_foreach("
     "generate_series(0, length($geometry) - %s, %s), %s)) "
     "ELSE %s END"
-    % (TILDE_MM, TILDE_MM, TILDE_MM + GAP_MM, _TILDE_WAVE, _SOLID_WAVE))
+    % (_ground(TILDE_MM), _ground(TILDE_MM), _ground(TILDE_MM + GAP_MM),
+       _TILDE_WAVE, _SOLID_WAVE))
 
 GEN_ID = "{%s}" % uuid.uuid5(uuid.NAMESPACE_URL, "lgs-shear-wave-gen:" + CODE)
 
@@ -214,7 +244,7 @@ def generator_wrapper(sym_name, simpleline_xml):
     ET.SubElement(opts, "Option", {"name": "geometryModifier",
                                    "type": "QString", "value": WAVE_EXPR})
     ET.SubElement(opts, "Option", {"name": "units", "type": "QString",
-                                   "value": "MM"})
+                                   "value": GEN_UNITS})
     layer.append(empty_dd())
     sub = ET.SubElement(layer, "symbol", {
         "name": "@%s@0" % sym_name, "frame_rate": "10", "clip_to_extent": "1",
@@ -250,7 +280,7 @@ def convert(sym_xml, sym_name):
 
 
 def refresh_expression(sym_xml):
-    """Tuning path: the generator exists, only its expression differs."""
+    """Tuning path: the generator exists; bring expression + units current."""
     for s, e in layer_spans(sym_xml, "GeometryGenerator"):
         if GEN_ID not in sym_xml[s:e]:
             continue
@@ -261,8 +291,31 @@ def refresh_expression(sym_xml):
             layer_xml, count=1)
         if n != 1:
             bail("generator found but its geometryModifier option was not")
+        new_layer, n = re.subn(
+            r'(<Option name="units" type="QString" value=)"[^"]*"',
+            lambda m: m.group(1) + quoteattr(GEN_UNITS),
+            new_layer, count=1)
+        if n != 1:
+            bail("generator found but its units option was not")
         return sym_xml[:s] + new_layer + sym_xml[e:]
     bail("refresh called with no generator present")
+
+
+def unclip_symbol(sym_xml):
+    """clip_to_extent=0 on the OUTER symbol tag.
+
+    With clipping on, the generator receives the view-clipped geometry, so
+    the tilde phase is measured from wherever the viewport happens to cut
+    the line - the tildes crawl as you pan.  Unclipped, the whole feature
+    is waved every render and the curve never moves.
+    """
+    m = re.match(r'<symbol\b[^>]*>', sym_xml)
+    tag = m.group(0)
+    new_tag, n = re.subn(r'clip_to_extent="[^"]*"', 'clip_to_extent="0"',
+                         tag, count=1)
+    if n != 1:
+        bail("outer symbol tag carries no clip_to_extent attribute")
+    return new_tag + sym_xml[m.end():]
 
 
 def neutralize_custom_dash(sym_xml):
@@ -326,13 +379,19 @@ def main():
     sym_xml = renderer[s:e]
     gen_count_before = renderer.count('class="GeometryGenerator"')
 
+    simplify_ok = re.search(r'<qgis\b[^>]*\bsimplifyDrawingHints="0"', qml)
+    clip_ok = 'clip_to_extent="0"' in re.match(r'<symbol\b[^>]*>',
+                                               sym_xml).group(0)
+
     if GEN_ID in sym_xml:
-        cur_expr = cur_dash = None
+        cur_expr = cur_units = cur_dash = None
         for el in ET.fromstring(sym_xml).iter("layer"):
             if el.get("id") == GEN_ID:
                 for o in el.find("Option").findall("Option"):
                     if o.get("name") == "geometryModifier":
                         cur_expr = o.get("value")
+                    if o.get("name") == "units":
+                        cur_units = o.get("value")
                 for sl in el.iter("layer"):
                     if sl.get("class") != "SimpleLine":
                         continue
@@ -342,17 +401,21 @@ def main():
                         for o in entry.findall("Option"):
                             if o.get("name") == "expression":
                                 cur_dash = o.get("value")
-        if cur_expr == WAVE_EXPR and cur_dash in (None, NEUTRAL_DASH):
-            print("already applied: %s carries %s - nothing to do"
-                  % (CODE, WAVE_EXPR))
+        if (cur_expr == WAVE_EXPR and cur_units == GEN_UNITS
+                and cur_dash in (None, NEUTRAL_DASH)
+                and clip_ok and simplify_ok):
+            print("already applied: %s carries the ground-locked wave - "
+                  "nothing to do" % CODE)
             con.close()
             return
-        print("refreshing wave parameters: %r -> %r" % (cur_expr, WAVE_EXPR))
+        print("refreshing wave: units %r -> %r, expression -> ground-locked"
+              % (cur_units, GEN_UNITS))
         new_sym = neutralize_custom_dash(refresh_expression(sym_xml))
         gen_delta = 0
     else:
         new_sym = neutralize_custom_dash(convert(sym_xml, sym_name))
         gen_delta = 1
+    new_sym = unclip_symbol(new_sym)
 
     # The arrows are critical: their bytes must survive verbatim.
     marker_spans = list(layer_spans(sym_xml, "MarkerLine"))
@@ -369,6 +432,15 @@ def main():
             gen_count_before + gen_delta:
         bail("GeometryGenerator count moved by more than this one symbol")
     new_qml = qml[:rm.start()] + renderer + qml[rm.end():]
+
+    # Crest positions must not drift with zoom: render-time simplification
+    # feeds the generator a scale-dependent base line.  FieldNotebook
+    # already ships with it off; Linework follows (smooth linework is the
+    # house priority).
+    new_qml, n = re.subn(r'(<qgis\b[^>]*?\bsimplifyDrawingHints=)"[^"]*"',
+                         r'\g<1>"0"', new_qml, count=1)
+    if n != 1:
+        bail("simplifyDrawingHints not found on the qgis document element")
 
     try:
         ET.fromstring(new_qml)
@@ -403,8 +475,14 @@ def main():
     assert gen.get("class") == "GeometryGenerator" and gen.get("id") == GEN_ID
     opts = {o.get("name"): o.get("value")
             for o in gen.find("Option").findall("Option")}
-    assert opts["SymbolType"] == "Line" and opts["units"] == "MM"
+    assert opts["SymbolType"] == "Line" and opts["units"] == GEN_UNITS
     assert opts["geometryModifier"] == WAVE_EXPR
+    assert "@lgs_reference_scale" in opts["geometryModifier"], \
+        "the wave should follow the mapping scale"
+    assert sym_el.get("clip_to_extent") == "0", \
+        "clipped input geometry would re-phase the tildes on pan"
+    assert root.get("simplifyDrawingHints") == "0", \
+        "render simplification would drift the crests with zoom"
     assert gen.find("data_defined_properties") is not None
     assert marker.get("class") == "MarkerLine", "arrows not on top"
 
@@ -429,9 +507,9 @@ def main():
         assert "Weight" in dd, "weight dd mangled"
     for el in (sym_el, gen, marker, sub, stroke):
         assert el.find("data_defined_properties") is not None
-    print("round-trip ok: %s = wavy stroke (wavelength %s mm, amplitude "
-          "%s mm), Inferred as whole %s mm tildes with %s mm gaps, "
-          "under untouched arrows"
+    print("round-trip ok: %s = ground-locked wavy stroke (%s mm wavelength "
+          "/ %s mm amplitude at the mapping scale), Inferred as whole "
+          "%s mm tildes with %s mm gaps, under untouched arrows"
           % (CODE, WAVELENGTH_MM, AMPLITUDE_MM, TILDE_MM, GAP_MM))
 
     print()

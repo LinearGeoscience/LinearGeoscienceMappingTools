@@ -92,6 +92,8 @@ def find_symbol(root):
 def test_structure():
     print("structure:")
     root = style_of(GPKG, _inj.LW)
+    check(root.get("simplifyDrawingHints") == "0",
+          "render simplification off - it would drift the crests with zoom")
     name, sym = find_symbol(root)
     if not check(sym is not None, "category + symbol found"):
         return
@@ -106,10 +108,14 @@ def test_structure():
     check(gen.get("class") == "GeometryGenerator", "layer 0 is the generator")
     check(gen.get("id") == _inj.GEN_ID, "generator carries the stable id")
     check(opts.get("SymbolType") == "Line", "SymbolType Line")
-    check(opts.get("units") == "MM",
-          "units MM so the referenceScale applies")
+    check(opts.get("units") == "MapUnit",
+          "units MapUnit - a mm modifier would re-flow on every zoom")
     check(opts.get("geometryModifier") == _inj.WAVE_EXPR,
           "modifier is the injector's WAVE_EXPR")
+    check("@lgs_reference_scale" in opts.get("geometryModifier", ""),
+          "the wave size follows the mapping scale variable")
+    check(sym.get("clip_to_extent") == "0",
+          "unclipped: clipped input would re-phase the tildes on pan")
 
     check(marker.get("class") == "MarkerLine", "arrows still on top")
     mopts = {o.get("name"): o.get("value")
@@ -185,15 +191,17 @@ def test_expressions_parse():
 # 3. the wave evaluates
 # ---------------------------------------------------------------------------
 
-def evaluate(expr, wkt, conf=None):
+def evaluate(expr, wkt, conf=None, scale=REF_SCALE):
     """Drive the "Confidence" field through a same-named variable - fields
-    are unavailable without a layer (the selvedge as_vars trick)."""
+    are unavailable without a layer (the selvedge as_vars trick) - and
+    publish the mapping-scale variable the ground-locked wave reads."""
     expr = expr.replace('"Confidence"', "@Confidence")
     f = QgsFeature()
     f.setGeometry(QgsGeometry.fromWkt(wkt))
     ctx = QgsExpressionContext()
     scope = QgsExpressionContextScope()
     scope.setVariable("Confidence", conf)
+    scope.setVariable("lgs_reference_scale", scale)
     ctx.appendScope(scope)
     e = QgsExpression(expr)
     if e.hasParserError():
@@ -213,9 +221,13 @@ def is_blank(g):
 
 def test_wave_evaluates():
     print("wave evaluates:")
-    straight = "LINESTRING(0 0, 47 0)"
-    curved = "LINESTRING(0 0, 15 6, 30 -4, 47 0)"
-    crossing = "LINESTRING(0 0, 30 12, 30 -12, 0 4)"
+    # Ground space now: at 1:5000 a 10 mm tilde is 50 m and the 5 mm gap
+    # is 25 m, so the step is 75 m.  A 235 m line fits three whole tildes.
+    TILDE = _inj.TILDE_MM / 1000.0 * REF_SCALE          # 50 m
+    STEP = (_inj.TILDE_MM + _inj.GAP_MM) / 1000.0 * REF_SCALE   # 75 m
+    straight = "LINESTRING(0 0, 235 0)"
+    curved = "LINESTRING(0 0, 75 30, 150 -20, 235 0)"
+    crossing = "LINESTRING(0 0, 150 60, 150 -60, 0 20)"
     for conf in (None, "Observed"):
         for label, wkt in (("straight", straight), ("curved", curved),
                            ("self-crossing", crossing)):
@@ -235,8 +247,8 @@ def test_wave_evaluates():
         dev = max(abs(p.y()) for p in pts)
         check(dev > 0, "and actually deviates from y=0 (%.3f)" % dev)
 
-    # Inferred: whole tildes, phase-locked by construction.  A 47-unit
-    # line at tilde 10 / gap 5 yields exactly 0-10, 15-25, 30-40.
+    # Inferred: whole tildes, phase-locked by construction.  A 235 m line
+    # at tilde 50 m / step 75 m yields exactly 0-50, 75-125, 150-200.
     for conf in ("Inferred", "Queried"):
         out, err = evaluate(_inj.WAVE_EXPR, straight, conf)
         check(err is None, "%s tildes: %s" % (conf, err))
@@ -244,23 +256,37 @@ def test_wave_evaluates():
             check(False, "%s produces geometry" % conf)
             continue
         parts = list(out.parts())
-        check(len(parts) == 3, "%s: 3 whole tildes on a 47-unit line (%d)"
+        check(len(parts) == 3, "%s: 3 whole tildes on a 235 m line (%d)"
               % (conf, len(parts)))
         spans = sorted((min(p.x() for p in part.points()),
                         max(p.x() for p in part.points())) for part in parts)
-        want = [(0.0, 10.0), (15.0, 25.0), (30.0, 40.0)]
+        want = [(i * STEP, i * STEP + TILDE) for i in range(3)]
         ok = len(spans) == len(want) and all(
-            abs(a - c) < 0.01 and abs(b - d) < 0.01
+            abs(a - c) < 0.05 and abs(b - d) < 0.05
             for (a, b), (c, d) in zip(spans, want))
         check(ok, "%s: tildes sit at %s (got %s)" % (conf, want, spans))
         full_period = all(
-            min(p.y() for p in part.points()) < -0.01
-            and max(p.y() for p in part.points()) > 0.01
+            min(p.y() for p in part.points()) < -0.05
+            and max(p.y() for p in part.points()) > 0.05
             for part in parts)
         check(full_period, "%s: every tilde carries a crest AND a trough"
               % conf)
+        amp = max(abs(p.y()) for part in parts for p in part.points())
+        want_amp = _inj.AMPLITUDE_MM / 1000.0 * REF_SCALE      # 3.5 m
+        check(abs(amp - want_amp) < 0.35,
+              "%s: amplitude is %.2f m of ground (want ~%.2f)"
+              % (conf, amp, want_amp))
 
-    out, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(0 0, 8 0)", "Inferred")
+    # The whole point of round 3: the ground size follows the mapping
+    # scale, so the same line at 1:10000 gets a wave twice as large.
+    out, err = evaluate(_inj.WAVE_EXPR, straight, "Observed", scale=10000)
+    if check(err is None and not is_blank(out), "wave at 1:10000: %s" % err):
+        amp10k = max(abs(p.y()) for p in out.vertices())
+        check(abs(amp10k - 2 * want_amp) < 0.7,
+              "doubling the mapping scale doubles the ground wave "
+              "(%.2f m vs %.2f)" % (amp10k, want_amp))
+
+    out, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(0 0, 40 0)", "Inferred")
     check(err is None and not is_blank(out)
           and len(list(out.parts())) == 1,
           "a line shorter than one tilde waves continuously instead")
@@ -320,9 +346,28 @@ def mm_line(length_mm, scale=REF_SCALE):
     return "LINESTRING(0 0, %f 0)" % (length_mm * scale / 1000.0)
 
 
+def ink_runs(px, gap=3):
+    """Contiguous x-runs of ink - one run per rendered tilde."""
+    cols = sorted({x for x, _ in px})
+    if not cols:
+        return []
+    runs, start, prev = [], cols[0], cols[0]
+    for x in cols[1:]:
+        if x - prev > gap:
+            runs.append((start, prev))
+            start = x
+        prev = x
+    runs.append((start, prev))
+    return runs
+
+
 def test_render(tmp_gpkg):
     print("render:")
     project = QgsProject.instance()
+    # The ground-locked wave reads the mapping-scale variable that
+    # script_setmapping.py publishes; without it the fallback applies.
+    QgsExpressionContextUtils.setProjectVariable(
+        project, "lgs_reference_scale", REF_SCALE)
     lw = QgsVectorLayer("%s|layername=%s" % (tmp_gpkg, _inj.LW), "lw", "ogr")
     if not check(lw.isValid(), "Linework opens"):
         return
@@ -380,14 +425,7 @@ def test_render(tmp_gpkg):
           % (inferred_red, solid_red))
     # Group inferred ink into contiguous x-runs: each is one tilde and
     # must carry BOTH a crest and a trough around the base line's y.
-    cols = sorted({x for x, _ in inf_px})
-    runs, start, prev = [], cols[0], cols[0]
-    for x in cols[1:]:
-        if x - prev > 3:
-            runs.append((start, prev))
-            start = x
-        prev = x
-    runs.append((start, prev))
+    runs = ink_runs(inf_px)
     print("    inferred tildes on screen: %d runs %s" % (len(runs), runs))
     check(len(runs) >= 3, "the dashes separate into tildes (%d runs)"
           % len(runs))
@@ -400,6 +438,29 @@ def test_render(tmp_gpkg):
     check(whole == len(runs),
           "every rendered dash is a whole ~ with crest and trough (%d/%d)"
           % (whole, len(runs)))
+
+    # ---- the round-3 claim: the wave is locked to the ground ----------
+    # Same feature, same reference scale, half the map scale.  A paper-mm
+    # wave would keep its screen size and double its count; a ground-locked
+    # one keeps its count and doubles on screen.
+    seed(lw, mm_line(80), dict(base, Confidence="Inferred"))
+    zoomed_px = red_pixels(render(lw, REF_SCALE / 2.0, project))
+    zoom_runs = ink_runs(zoomed_px)
+    print("    zoomed 2x: %d runs (was %d)" % (len(zoom_runs), len(runs)))
+    check(len(zoom_runs) == len(runs),
+          "zooming in does not add tildes: %d at 1:%d vs %d at 1:%d"
+          % (len(zoom_runs), REF_SCALE / 2, len(runs), REF_SCALE))
+
+    def spread(px):
+        ys = [y for _, y in px]
+        return (max(ys) - min(ys) + 1) if ys else 0
+
+    s1, s2 = spread(inf_px), spread(zoomed_px)
+    print("    vertical spread: 1:%d=%d px  1:%d=%d px"
+          % (REF_SCALE, s1, REF_SCALE / 2, s2))
+    check(s1 and 1.3 <= s2 / float(s1) <= 2.7,
+          "the wave magnifies with the map (%d -> %d px, want ~2x)"
+          % (s1, s2))
 
     # Weight thickening rides it too.
     seed(lw, mm_line(80), dict(base, Weight="Major"))
