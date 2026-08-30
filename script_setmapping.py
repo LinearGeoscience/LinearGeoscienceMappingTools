@@ -769,12 +769,30 @@ class LayerConfigurator:
 
     def apply_dynamic_comment_placement(self, settings, x_value):
         """Placement for the Fallback comment labels: around the point,
-        pushed further out (up to 5x the nominal ring) only when closer
-        spots are taken, with a leader that follows wherever the label
-        lands. Regolith Notes deliberately do NOT get this - see
-        create_regolith_note_rule."""
+        pushed further out (up to COMMENT_MAX_FACTOR x the nominal ring)
+        only when closer spots are taken, with a leader that follows
+        wherever the label lands. Regolith Notes deliberately do NOT get
+        this - see create_regolith_note_rule.
+
+        The static distances are the ring AT the mapping scale; the
+        data-defined LabelDistance/MaximumDistance on top hold it constant
+        ON PAPER at any zoom (see COMMENT_RING_MM). Statics stay as the
+        fallback for an engine that cannot evaluate the expressions, and
+        because tests pin them against the template."""
         self.apply_around_point_placement(
-            settings, x_value, Qgis.RenderUnit.MapUnits, 5 * x_value)
+            settings, x_value, Qgis.RenderUnit.MapUnits,
+            COMMENT_MAX_FACTOR * x_value)
+        props = QgsPropertyCollection()
+        props.setProperty(
+            QgsPalLayerSettings.Property.LabelDistance,
+            QgsProperty.fromExpression(
+                comment_ring_expression(COMMENT_RING_MM)))
+        props.setProperty(
+            QgsPalLayerSettings.Property.MaximumDistance,
+            QgsProperty.fromExpression(
+                comment_ring_expression(COMMENT_RING_MM
+                                        * COMMENT_MAX_FACTOR)))
+        settings.setDataDefinedProperties(props)
         settings.setCallout(self.create_comment_callout())
 
     def create_dip_rule(self, scale_value):
@@ -993,19 +1011,51 @@ class LayerConfigurator:
                 QgsMessageLog.logMessage(f"[Label] {basemap.name()} labeling is not the LGS polygon-callout style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
 
+# The comment/alteration leader ring, ON PAPER. 5 mm ring, pushed out to
+# at most 3x when closer spots are taken (user decision 2026-08-30,
+# tightened from the authored 7.5 mm / 5x). These feed both the static
+# map-unit distances below AND the data-defined LabelDistance /
+# MaximumDistance expressions that hold the ring constant on paper at any
+# zoom - dist is in map units, which take the referenceScale/mapScale
+# multiplier, so a static ring drifts as the SQUARE of the zoom ratio
+# (the Basemap leaders had the same disease; see
+# scripts/inject_basemap_label_placement.py RING_MM for the derivation).
+COMMENT_RING_MM = 5.0
+COMMENT_MAX_FACTOR = 3
+
+_COMMENT_REF = "coalesce(to_real(@lgs_reference_scale), 0)"
+
+
+def comment_ring_expression(ring_mm):
+    """Map-unit distance that renders as `ring_mm` on paper at any zoom:
+    D = mm * mapScale^2 / (1000 * referenceScale). Unknown reference scale
+    falls back to the LINEAR form - wrong away from the reference scale,
+    but wrong by the zoom rather than its square, and never worse than the
+    static value shipped before. Keep byte-identical with the copies in
+    scripts/inject_dynamic_callouts.py and
+    scripts/inject_overlay_label_placement.py -
+    tests/test_label_code_template_qgis.py pins template == this code."""
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _COMMENT_REF +
+            " > 0 THEN %s * @map_scale * @map_scale / (1000 * %s) "
+            "ELSE %s * @map_scale / 1000 END"
+            % (ring_mm, _COMMENT_REF, ring_mm))
+
+
 # Nominal ring distance for the callout-bearing labels that are left -
 # the FieldNotebook Fallback rule and the Overlay outside-polygon labels.
 # The structural and Regolith offsets are Point units and no longer depend
 # on the mapping scale at all. Mirrored by the baked template values in
 # scripts/inject_dynamic_callouts.py and
 # scripts/inject_overlay_label_placement.py (U = 5000 * this).
-CALLOUT_DIST_FACTOR = 0.0075
+CALLOUT_DIST_FACTOR = COMMENT_RING_MM / 1000.0    # 0.005
 
-# Basemap lithology labels use half the Overlay ring so their manhattan
-# leaders stay short (user decision 2026-08-29); most labels fit inside
-# their polygon and draw no leader at all. Mirrored by the baked values
-# in scripts/inject_basemap_label_placement.py.
-BASEMAP_DIST_FACTOR = 0.5
+# Basemap lithology labels use a shorter ring than the comments so their
+# manhattan leaders stay short (user decision 2026-08-29: 3.75 mm); most
+# labels fit inside their polygon and draw no leader at all. 0.75 x the
+# 5 mm comment ring keeps that 3.75 mm meaning under the tightened
+# comment ring. Mirrored by the baked values in
+# scripts/inject_basemap_label_placement.py.
+BASEMAP_DIST_FACTOR = 0.75
 
 # Labels-as-obstacles weight for every FieldNotebook rule: structure
 # lettering repels other layers' movable text harder than a default
@@ -1084,10 +1134,12 @@ def rescale_overlay_label_distance(layer, scale_value, factor=1.0):
     """Rescale a polygon layer's outside-label distance to a mapping scale.
 
     Edits the existing simple labeling by copy — never rebuilds — so the
-    auxiliary-storage dd bindings (manual label moves), fonts, expression
-    and callout all survive. dist is the only knob PAL uses for outside
-    placement on polygons; maximumDistance is kept mirrored at 5x purely
-    for consistency with the injector (it is inert for polygon placement).
+    auxiliary-storage dd bindings (manual label moves, and the
+    paper-constant LabelDistance/MaximumDistance ring expressions), fonts,
+    expression and callout all survive. dist is the only knob PAL uses for
+    outside placement on polygons; maximumDistance is kept mirrored at
+    COMMENT_MAX_FACTOR x purely for consistency with the injector (it is
+    inert for polygon placement).
 
     factor shrinks the ring per layer: Overlay uses the full ring (1.0),
     Basemap passes BASEMAP_DIST_FACTOR so its leaders stay short.
@@ -1097,7 +1149,7 @@ def rescale_overlay_label_distance(layer, scale_value, factor=1.0):
     settings.dist = x_value
     settings.distUnits = Qgis.RenderUnit.MapUnits
     point_settings = settings.pointSettings()
-    point_settings.setMaximumDistance(5 * x_value)
+    point_settings.setMaximumDistance(COMMENT_MAX_FACTOR * x_value)
     point_settings.setMaximumDistanceUnit(Qgis.RenderUnit.MapUnits)
     settings.setPointSettings(point_settings)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))

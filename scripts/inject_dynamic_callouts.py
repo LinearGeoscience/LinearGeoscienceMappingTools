@@ -5,10 +5,19 @@ NOT treated the same:
 
   "Fallback Labels (Comments/Labels)" - engine-arranged with a leader.
     - OrderedPositionsAroundPoint placement: 8 candidate orientations.
-    - dist=37.5 / maximumDistance=187.5 map units (1x / 5x the
-      scale-5000 callout ring unit, callout_dist_for_scale): labels
-      pushed further out only when closer spots are taken -> variable
-      callout length, PreferCloser.
+    - dist=25 / maximumDistance=75 map units (1x / 3x the scale-5000
+      callout ring unit, callout_dist_for_scale): labels pushed further
+      out only when closer spots are taken -> variable callout length,
+      PreferCloser. (Tightened 2026-08-30 from 7.5 mm / 5x on the user's
+      call - station labels were wandering too far.)
+    - Data-defined LabelDistance / MaximumDistance hold that ring at
+      5 mm / 15 mm ON PAPER at any zoom. The statics above are map
+      units, which take the referenceScale/mapScale multiplier, so
+      without the expressions the ring drifts as the SQUARE of the zoom
+      ratio - 5 mm at reference became 125 mm five zooms in, the
+      leader-across-half-the-map screenshots. Same fix, same expression
+      shape, as the Basemap leaders
+      (scripts/inject_basemap_label_placement.py RING_MM).
     - Callout enabled (grey dashed leader), minLength 1 MM so no stub is
       drawn when the label sits at its nominal ring.
     - Its fixed data-defined OffsetXY ('120,-60') is removed (inert under
@@ -55,7 +64,7 @@ FALLBACK = "Fallback Labels (Comments/Labels)"
 REGOLITH = "Regolith Note"
 RULES = (REGOLITH, FALLBACK)
 
-U = 37.5  # callout_dist_for_scale(5000) = 0.0075 * 5000 map units
+U = 25    # callout_dist_for_scale(5000) = 0.005 * 5000 map units
 R = 3     # script_setmapping.REGOLITH_RING, in Point units
 
 AROUND_POINT = {
@@ -65,9 +74,9 @@ AROUND_POINT = {
 }
 PLACEMENT_ATTRS = {
     FALLBACK: dict(AROUND_POINT, **{
-        "dist": "37.5",                # 1 x U
+        "dist": "25",                  # 1 x U
         "distUnits": "MapUnit",
-        "maximumDistance": "187.5",    # 5 x U
+        "maximumDistance": "75",       # 3 x U (COMMENT_MAX_FACTOR)
         "maximumDistanceUnit": "MapUnit",
     }),
     REGOLITH: dict(AROUND_POINT, **{
@@ -90,10 +99,59 @@ CALLOUT_OPTS = {
     },
 }
 
+# The paper-constant ring. Keep byte-identical with
+# script_setmapping.comment_ring_expression(COMMENT_RING_MM) - Set Mapping
+# Scale rebuilds this labeling wholesale, and
+# tests/test_label_code_template_qgis.py pins template == code.
+COMMENT_RING_MM = 5.0
+COMMENT_MAX_FACTOR = 3
+_REF = "coalesce(to_real(@lgs_reference_scale), 0)"
+
+
+def ring_expr(mm):
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _REF +
+            " > 0 THEN %s * @map_scale * @map_scale / (1000 * %s) "
+            "ELSE %s * @map_scale / 1000 END" % (mm, _REF, mm))
+
+
+DD_EXPRESSIONS = {
+    "LabelDistance": ring_expr(COMMENT_RING_MM),
+    "MaximumDistance": ring_expr(COMMENT_RING_MM * COMMENT_MAX_FACTOR),
+}
+
 
 def bail(msg):
     print("ERROR:", msg)
     sys.exit(1)
+
+
+def inject_dd(settings, name, expr):
+    """Set one data-defined property, leaving its siblings alone.
+    Same surgical shape as inject_basemap_label_placement.inject_dd."""
+    dd = settings.find("dd_properties")
+    if dd is None:
+        return False
+    outer = dd.find("Option")
+    if outer is None:
+        outer = ET.SubElement(dd, "Option", {"type": "Map"})
+    props = None
+    for o in outer.findall("Option"):
+        if o.get("name") == "properties":
+            props = o
+    if props is None:
+        props = ET.SubElement(outer, "Option", {"name": "properties"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
 
 
 def main():
@@ -148,6 +206,10 @@ def main():
             if offset_xy is not None:
                 props.remove(offset_xy)
                 print(f"{desc}: dd OffsetXY removed")
+            for name, expr in DD_EXPRESSIONS.items():
+                if not inject_dd(settings, name, expr):
+                    bail(f"{desc}: no dd_properties block to carry {name}")
+                print(f"{desc}: dd {name} -> paper-constant ring")
 
     # Regolith's callout is switched off, not deleted - QGIS always writes
     # one. Keep it byte-identical to the Fallback leader apart from
@@ -211,6 +273,24 @@ def main():
                if any(o.get("name") == "enabled" and o.get("value") == "1"
                       for o in r.find("settings").find("callout").iter("Option"))]
     assert enabled == [FALLBACK], f"rules drawing a leader: {enabled}"
+
+    # ...and alone carries the paper-constant ring expressions, verbatim.
+    for rule in root.iter("rule"):
+        desc = rule.get("description")
+        dd = rule.find("settings").find("dd_properties")
+        found = {}
+        for entry in dd.iter("Option"):
+            if entry.get("name") in DD_EXPRESSIONS and entry.get("type") == "Map":
+                by = {o.get("name"): o.get("value")
+                      for o in entry.iter("Option") if o.get("name")}
+                found[entry.get("name")] = (by.get("active"),
+                                            by.get("expression"))
+        if desc == FALLBACK:
+            for name, expr in DD_EXPRESSIONS.items():
+                assert found.get(name) == ("true", expr), \
+                    f"{desc}: dd {name} wrong: {found.get(name)!r}"
+        else:
+            assert not found, f"{desc}: unexpected ring dd {sorted(found)}"
 
     # Untouched rules keep their config.
     descs = {r.get("description") for r in root.iter("rule")}

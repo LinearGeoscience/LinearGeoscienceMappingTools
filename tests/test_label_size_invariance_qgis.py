@@ -370,9 +370,14 @@ def test_set_mapping_scale_bakes_the_literal():
     ids = dict((name, layer.id()) for name, layer in layers.items())
     changed = setmapping.LayerConfigurator.bake_reference_scale_into_styles(
         stub, ids, 100000)
-    check(changed == len(SIZED_LAYERS),
-          "rewrote %d layers - the three that read the reference scale, and "
-          "not %s, which has no literal" % (changed, WELDED_LAYER))
+    # All four layers now carry the literal: the three SIZED_LAYERS in their
+    # label Size, and FieldNotebook in the Fallback rule's paper-constant
+    # LabelDistance/MaximumDistance ring (2026-08-30). The dip weld is still
+    # protected - test_fieldnotebook_is_untouched pins that no FieldNotebook
+    # SIZE expression reads the reference scale.
+    check(changed == len(SIZED_LAYERS) + 1,
+          "rewrote %d layers - the three sized layers plus %s's callout "
+          "ring literal" % (changed, WELDED_LAYER))
 
     for name in SIZED_LAYERS:
         layer = layers[name]
