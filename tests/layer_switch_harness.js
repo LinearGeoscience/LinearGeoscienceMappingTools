@@ -1,5 +1,7 @@
-// Harness: extract the pure-JS button-letter derivation of the layer
-// switch (v28) from lgs_companion.qml verbatim and check it.
+// Harness: extract the pure-JS glyph lookup of the layer switch (v29)
+// from lgs_companion.qml verbatim and check it. The marks themselves are
+// drawn from QML Rectangles -- what is testable here is which KIND of
+// mark each layer resolves to.
 // Run: node layer_switch_harness.js <path-to-qml>
 'use strict'
 const fs = require('fs')
@@ -20,13 +22,31 @@ function extractFunction(name) {
          qml.slice(bodyStart, i + 1)
 }
 
-const code = ['baseName', 'layerSwitchLetters']
-  .map(extractFunction).join('\n');
+// The glyph table is a property, not a function -- lift it out of the QML
+// the same verbatim way, so a rename or a retyped kind fails this test.
+function extractGlyphTable() {
+  const start = qml.indexOf('readonly property var layerSwitchGlyphs: ({')
+  if (start === -1) throw new Error('layerSwitchGlyphs not found')
+  const open = qml.indexOf('{', start)
+  const close = qml.indexOf('})', open)
+  if (close === -1) throw new Error('layerSwitchGlyphs not closed')
+  return 'var layerSwitchGlyphs = ' + qml.slice(open, close + 1)
+}
+
+const code = [extractGlyphTable(),
+              extractFunction('baseName'),
+              extractFunction('layerSwitchGlyphForBase')].join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
-// function declarations become globals.
+// declarations become globals.
 (0, eval)(code)
 const baseName = globalThis.baseName
-const layerSwitchLetters = globalThis.layerSwitchLetters
+const layerSwitchGlyphForBase = globalThis.layerSwitchGlyphForBase
+
+// What the QML delegate does with a name, minus the geometry fallback
+// (which needs a live layer and so cannot run here).
+function glyphFor(name) {
+  return layerSwitchGlyphForBase(baseName(name))
+}
 
 let failures = 0
 function check(label, ok, detail) {
@@ -41,49 +61,50 @@ function same(label, got, want) {
 // --- the canonical four ----------------------------------------------
 const CANONICAL = ['1 - FieldNotebook', '2 - Linework', '3 - Overlay',
                    '4 - Basemap']
-same('canonical four give F L O B',
-     layerSwitchLetters(CANONICAL), ['F', 'L', 'O', 'B'])
+same('canonical four give point/line/wash/fill',
+     CANONICAL.map(glyphFor), ['point', 'line', 'wash', 'fill'])
 
 // --- pre-swap ordinals read the same ---------------------------------
 // A GeoPackage made before the Aug 2026 Linework/Overlay swap keeps the
-// old table names; the letters must not move with the ordinal.
-same('legacy ordinals give the same letters',
-     layerSwitchLetters(['1 - FieldNotebook', '3 - Linework', '2 - Overlay',
-                         '4 - Basemap']),
-     ['F', 'L', 'O', 'B'])
+// old table names; the marks must not move with the ordinal.
+same('legacy ordinals give the same marks',
+     ['1 - FieldNotebook', '3 - Linework', '2 - Overlay',
+      '4 - Basemap'].map(glyphFor),
+     ['point', 'line', 'wash', 'fill'])
+
+// --- the two polygon layers must NOT collide -------------------------
+// Both are polygons, so geometry alone cannot separate them; the whole
+// point of the table is that they read differently.
+check('Overlay and Basemap get different marks',
+      glyphFor('3 - Overlay') !== glyphFor('4 - Basemap'),
+      glyphFor('3 - Overlay') + ' vs ' + glyphFor('4 - Basemap'))
 
 // --- only the layers present in the package --------------------------
-same('a package without Overlay drops only its letter',
-     layerSwitchLetters(['1 - FieldNotebook', '2 - Linework', '4 - Basemap']),
-     ['F', 'L', 'B'])
-same('a single layer still gets its initial',
-     layerSwitchLetters(['2 - Linework']), ['L'])
-same('no layers, no letters', layerSwitchLetters([]), [])
+same('a package without Overlay keeps the rest',
+     ['1 - FieldNotebook', '2 - Linework', '4 - Basemap'].map(glyphFor),
+     ['point', 'line', 'fill'])
+same('a single layer still gets its mark',
+     ['2 - Linework'].map(glyphFor), ['line'])
 
 // --- a name with no ordinal prefix -----------------------------------
-same('unprefixed names work', layerSwitchLetters(['Linework', 'Overlay']),
-     ['L', 'O'])
+same('unprefixed names work', ['Linework', 'Overlay'].map(glyphFor),
+     ['line', 'wash'])
 
-// --- shared initials widen to the DIVERGING character ----------------
-// 'Li' + 'Li' would be two identical buttons; the rule must reach the
-// first character at which the names actually differ.
-same('Linework and Lithology diverge at n/t',
-     layerSwitchLetters(['2 - Linework', '5 - Lithology']), ['Ln', 'Lt'])
-same('Linework and Lodes diverge at the second character',
-     layerSwitchLetters(['2 - Linework', '9 - Lodes']), ['Li', 'Lo'])
-same('a shared initial does not widen the others',
-     layerSwitchLetters(['2 - Linework', '5 - Lithology', '3 - Overlay']),
-     ['Ln', 'Lt', 'O'])
+// --- an unknown layer abstains, so the caller asks the geometry -------
+check('an unknown base returns empty, not a guess',
+      glyphFor('7 - Geochemistry') === '', glyphFor('7 - Geochemistry'))
+check('a near-miss name does not fuzzy-match',
+      glyphFor('2 - Linework Draft') === '', glyphFor('2 - Linework Draft'))
 
-const widened = layerSwitchLetters(['2 - Linework', '5 - Lithology'])
-check('widened letters are distinct', widened[0] !== widened[1],
-      JSON.stringify(widened))
-
-// --- lower-case and spaced names -------------------------------------
-same('initials are upper-cased, the widening character is not',
-     layerSwitchLetters(['1 - notes', '2 - nodes']), ['Nt', 'Nd'])
-same('spaces in a base name survive',
-     layerSwitchLetters(['2 - Field Notebook']), ['F'])
+// --- every kind the table emits must be one the delegate can draw ----
+// The delegate gates four inline marks on these exact strings; a kind it
+// does not know would render an empty button.
+const DRAWN = ['point', 'line', 'wash', 'fill']
+for (const base in globalThis.layerSwitchGlyphs) {
+  const kind = globalThis.layerSwitchGlyphs[base]
+  check('the delegate can draw ' + base + ' -> ' + kind,
+        DRAWN.indexOf(kind) !== -1, kind)
+}
 
 // --- baseName itself, the shared mirror of lgs_layers.base_name ------
 check('baseName strips the ordinal',

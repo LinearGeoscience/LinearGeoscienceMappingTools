@@ -261,9 +261,10 @@ class TestWriteSidecar(unittest.TestCase):
                        'resolvedGroupEntries', 'groupOpacityCurrent',
                        'setCoverOpacity', 'coverStepCurrent',
                        'lgs_cover_opacity',
-                       # v28: left-edge active-layer switch:
+                       # v28 layer switch, v29 drawn marks:
                        'featureLayerSwitch', 'layerSwitchBar',
-                       'layerSwitchLetters', 'initLayerSwitch',
+                       'layerSwitchGlyphs', 'initLayerSwitch',
+                       'layerSwitchGlyphForBase', 'layerSwitchGlyphFor',
                        'setActiveLayerByName', 'writeActiveLayer',
                        'layerSwitchChangeAllowed',
                        'syncLayerSwitchActive', 'layerSwitchAwake',
