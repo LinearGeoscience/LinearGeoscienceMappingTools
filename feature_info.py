@@ -602,3 +602,35 @@ INFO_ADD_ELEVATION = """
 </ul>
 <p><b>Note:</b> New projects created from the current mapping template already include the Elevation field on all four layers.</p>
 """
+
+INFO_GENERATE_CONTOURS = """
+<h1>Generate Contours</h1>
+<p>Generate smooth, cartographically styled contour lines from a DEM raster (GeoTIFF and
+similar). Unlike the built-in contour tools, the surface is smoothed and resampled before
+tracing and each line is spline-fitted afterwards, so contours follow the terrain without
+pixel stair-stepping.</p>
+<h2>Features:</h2>
+<ul>
+   <li><b>Auto-suggested intervals:</b> A sensible minor interval and major (index) multiple
+       are picked from the DEM's elevation range &mdash; override either in the dialog.</li>
+   <li><b>Smoothing levels:</b> Off / Light / Medium / Strong control how much the surface is
+       relaxed before contouring. Medium suits most 10&ndash;30&nbsp;m DEMs; Strong helps
+       noisy data at the cost of positional fidelity.</li>
+   <li><b>Cartographic styles:</b> <i>Subtle grey</i> (default) recedes behind geology
+       colours; <i>Classic topo brown</i> gives a traditional sepia look. Major contours are
+       heavier and carry curved elevation labels with a white halo; minors stay unlabelled.</li>
+   <li><b>Self-contained output:</b> Contours are written to their own GeoPackage beside the
+       DEM (never the mapping template), with the style embedded so it travels with the
+       file.</li>
+</ul>
+<h2>Workflow:</h2>
+<ol>
+   <li>Load your DEM in the project (or Browse to the file directly).</li>
+   <li>Accept or adjust the suggested minor interval and major multiple.</li>
+   <li>Pick a smoothing level and colour scheme, then <b>Generate Contours</b>.</li>
+   <li>The styled layer is added to the project when generation finishes.</li>
+</ol>
+<p><b>Note:</b> Elevation labels repeat about every 15&nbsp;cm of screen/paper at any zoom
+&mdash; standard topographic-sheet behaviour. Re-running into the same GeoPackage replaces
+the contour layer but leaves any other layers in that file alone.</p>
+"""

@@ -910,6 +910,11 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Create Layouts", None,
                         feature_info.INFO_CREATE_LAYOUTS, self.run_createlayouts)
         lay.addWidget(grp)
+        grp2 = FeatureGroup("Terrain", self.plugin_dir, page)
+        grp2.addFeature("Generate Contours", None,
+                        feature_info.INFO_GENERATE_CONTOURS,
+                        self.run_generate_contours)
+        lay.addWidget(grp2)
         lay.addStretch()
         return page
 
@@ -1100,6 +1105,22 @@ class LinearGeosciencePluginMain:
     def run_createlayouts(self):
         from .script_create_layouts import run
         run(self.iface, owner=self)
+
+    def run_generate_contours(self):
+        try:
+            from .contours.dialog import run
+            run(self.iface)
+        except Exception as e:
+            import traceback
+            from qgis.core import QgsMessageLog, Qgis
+            QgsMessageLog.logMessage(
+                f"run_generate_contours failed: {e}\n{traceback.format_exc()}",
+                'Linear Geoscience', Qgis.MessageLevel.Critical
+            )
+            self.iface.messageBar().pushCritical(
+                "Linear Geoscience",
+                f"Could not open Generate Contours: {e}"
+            )
 
     def run_loadtemplate(self):
         try:
