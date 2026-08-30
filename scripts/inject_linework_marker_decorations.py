@@ -42,8 +42,8 @@ The fix is structural:
     byte-identical no-op on these layers.
 
 Confidence dashing is untouched (it lives on the backbone SimpleLine),
-and the Shear Zone Boundary arrows keep riding the ORIGINAL geometry
-beside the wave generator (inject_linework_shear_wave.py).
+including the Shear Zone Boundary arrows, which sit beside their stroke
+as an ordinary sibling layer.
 
 Never point this at LGS_MappingTemplate_Patterns.gpkg - that file is
 re-baked wholesale by inject_basemap_lith_patterns.py.
@@ -192,7 +192,7 @@ def bail(msg):
 
 
 # ---------------------------------------------------------------------------
-# File guards (shape from inject_linework_shear_wave.py)
+# File guards (shape from inject_vein_generation_selvedge.py)
 # ---------------------------------------------------------------------------
 
 def back_up(repo, gpkg):
@@ -208,7 +208,7 @@ def back_up(repo, gpkg):
 
 
 def refuse_if_open(gpkg):
-    """Bail if QGIS still has the gpkg open (see inject_linework_shear_wave)."""
+    """Bail if QGIS still has the gpkg open (see inject_vein_generation_selvedge)."""
     if os.path.exists(gpkg + "-wal"):
         bail("%s has an active -wal alongside it, so something still has it "
              "open. Close the project in QGIS first." % os.path.basename(gpkg))

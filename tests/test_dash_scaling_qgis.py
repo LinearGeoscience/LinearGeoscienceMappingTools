@@ -1,11 +1,11 @@
 """Dash patterns scale with the Weight tier, and Moderate keeps the authored look.
 
 inject_dash_weight_scaling.py bakes a Weight CASE onto every dash-bearing
-Linework stroke (62 static dashes + 32 confidence flips).  A wrong dd
+Linework stroke (62 static dashes + 56 confidence flips).  A wrong dd
 expression fails silently - the stroke just draws solid or vanishes - so
 this test proves the claims off-line and in pixels:
 
-  1. structure: exactly 94 dash-bearing strokes, every customDash names
+  1. structure: exactly 118 dash-bearing strokes, every customDash names
      Weight, every ELSE mirrors the layer's authored customdash static;
   2. every customDash expression parses and, evaluated per tier x
      Confidence, returns the authored dash scaled element-wise by
@@ -90,8 +90,6 @@ def dash_layers(qml):
         custom = dd.get("customDash")
         if custom is None and val("use_custom_dash") != "1":
             continue
-        if custom == _inj.PINNED_SOLID:
-            continue  # Shear Zone Boundary: tilde generator owns dashing
         out.append((val("customdash"), custom,
                     custom is not None and _inj.MEGA_DASH in custom))
     return out

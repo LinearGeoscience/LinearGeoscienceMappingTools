@@ -62,7 +62,7 @@ def bail(msg):
 
 
 # ---------------------------------------------------------------------------
-# File guards (shape from inject_linework_shear_wave.py)
+# File guards (shape from inject_vein_generation_selvedge.py)
 # ---------------------------------------------------------------------------
 
 def back_up(repo, gpkg):
@@ -78,7 +78,7 @@ def back_up(repo, gpkg):
 
 
 def refuse_if_open(gpkg):
-    """Bail if QGIS still has the gpkg open (see inject_linework_shear_wave)."""
+    """Bail if QGIS still has the gpkg open (see inject_vein_generation_selvedge)."""
     if os.path.exists(gpkg + "-wal"):
         bail("%s has an active -wal alongside it, so something still has it "
              "open. Close the project in QGIS first." % os.path.basename(gpkg))
