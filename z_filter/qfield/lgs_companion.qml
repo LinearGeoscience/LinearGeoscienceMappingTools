@@ -112,6 +112,15 @@
  *    tail. Spline parameters are baked at export
  *    via LGS-EXPORT-DATA:splineparams (tolerance is in map units — LGS
  *    projects are projected mine grids, same assumption as desktop).
+ *    Output density is scale-adaptive (v27): the curve is sampled and
+ *    pruned to a deviation of roughly a quarter millimetre AT THE
+ *    MAPPING SCALE, read off mapSettings.mapUnitsPerPoint and latched
+ *    (quantized to octaves) while the user draws, so a boundary drawn
+ *    zoomed out no longer saves the thousands of sub-millimetre
+ *    vertices that made ✓ slow. Never coarser than the map can show and
+ *    never finer than the baked tolerance, so zoomed-in fidelity is
+ *    exactly what it always was. The control points themselves always
+ *    survive, so they are the floor on the saved vertex count.
  *
  * 6. NATIVE CONFIRM FIXUP — always on (no export flag): QField's own
  *    line/polygon digitizing also harvests the floating crosshair vertex
@@ -5096,6 +5105,31 @@ Item {
   readonly property real splineMinNodePx: 8
   readonly property int splineLiveMaxSegments: 16
 
+  // Scale-adaptive output density. splineTolerance/splineMaxSegments above
+  // are an absolute map-unit tolerance and a fixed sample count, so a
+  // contact drawn at 1:10000 used to be approximated to 0.1 m — a
+  // hundredth of a millimetre on the map — and every one of those
+  // invisible vertices was paid for twice: once in QField's per-vertex
+  // rubberband signalling, once when the feature saved. These express the
+  // same thing the way cartography does, as a deviation AT THE MAPPING
+  // SCALE: one point is 1/72 inch, so mapUnitsPerPoint IS the scale
+  // denominator in map units, and no reference scale has to reach the
+  // device for this to work (it is also correctly degrees-per-point in a
+  // geographic CRS).
+  //   splineTolPoints           prune deviation, ~0.25 mm on the map
+  //   splineSampleSpacingPoints raw sample pitch before pruning
+  //   splineMinSamples          floor per segment, so a short segment still
+  //                             bends
+  // splineTolerance/splineMaxSegments survive as the fallback (no map
+  // settings), as the sample-count cap, and as a FLOOR on fidelity — the
+  // derived tolerance is never finer than the baked one (see
+  // splineEffectiveTolerance), so zoomed-in drawing behaves exactly as it
+  // always has and the savings land at the small scales where the big
+  // polygons get drawn.
+  readonly property real splineTolPoints: 0.7
+  readonly property real splineSampleSpacingPoints: 1.0
+  readonly property int splineMinSamples: 4
+
   property bool splineArmed: false
   property var splineLocator: null    // the coordinateLocator QQuickItem
   property var splineModel: null      // locator.rubberbandModel (active one)
@@ -5103,6 +5137,7 @@ Item {
   property var splineControls: []     // [{x,y,z}] control points, in order
   property int splineExpected: -1     // model vertexCount we last produced
   property bool splineMutating: false // re-entrancy guard around rebuilds
+  property real splineDensityUnits: 0 // latched map units per point (0 = off)
   property var splineLastCross: null  // crosshair coords used in last rebuild
   property var splineLastSeq: null    // sequence last written to the model
   property bool splineLastSeqFull: false // splineLastSeq is at full density
@@ -5235,6 +5270,77 @@ Item {
          (bz === undefined || Number.isNaN(bz)))
   }
 
+  // Round a map-units-per-point reading to the nearest power of two.
+  // Latching an OCTAVE rather than the live value is what keeps this
+  // cheap: the segment cache is invalidated by a params mismatch, so an
+  // unquantized reading would wipe splineFullCache on every pinch. Pure
+  // doubling/halving (no logarithms) so the device and the node harness
+  // agree bit for bit. Returns 0 for anything unusable.
+  function splineQuantizeUnits(value) {
+    if (!(isFinite(value) && value > 1e-12 && value < 1e12))
+      return 0
+    let q = 1
+    while (q > value)
+      q = q / 2
+    while (q * 2 <= value)
+      q = q * 2
+    return (value >= q * Math.SQRT2) ? q * 2 : q
+  }
+
+  // Douglas-Peucker tolerance to prune a sample block with: the deviation
+  // that reads as smooth at this scale, or the baked desktop tolerance
+  // when there is no density (no map settings, or an un-started session).
+  //
+  // NEVER finer than the baked tolerance. Below about 1:400 the derived
+  // value drops under the baked 0.1, which would quietly make close-in
+  // drawing SLOWER than before this change — the opposite of the point.
+  // Clamping keeps zoomed-in fidelity exactly as it has always been and
+  // spends the savings where they were asked for, as the map zooms out.
+  // It also makes this change a strict improvement: no scale, anywhere,
+  // saves more vertices than it used to.
+  function splineEffectiveTolerance(tolerance, density) {
+    if (density && density.unitsPerPoint > 0 && density.tolPoints > 0)
+      return Math.max(tolerance, density.unitsPerPoint * density.tolPoints)
+    return tolerance
+  }
+
+  // How many raw samples one segment needs. Sampling 200 points per
+  // segment and then pruning 195 of them is the cold-confirm cost, so
+  // sample by the segment's own on-screen length instead. The cubic's
+  // equivalent Bezier control polygon (p0, p0+t0/3, p1-t1/3, p1) is an
+  // upper bound on its arc length and tight enough to pitch samples by.
+  // Sampling at ~1 point while pruning at ~0.7 leaves ample margin: a
+  // feature this sampler could miss needs a curvature radius under half a
+  // screen point. No density (or none usable) returns maxSegments — the
+  // legacy path, bit for bit.
+  function splineSampleCount(p0, p1, t0, t1, maxSegments, density) {
+    if (!density || !(density.unitsPerPoint > 0) ||
+        !(density.spacingPoints > 0))
+      return maxSegments
+    const b1x = p0.x + t0.x / 3
+    const b1y = p0.y + t0.y / 3
+    const b2x = p1.x - t1.x / 3
+    const b2y = p1.y - t1.y / 3
+    const arc = Math.sqrt((b1x - p0.x) ** 2 + (b1y - p0.y) ** 2) +
+                Math.sqrt((b2x - b1x) ** 2 + (b2y - b1y) ** 2) +
+                Math.sqrt((p1.x - b2x) ** 2 + (p1.y - b2y) ** 2)
+    const floor = density.minSamples > 0 ? density.minSamples : 1
+    const wanted = Math.ceil(arc / (density.unitsPerPoint *
+                                    density.spacingPoints))
+    if (!isFinite(wanted) || wanted < floor)
+      return Math.min(floor, maxSegments)
+    return Math.min(wanted, maxSegments)
+  }
+
+  // Cache-parameter identity for a density ('' = none), so a zoom that
+  // crosses an octave resets the cache and one that does not, does not.
+  function splineDensityKey(density) {
+    if (!density || !(density.unitsPerPoint > 0))
+      return ''
+    return density.unitsPerPoint + '|' + density.tolPoints + '|' +
+           density.spacingPoints + '|' + density.minSamples
+  }
+
   // Segment cache for the full-density curves. A segment's pruned sample
   // block is fully determined by four controls (tangent neighbours +
   // endpoints; null marks an open-curve end, where the tangent formula
@@ -5245,12 +5351,14 @@ Item {
   // bit-identical to the uncached path.
   // Returns the entry array for the requested curve kind ('o' open /
   // 'c' closed), resetting the whole cache when the params changed.
-  function splineCacheEntries(cache, kind, tightness, tolerance, maxSegments) {
+  function splineCacheEntries(cache, kind, tightness, tolerance, maxSegments,
+                             density) {
     if (!cache)
       return null
+    const key = splineDensityKey(density)
     if (!cache.p || cache.p[0] !== tightness || cache.p[1] !== tolerance ||
-        cache.p[2] !== maxSegments) {
-      cache.p = [tightness, tolerance, maxSegments]
+        cache.p[2] !== maxSegments || cache.p[3] !== key) {
+      cache.p = [tightness, tolerance, maxSegments, key]
       cache.o = []
       cache.c = []
     }
@@ -5275,13 +5383,15 @@ Item {
   // parity fixtures agree to float precision. The optional cache (see
   // splineCacheEntries) skips recomputing segments whose deps are
   // unchanged since a previous call — output is bit-identical.
-  function splineHermiteOpen(points, tightness, tolerance, maxSegments, cache) {
+  function splineHermiteOpen(points, tightness, tolerance, maxSegments, cache,
+                            density) {
     const n = points.length
     if (n < 3)
       return points.slice()
 
     const entries = splineCacheEntries(cache, 'o', tightness, tolerance,
-                                       maxSegments)
+                                       maxSegments, density)
+    const effTol = splineEffectiveTolerance(tolerance, density)
 
     const tangents = [splineTangent(points[0], points[1], tightness)]
     for (let i = 1; i < n - 1; i++)
@@ -5298,7 +5408,9 @@ Item {
                     i + 1 < n - 1 ? points[i + 2] : null]
       let interior = entries ? splineCacheLookup(entries, i, deps) : null
       if (interior === null) {
-        const t = 1.0 / maxSegments
+        const segs = splineSampleCount(p0, p1, tangents[i], tangents[i + 1],
+                                       maxSegments, density)
+        const t = 1.0 / segs
         let s = t
         const samples = []
         while (s < 1) {
@@ -5314,7 +5426,7 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, tolerance)
+        const pruned = splineSimplify(block, effTol)
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5330,13 +5442,15 @@ Item {
   // is the UNCLOSED unique ring (the rubberband carries no closing
   // duplicate) and the output stays unclosed too. Returns
   // {points, lastControlIndex} so the caller can rotate the ring.
-  function splineHermiteClosed(points, tightness, tolerance, maxSegments, cache) {
+  function splineHermiteClosed(points, tightness, tolerance, maxSegments, cache,
+                              density) {
     const n = points.length
     if (n < 3)
       return { points: points.slice(), lastControlIndex: points.length - 1 }
 
     const entries = splineCacheEntries(cache, 'c', tightness, tolerance,
-                                      maxSegments)
+                                      maxSegments, density)
+    const effTol = splineEffectiveTolerance(tolerance, density)
 
     const tangents = []
     for (let i = 0; i < n; i++) {
@@ -5356,7 +5470,10 @@ Item {
       const deps = [points[(i - 1 + n) % n], p0, p1, points[(i + 2) % n]]
       let interior = entries ? splineCacheLookup(entries, i, deps) : null
       if (interior === null) {
-        const t = 1.0 / maxSegments
+        const segs = splineSampleCount(p0, p1, tangents[i],
+                                       tangents[(i + 1) % n], maxSegments,
+                                       density)
+        const t = 1.0 / segs
         let s = t
         const samples = []
         while (s < 1) {
@@ -5372,7 +5489,7 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, tolerance)
+        const pruned = splineSimplify(block, effTol)
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5416,7 +5533,7 @@ Item {
   //    seam curved.
   // Fewer than 3 distinct points pass through unchanged (native straight
   // rubberband behaviour).
-  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments, cache) {
+  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments, cache, density) {
     const pts = []
     for (let i = 0; i < points.length; i++) {
       const p = points[i]
@@ -5427,9 +5544,10 @@ Item {
     if (pts.length < 3)
       return pts
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache,
+                               density)
     const ring = splineHermiteClosed(pts, tightness, tolerance, maxSegments,
-                                     cache)
+                                     cache, density)
     const k = ring.lastControlIndex
     return ring.points.slice(k + 1).concat(ring.points.slice(0, k + 1))
   }
@@ -5441,7 +5559,7 @@ Item {
   // when there are too few distinct controls to form the geometry
   // without the crosshair (< 2 for lines, < 3 for rings) — native
   // behaviour (crosshair as final vertex) is the right fallback there.
-  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments, cache) {
+  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments, cache, density) {
     const pts = []
     for (let i = 0; i < controls.length; i++) {
       const p = controls[i]
@@ -5452,9 +5570,10 @@ Item {
     if (pts.length < (closed ? 3 : 2))
       return null
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache,
+                               density)
     return splineHermiteClosed(pts, tightness, tolerance, maxSegments,
-                               cache).points
+                               cache, density).points
   }
 
   // Ring idle-upgrade sequence (v26): the confirm ring (committed
@@ -5468,9 +5587,9 @@ Item {
   // instead of riding the curve — any crosshair move restores the
   // smooth live preview via the normal rebuild. Returns null below 3
   // distinct controls (same fallback as splineConfirmSequence).
-  function splineRingIdleSequence(controls, cross, tightness, tolerance, maxSegments, cache) {
+  function splineRingIdleSequence(controls, cross, tightness, tolerance, maxSegments, cache, density) {
     const confirm = splineConfirmSequence(controls, true, tightness,
-        tolerance, maxSegments, cache)
+        tolerance, maxSegments, cache, density)
     if (confirm === null)
       return null
     return confirm.concat([cross])
@@ -5559,6 +5678,7 @@ Item {
     splineLastSeq = null
     splineLastSeqFull = false
     splineFullCache = ({})
+    splineRefreshDensity()
     updateSplineMarkers()
   }
 
@@ -5617,6 +5737,37 @@ Item {
     return 0
   }
 
+  // Re-latch the output density from the current zoom. Called when a
+  // session starts and whenever a control point is adopted — that is,
+  // while the user is DRAWING — never on zoom alone. Two reasons:
+  // panning and zooming to look around must not wipe the segment cache,
+  // and a curve drawn at 1:2000 must not be saved at 1:50000 density
+  // because the user zoomed out to check their work before tapping the
+  // green tick. Quantized, so re-latching is usually a no-op.
+  function splineRefreshDensity() {
+    let perPoint = 0
+    try {
+      perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+    } catch (error) {
+      perPoint = 0
+    }
+    splineDensityUnits = splineQuantizeUnits(perPoint)
+  }
+
+  // The density bundle handed to the curve builders. Built once per
+  // rebuild and passed down — the builders must never read the map
+  // settings themselves, or the idle write and the confirm write could
+  // disagree and v26's prefix diff would silently fall back to a full
+  // reset. null = no density, i.e. the legacy fixed-tolerance path.
+  function splineDensity() {
+    if (!(splineDensityUnits > 0))
+      return null
+    return { unitsPerPoint: splineDensityUnits,
+             tolPoints: splineTolPoints,
+             spacingPoints: splineSampleSpacingPoints,
+             minSamples: splineMinSamples }
+  }
+
   // Take the model's committed vertices (all but the floating crosshair
   // vertex) as the control points — used when arming mid-digitize and as
   // the recovery path when the vertex count changes in a way we did not
@@ -5631,6 +5782,7 @@ Item {
       for (let i = 0; i < count - 1; i++)
         splineControls.push({ x: verts[i].x, y: verts[i].y, z: verts[i].z })
       splineControls = splineDecimate(splineControls, splineMinNodeMapUnits())
+      splineRefreshDensity()
       splineExpected = count
     } catch (error) {
       splineControls = []
@@ -5682,6 +5834,7 @@ Item {
           }
         }
         if (keep) {
+          splineRefreshDensity()
           splineControls.push({ x: v.x, y: v.y, z: v.z })
           splineControls = splineControls.slice()
         }
@@ -5888,7 +6041,8 @@ Item {
     const seq = splineBuildSequence(
         splineControls.concat([cross]), closed,
         splineTightness, splineTolerance,
-        Math.min(splineMaxSegments, splineLiveMaxSegments))
+        Math.min(splineMaxSegments, splineLiveMaxSegments),
+        null, splineDensity())
     if (seq.length < 2)
       return
     splineMutating = true
@@ -5933,16 +6087,17 @@ Item {
     } catch (error) {
       return
     }
+    const density = splineDensity()
     let seq = null
     if (closed)
       seq = splineRingIdleSequence(splineControls, cross,
           splineTightness, splineTolerance, splineMaxSegments,
-          splineFullCache)
+          splineFullCache, density)
     if (seq === null)
       seq = splineBuildSequence(
           splineControls.concat([cross]), closed,
           splineTightness, splineTolerance, splineMaxSegments,
-          splineFullCache)
+          splineFullCache, density)
     if (seq.length < 2)
       return
     splineMutating = true
@@ -5975,7 +6130,7 @@ Item {
       return
     }
     splineConfirmSequence(splineControls, closed, splineTightness,
-        splineTolerance, splineMaxSegments, splineFullCache)
+        splineTolerance, splineMaxSegments, splineFullCache, splineDensity())
   }
 
   // Confirm fixup. QField's DigitizingToolbar.confirm() freezes the
@@ -6012,9 +6167,10 @@ Item {
     // one-call bulk path instead of the per-vertex loop.
     const started = Date.now()
     const wasWarm = splineLastSeqFull  // read BEFORE the write clears it
+    const density = splineDensity()
     const seq = splineConfirmSequence(splineControls, closed,
         splineTightness, splineTolerance, splineMaxSegments,
-        splineFullCache)
+        splineFullCache, density)
     if (seq === null || seq.length < 2)
       return
     splineMutating = true
@@ -6035,7 +6191,8 @@ Item {
     // means the idle upgrade never landed before ✓.
     const stats = splineWriteStats
     console.log('LGS spline confirm: ' + (Date.now() - started) + ' ms, ' +
-                seq.length + ' pts' +
+                seq.length + ' pts, ' + splineControls.length + ' controls' +
+                ', tol ' + splineEffectiveTolerance(splineTolerance, density) +
                 (stats !== null ? ', mode ' + stats.mode +
                                   ', prefix ' + stats.prefix : '') +
                 (wasWarm ? ', warm' : ', cold'))
