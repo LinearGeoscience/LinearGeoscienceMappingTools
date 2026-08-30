@@ -33,6 +33,7 @@ _FLAG_MARKERS = {
     "merge": "LGS-EXPORT-FLAG:merge",
     "recenterhold": "LGS-EXPORT-FLAG:recenterhold",
     "modetoggle": "LGS-EXPORT-FLAG:modetoggle",
+    "layerswitch": "LGS-EXPORT-FLAG:layerswitch",
 }
 
 _DATA_MARKERS = {
@@ -62,7 +63,7 @@ def sidecar_build_stamp(source_text, exported_at=None):
 def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                   opacity=True, clipping=True, spline=True, reshape=True,
                   reverse=True, copyattrs=True, merge=True,
-                  recenterhold=True, modetoggle=True,
+                  recenterhold=True, modetoggle=True, layerswitch=True,
                   opacity_layers=None, vector_layers=None,
                   opacity_groups=None, spline_params=None):
     """Write the companion plugin next to the exported project file.
@@ -70,11 +71,12 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
     export_dir: destination folder (str or Path)
     project_stem: exported project file name without extension
     zfilter / scale / opacity / clipping / spline / reshape / reverse /
-    copyattrs / merge / recenterhold / modetoggle:
+    copyattrs / merge / recenterhold / modetoggle / layerswitch:
         enable the Z filter / scale display / layer opacity / polygon
         clip / spline digitizing / multi-polygon reshape / line
         direction reverse / attribute copy / polygon merge / freehand
-        recenter-hold / browse-digitise mode-toggle features
+        recenter-hold / browse-digitise mode-toggle / left-edge active
+        layer switcher features
     opacity_layers: names of the exported raster layers the opacity
         panel should act on (baked into the QML as a JSON array)
     vector_layers: names of the exported spatial vector layers for the
@@ -99,7 +101,8 @@ def write_sidecar(export_dir, project_stem, zfilter=True, scale=True,
                           ("spline", spline), ("reshape", reshape),
                           ("reverse", reverse), ("copyattrs", copyattrs),
                           ("merge", merge), ("recenterhold", recenterhold),
-                          ("modetoggle", modetoggle)):
+                          ("modetoggle", modetoggle),
+                          ("layerswitch", layerswitch)):
         marker = _FLAG_MARKERS[name]
         pattern = re.compile(
             r"^(\s*readonly property bool \w+: )(?:true|false)( // %s)$"

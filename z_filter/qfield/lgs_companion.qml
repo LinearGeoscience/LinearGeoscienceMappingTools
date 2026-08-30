@@ -259,6 +259,7 @@ Item {
   readonly property bool featureMerge: true // LGS-EXPORT-FLAG:merge
   readonly property bool featureRecenterHold: true // LGS-EXPORT-FLAG:recenterhold
   readonly property bool featureModeToggle: true // LGS-EXPORT-FLAG:modetoggle
+  readonly property bool featureLayerSwitch: true // LGS-EXPORT-FLAG:layerswitch
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1311,7 +1312,7 @@ Item {
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
         featureSpline || featureReshape || featureReverse ||
-        featureRecenterHold || featureModeToggle)
+        featureRecenterHold || featureModeToggle || featureLayerSwitch)
       attachOverlay()
     startupTimer.start()
   }
@@ -1345,6 +1346,8 @@ Item {
         plugin.initRecenterHold()
       if (plugin.featureModeToggle)
         plugin.initModeToggle()
+      if (plugin.featureLayerSwitch)
+        plugin.initLayerSwitch()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1814,6 +1817,7 @@ Item {
         overlayBar.anchors.bottom = canvas.bottom
         overlayBar.anchors.bottomMargin = 64
         overlayBar.visible = true
+        attachLayerSwitch()
         return
       }
     } catch (error) {}
@@ -1821,6 +1825,24 @@ Item {
       // Fallback: live in the plugins toolbar instead.
       overlayBar.visible = true
       iface.addItemToPluginsToolbar(overlayBar)
+    } catch (error) {}
+  }
+
+  function attachLayerSwitch() {
+    // Lower left, a hair off the edge: 8px in leaves QField's dashboard
+    // edge-swipe its drag margin, and the bottom margin clears the pill
+    // bar (its own bottom 64, plus a pill's height). No plugins-toolbar
+    // fallback — a vertical column has no business in a toolbar, so with
+    // no canvas the column simply never shows.
+    if (!featureLayerSwitch)
+      return
+    try {
+      layerSwitchBar.parent = canvas
+      layerSwitchBar.anchors.left = canvas.left
+      layerSwitchBar.anchors.leftMargin = 8
+      layerSwitchBar.anchors.bottom = canvas.bottom
+      layerSwitchBar.anchors.bottomMargin = 96
+      layerSwitchAttached = true
     } catch (error) {}
   }
 
@@ -2301,6 +2323,259 @@ Item {
       TapHandler {
         gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.toggleMapMode()
+      }
+    }
+  }
+
+  // ================================================================
+  // Layer switch (v28)
+  //
+  // Four letters down the left edge that set QField's ACTIVE layer
+  // without opening the dashboard drawer. The active layer decides
+  // which layer the digitise button writes to, and every sidecar tool
+  // here (Reshape / Reverse / Copy / Merge) locks onto it at entry —
+  // yet reaching it costs a drawer, a scroll and a tap, with the map
+  // covered throughout.
+  // ================================================================
+
+  property var layerSwitchEntries: []        // [{name, letter}], present only
+  property string layerSwitchActiveName: ''  // '' = something else is active
+  property bool layerSwitchAwake: true       // false once it has dimmed
+  property bool layerSwitchSupported: true   // false once a write no-ops
+  property bool layerSwitchAttached: false   // parked on the canvas
+
+  // A letter per layer by convention rather than a table: the initial of
+  // the ordinal-free name (mirror of lgs_layers.base_name). The canonical
+  // four give F / L / O / B. Layers sharing an initial widen to two
+  // characters — and the second is the first character at which they
+  // actually DIVERGE, so Linework and Lithology read Ln and Lt rather
+  // than Li and Li. A renamed or re-ordinalled layer therefore still gets
+  // a usable button with nothing to configure.
+  // Kept pure JS — the test harness runs this verbatim.
+  function layerSwitchLetters(names) {
+    let bases = []
+    for (const name of names)
+      bases.push(baseName(name))
+    let groups = ({})
+    for (const base of bases) {
+      const key = base.charAt(0).toUpperCase()
+      if (groups[key] === undefined)
+        groups[key] = []
+      groups[key].push(base)
+    }
+    // Per shared initial, the offset of the first differing character.
+    let divergeAt = ({})
+    for (const key in groups) {
+      const members = groups[key]
+      let at = 1
+      while (members.length > 1 && at < 8 && members[0].charAt(at) !== '') {
+        let same = true
+        for (const base of members) {
+          if (base.charAt(at).toLowerCase() !==
+              members[0].charAt(at).toLowerCase()) {
+            same = false
+            break
+          }
+        }
+        if (!same)
+          break
+        at++
+      }
+      divergeAt[key] = at
+    }
+    let letters = []
+    for (const base of bases) {
+      const key = base.charAt(0).toUpperCase()
+      letters.push(groups[key].length > 1
+          ? key + base.charAt(divergeAt[key]).toLowerCase() : key)
+    }
+    return letters
+  }
+
+  function initLayerSwitch() {
+    // Only layers that actually came down in the package get a button —
+    // layerByName already falls back through the pre-swap ordinals.
+    let names = []
+    for (const name of layerNames) {
+      if (layerByName(name) !== null)
+        names.push(name)
+    }
+    const letters = layerSwitchLetters(names)
+    let entries = []
+    for (let i = 0; i < names.length; i++)
+      entries.push({ name: names[i], letter: letters[i] })
+    layerSwitchEntries = entries
+    syncLayerSwitchActive()
+    // Start awake so the column is seen at least once, then let it settle
+    // to the dimmed resting state on its own.
+    wakeLayerSwitch()
+  }
+
+  // Match by layer IDENTITY, never by name string: a pre-swap package
+  // answers to a legacy ordinal and layerByName knows both spellings.
+  function layerSwitchActiveFor(layer) {
+    if (layer === null || layer === undefined)
+      return ''
+    for (const entry of layerSwitchEntries) {
+      if (layerByName(entry.name) === layer)
+        return entry.name
+    }
+    return ''
+  }
+
+  function syncLayerSwitchActive() {
+    layerSwitchActiveName = layerSwitchActiveFor(reshapeActiveLayer())
+  }
+
+  function wakeLayerSwitch() {
+    layerSwitchAwake = true
+    layerSwitchWakeTimer.restart()
+  }
+
+  function layerSwitchChangeAllowed() {
+    // dashBoard.allowActiveLayerChange (a QField property alias) goes
+    // false mid-feature. Unreadable on another build counts as allowed —
+    // the write verifies itself anyway.
+    try {
+      if (reshapeDashboard !== null && reshapeDashboard !== undefined &&
+          reshapeDashboard.allowActiveLayerChange === false)
+        return false
+    } catch (error) {}
+    return true
+  }
+
+  // dashBoard.activeLayer is a writable property alias in QField, but no
+  // QField code ever assigns it — it is only ever read. So write it, read
+  // it back and identity-compare, the same attempt-and-verify the layer
+  // opacity rows use.
+  function writeActiveLayer(layer) {
+    let items = []
+    if (reshapeDashboard !== null && reshapeDashboard !== undefined)
+      items.push(reshapeDashboard)
+    for (const name of ['dashBoard', 'projectInfo', 'locatorBridge']) {
+      try {
+        const item = iface.findItemByObjectName(name)
+        if (item !== null && item !== undefined)
+          items.push(item)
+      } catch (error) {}
+    }
+    for (const item of items) {
+      try {
+        item.activeLayer = layer
+        if (item.activeLayer === layer) {
+          reshapeDashboard = item
+          return true
+        }
+      } catch (error) {}
+    }
+    return false
+  }
+
+  function setActiveLayerByName(name) {
+    wakeLayerSwitch()
+    const layer = layerByName(name)
+    if (layer === null) {
+      // Gone since startup — drop the button rather than keep a dud.
+      let entries = []
+      for (const entry of layerSwitchEntries) {
+        if (entry.name !== name)
+          entries.push(entry)
+      }
+      layerSwitchEntries = entries
+      toast(qsTr('%1 is not in this project').arg(baseName(name)))
+      return
+    }
+    if (reshapeActiveLayer() === layer) {
+      layerSwitchActiveName = name
+      toast(qsTr('Active layer: %1').arg(baseName(name)))
+      return
+    }
+    if (!layerSwitchChangeAllowed()) {
+      toast(qsTr('Finish the current feature first'))
+      return
+    }
+    if (!writeActiveLayer(layer)) {
+      // Silently no-oped on every item we can reach: this build will not
+      // let a plugin set the active layer. Retire the column for the
+      // session rather than leave dead buttons on the map.
+      layerSwitchSupported = false
+      toast(qsTr('Layer switching is not supported by this QField build'))
+      return
+    }
+    layerSwitchActiveName = name
+    toast(qsTr('Active layer: %1').arg(baseName(name)))
+  }
+
+  Timer {
+    id: layerSwitchWakeTimer
+    interval: 4000
+    repeat: false
+    onTriggered: plugin.layerSwitchAwake = false
+  }
+
+  Connections {
+    // The legend can change the active layer behind our back; follow it
+    // so the highlight never lies. reshapeDashboard is a plain var, so
+    // this target rebinds when the lazy probe finally finds the item.
+    target: plugin.reshapeDashboard
+    ignoreUnknownSignals: true
+    function onActiveLayerChanged() {
+      plugin.syncLayerSwitchActive()
+      plugin.wakeLayerSwitch()
+    }
+  }
+
+  Column {
+    id: layerSwitchBar
+    // Hidden while a sidecar tool is mid-flow — those own the screen and
+    // have locked their layer already. Fewer than two present layers is
+    // nothing to switch between, so the column stays away entirely.
+    visible: plugin.featureLayerSwitch && plugin.layerSwitchAttached &&
+             plugin.layerSwitchSupported &&
+             plugin.layerSwitchEntries.length > 1 &&
+             plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+             plugin.reverseStep === 0 && plugin.copyStep === 0 &&
+             plugin.mergeStep === 0
+    spacing: 6
+    z: 1
+    // Full strength for a few seconds after a tap or an active-layer
+    // change, then out of the way — still legible at 0.35.
+    opacity: plugin.layerSwitchAwake ? 1.0 : 0.35
+
+    Behavior on opacity {
+      NumberAnimation { duration: 250 }
+    }
+
+    Repeater {
+      model: plugin.layerSwitchEntries
+
+      delegate: Rectangle {
+        id: layerSwitchButton
+        required property var modelData
+        width: 30
+        height: 30
+        radius: 8
+        // Inverted while active — the same state language as the level
+        // lock, spline, hold and mode pills.
+        color: plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+            ? '#E6FFFFFF' : '#99000000'
+
+        Text {
+          anchors.centerIn: parent
+          font.pixelSize: 14
+          font.bold: true
+          color: plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+              ? 'black' : 'white'
+          text: layerSwitchButton.modelData.letter
+        }
+
+        TapHandler {
+          // ReleaseWithinBounds like every other overlay control: the
+          // default policy takes only a passive grab, so the tap would
+          // ALSO reach QField's canvas handlers underneath and digitise.
+          gesturePolicy: TapHandler.ReleaseWithinBounds
+          onTapped: plugin.setActiveLayerByName(layerSwitchButton.modelData.name)
+        }
       }
     }
   }
@@ -6722,6 +6997,10 @@ Item {
       // startup find of the state machine came up empty.
       if (plugin.featureModeToggle)
         plugin.initModeToggle()
+      // Same cheap resync for the layer switch: entering digitize mode
+      // is exactly when QField settles on an active layer.
+      if (plugin.featureLayerSwitch)
+        plugin.syncLayerSwitchActive()
     }
   }
 
