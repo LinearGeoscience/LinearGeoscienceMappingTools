@@ -13,6 +13,9 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QFont, QColor
 from qgis.PyQt.QtCore import Qt, QTimer
 import os.path
+import re
+
+from qgis.PyQt.QtXml import QDomDocument
 
 try:
     from .layer_select import layer_candidates, populate_layer_combo
@@ -39,6 +42,20 @@ except ImportError:
 #: one. Kept in step with inject_label_size_scaling.REF_SCALE, whose fallback
 #: covers projects predating this.
 REFERENCE_SCALE_VAR = "lgs_reference_scale"
+
+
+#: The literal every style falls back to when the variable is not there.
+#: Written as `coalesce(to_real(@lgs_reference_scale), NNNN)` so one pattern
+#: finds it wherever it appears - the data-defined label Size baked by
+#: scripts/inject_label_size_scaling.py, the Shear Zone Boundary wave's
+#: geometry generator, and anything added later that needs the reference
+#: scale. Baked as 0 (meaning "unknown, behave as before") and rewritten in
+#: the live styles by bake_reference_scale_into_styles() below.
+#:
+#: Keep in step with inject_label_size_scaling.REF_SCALE;
+#: tests/test_label_size_invariance_qgis.py asserts the two still agree.
+REFERENCE_SCALE_LITERAL_RE = re.compile(
+    r"(coalesce\(\s*to_real\(\s*@lgs_reference_scale\s*\)\s*,\s*)([0-9.]+)(\s*\))")
 
 
 def set_project_variable(project, scale_value):
@@ -479,15 +496,23 @@ class LayerConfigurator:
         cutoff is a plain number on the rule, not an expression, so nothing
         else can move it when the mapping scale changes.
 
-        The second is the label lettering, which has to move the OTHER way.
-        Symbols are meant to scale with the reference scale; text is meant
-        to stay legible, so the data-defined label Size baked by
-        scripts/inject_label_size_scaling.py divides by the reference scale
-        to cancel the multiplier out. QGIS publishes no reference-scale
-        expression variable, so we publish it here as @lgs_reference_scale
-        and the expression reads it back.
+        The second is everything whose expression needs to KNOW the reference
+        scale. QGIS publishes no reference-scale expression variable, so the
+        plugin supplies it twice over: as @lgs_reference_scale here, and as a
+        literal baked into the styles themselves (see
+        bake_reference_scale_into_styles). Two things read it today and they
+        pull opposite ways, both correctly - the label lettering divides by it
+        to cancel the multiplier and hold a fixed point size, while the Shear
+        Zone Boundary wave wants the multiplier and only needs a stable ground
+        size, so it takes the reference scale with no @map_scale term at all.
         """
         set_project_variable(self.project, scale_value)
+        baked = self.bake_reference_scale_into_styles(layers_dict, scale_value)
+        if baked:
+            QgsMessageLog.logMessage(
+                f"[Scale] Baked reference scale 1:{scale_value} into "
+                f"{baked} layer style(s)", 'Linear Geoscience',
+                Qgis.MessageLevel.Info)
 
         updated = 0
         gates = 0
@@ -505,6 +530,56 @@ class LayerConfigurator:
         else:
             QgsMessageLog.logMessage("[Scale] No layers selected for reference scale", 'Linear Geoscience', Qgis.MessageLevel.Warning)
         QgsMessageLog.logMessage(f"[Scale] Texture cutoff 1:{round(scale_value * SCALE_GATE_RATIO)} ({SCALE_GATE_RATIO}x); retuned {gates} rule(s)", 'Linear Geoscience', Qgis.MessageLevel.Info)
+
+    def bake_reference_scale_into_styles(self, layers_dict, scale_value):
+        """Write the reference scale into the styles. Returns layers changed.
+
+        The project variable is the primary source, but it only exists while
+        the plugin is loaded to publish it. A project opened without the
+        plugin, or handed to someone who does not have it, would fall back to
+        "unknown" and lose the compensation. The literal lives in the layer's
+        own style, so it travels inside the .qgz.
+
+        Done on the serialised style rather than by walking properties: one
+        pattern then catches every consumer - the data-defined label Size, the
+        Shear Zone Boundary wave's geometry generator, and anything added
+        later - instead of each needing its own hook here.
+        """
+        changed = 0
+        for role, layer_id in layers_dict.items():
+            layer = self.get_layer(layer_id)
+            if layer is None:
+                continue
+            document = QDomDocument()
+            try:
+                layer.exportNamedStyle(document)
+            except Exception:
+                continue
+            style = document.toString()
+            if not REFERENCE_SCALE_LITERAL_RE.search(style):
+                continue        # nothing in this layer reads the reference scale
+            rewritten, count = REFERENCE_SCALE_LITERAL_RE.subn(
+                lambda m: m.group(1) + str(int(scale_value)) + m.group(3),
+                style)
+            if not count:
+                continue
+            replacement = QDomDocument()
+            if not replacement.setContent(rewritten):
+                QgsMessageLog.logMessage(
+                    f"[Scale] Rewritten style for {layer.name()} did not parse; "
+                    "left unchanged", 'Linear Geoscience',
+                    Qgis.MessageLevel.Warning)
+                continue
+            ok, message = layer.importNamedStyle(replacement)
+            if not ok:
+                QgsMessageLog.logMessage(
+                    f"[Scale] Could not apply rewritten style to "
+                    f"{layer.name()}: {message}", 'Linear Geoscience',
+                    Qgis.MessageLevel.Warning)
+                continue
+            layer.triggerRepaint()
+            changed += 1
+        return changed
 
     def rescale_pattern_rule(self, renderer, scale_value):
         """Retune the lithology texture rule's cutoff. Returns rules changed.

@@ -81,7 +81,7 @@ EXTENT_F = (
 COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
            "THEN (6.5 / 5.5) ELSE 1 END")
 
-# Undo QGIS' reference-scale multiplier, for label text only.
+# Rein in QGIS' reference-scale multiplier, for label text only.
 #
 # QGIS multiplies EVERY rendered size by referenceScale/mapScale - measured
 # against QgsRenderContext.convertToPainterUnits, Points, Millimeters, Pixels,
@@ -90,28 +90,52 @@ COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
 # marker is meant to cover a fixed patch of ground.  It is wrong for lettering,
 # which has to stay legible rather than stay proportional, and at a 1:100,000
 # reference scale a 5.5 pt label draws at 27 pt by the time you are in at
-# 1:20,000.  Multiplying by the inverse leaves the authored point size at every
-# zoom, and leaves it untouched at the reference scale itself.
+# 1:20,000, stops fitting its polygon, and drags a leader across the map.
 #
+# Cancelling the multiplier outright pins the text to its authored size, which
+# works but reads thin: zoom in on a 1:100,000 sheet and the textures and fault
+# widths have grown fivefold around lettering that has not.  So the text is
+# allowed to grow with the zoom and then stop.  Writing M for QGIS' multiplier
+# (referenceScale/mapScale), the size on the page is
+#
+#     authored x clamp(GROWTH_FLOOR, M, GROWTH_CEIL)
+#
+# which is 1x at the reference scale itself - a map that already read correctly
+# is left alone - and 1.8x by the time you are five times in.
+GROWTH_FLOOR = 0.85     # zoomed out, never smaller than this fraction
+GROWTH_CEIL = 1.8       # zoomed in, never larger than this multiple
+
 # QGIS exposes no reference-scale expression variable (@map_scale is the only
-# scale in the context), so the plugin publishes one: mainplugin republishes
-# @lgs_reference_scale whenever a project is read, script_setmapping writes it
-# whenever it sets the reference scale, and script_loadtemplate seeds it for a
-# new project.
+# scale in the context), so the plugin supplies it two ways: as the project
+# variable @lgs_reference_scale (mainplugin republishes it on every project
+# read, script_loadtemplate seeds it for a new project), and as the LITERAL
+# below, which script_setmapping.set_reference_scale() rewrites in the live
+# layers' style whenever the mapping scale is set.  The literal is what makes a
+# project keep working with the plugin disabled, or in someone else's hands:
+# it travels inside the .qgz rather than being published at runtime.
 #
-# When it is MISSING the factor is 1, i.e. exactly the old behaviour. It must
-# never fall back to a CONSTANT reference scale: a project sitting at 1:100,000
-# with no variable would then be compensated as though it were at 1:5000, and
-# every label would draw 20x too big - worse than the bug this fixes, and the
-# way it actually shipped for one round. Degrade to the old behaviour, never to
-# a guess about which scale someone is working at.
+# The baked literal is 0, and a zero or missing reference scale means a factor
+# of 1 - exactly the old behaviour. It must never default to a real scale: a
+# project sitting at 1:100,000 with nothing set was briefly compensated as
+# though it were at 1:5000, drawing every label at 110 pt. Degrade to what came
+# before, never to a guess about which scale someone is working at.
 #
-# Both coalesce guards are load-bearing beyond that: a NULL number reads as 0
-# in a QGIS expression, and an unguarded divide would take every label to zero.
+# The coalesce guards are load-bearing beyond that: a NULL number reads as 0 in
+# a QGIS expression, and an unguarded divide would take every label to zero.
 TEMPLATE_REFERENCE_SCALE = 5000        # the template's own bake; not a fallback
 REF_SCALE = "coalesce(to_real(@lgs_reference_scale), 0)"
-PAPER_F = ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + REF_SCALE + " > 0 "
-           "THEN @map_scale / " + REF_SCALE + " ELSE 1 END")
+
+# P is the cancelling factor, 1/M. Kept flat rather than nested in
+# with_variable: QgsExpression parse cost doubles per nesting level.
+_P = "@map_scale / " + REF_SCALE
+PAPER_F = (
+    "CASE WHEN coalesce(@map_scale, 0) <= 0 OR " + REF_SCALE + " <= 0 THEN 1 "
+    "WHEN " + _P + " > " + repr(round(1.0 / GROWTH_FLOOR, 6)) + " "
+    "THEN " + repr(GROWTH_FLOOR) + " * " + _P + " "
+    "WHEN " + _P + " < " + repr(round(1.0 / GROWTH_CEIL, 6)) + " "
+    "THEN " + repr(GROWTH_CEIL) + " * " + _P + " "
+    "ELSE 1 END"
+)
 
 LAYER_FACTORS = {
     "2 - Linework": [WEIGHT_F, WIDTH_F, PAPER_F],

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Label text must hold its authored point size at every zoom.
+"""Label text must grow with the zoom, and then stop.
 
 QGIS multiplies EVERY rendered size by referenceScale/mapScale. Measured
 against QgsRenderContext.convertToPainterUnits, Points, Millimeters, Pixels,
@@ -11,20 +11,28 @@ to stay legible, not stay proportional. At a 1:100,000 reference scale a 5.5 pt
 lithology label draws at 27 pt by the time you are in at 1:20,000, stops
 fitting its polygon, gets pushed outside, and drags a leader across the map.
 
-scripts/inject_label_size_scaling.py cancels the multiplier by dividing the
-data-defined Size by the reference scale, read from @lgs_reference_scale.
-This file is the proof, and it is a sibling of
+scripts/inject_label_size_scaling.py reins that in: the size on the page is
+`authored x clamp(GROWTH_FLOOR, referenceScale/mapScale, GROWTH_CEIL)`, so the
+lettering keeps pace with the textures and linework around it for a while and
+then holds. This file is the proof, and a sibling of
 tests/test_label_offset_invariance_qgis.py - same shape of bug, same shape of
 test: hold one thing fixed, sweep the zoom, and assert what must not move.
 
-Two things are checked in two different ways on purpose:
+Three things are checked in three different ways on purpose:
 
   * the ARITHMETIC, by evaluating each layer's real dd Size expression and
     pushing it through convertToPainterUnits - the same function the label
-    engine calls - across every reference scale Set Mapping Scale offers; and
+    engine calls - across every reference scale Set Mapping Scale offers;
   * the ENGINE, by rendering labels at two map scales and measuring the
     glyphs, so a passing arithmetic model cannot cover for a label engine
-    that ignores the expression.
+    that ignores the expression; and
+  * the PLUMBING, because the reference scale reaches the expression two
+    ways and both have to work. @lgs_reference_scale is published at runtime
+    and only exists while the plugin is loaded; the literal baked into the
+    style is what carries a project handed to someone without it. With
+    NEITHER, the factor must be 1 - the old behaviour - and never a guess:
+    defaulting to a constant 1:5000 once drew every label on a 1:100,000
+    sheet at 110 pt, twenty times too big.
 
 '1 - FieldNotebook' must come through untouched. Its dip and suffix labels are
 deliberately welded to their structural symbols, and the offsets that hold
@@ -46,12 +54,14 @@ from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem,  # noqa: E4
                        QgsExpressionContextUtils, QgsFeature, QgsGeometry,
                        QgsMapRendererParallelJob, QgsMapSettings,
                        QgsNullSymbolRenderer, QgsPalLayerSettings,
+                       QgsProperty,
                        QgsPointXY, QgsProject, QgsRectangle,
                        QgsRenderContext, QgsVectorLayer, Qgis)
 from qgis.PyQt.QtCore import QSize  # noqa: E402
 from qgis.PyQt.QtGui import QColor, qGray  # noqa: E402
 
 import inject_label_size_scaling as sizing  # noqa: E402
+import script_setmapping as setmapping  # noqa: E402
 from script_setmapping import REFERENCE_SCALE_VAR  # noqa: E402
 
 # Every reference scale Set Mapping Scale offers, ends included - the whole
@@ -176,42 +186,98 @@ def probe_feature(layer, side=PROBE_SIDE):
     return feature
 
 
-def test_paper_size_is_invariant():
-    print("\n1. authored point size holds across the zoom range")
+def expected_growth(reference_scale, map_scale):
+    """clamp(FLOOR, M, CEIL), the multiple of the authored size we want."""
+    multiplier = reference_scale / float(map_scale)
+    return min(sizing.GROWTH_CEIL, max(sizing.GROWTH_FLOOR, multiplier))
+
+
+def test_the_growth_band_holds():
+    print("\n1. text grows with the zoom, then stops")
     for layer_name in SIZED_LAYERS:
         layer = load(layer_name)
         settings = QgsPalLayerSettings(layer.labeling().settings())
         feature = probe_feature(layer)
-        authored = settings.format().size()
 
         for reference_scale in REFERENCE_SCALES:
-            sizes = [paper_size(layer, settings, feature, reference_scale,
-                                reference_scale * zoom)
-                     for zoom in ZOOM_FACTORS]
-            spread = (max(sizes) - min(sizes)) / max(sizes)
-            check(spread <= TOLERANCE,
-                  "%-14s ref 1:%-7d %5.2f pt at every zoom "
-                  "(spread %.4f%%, %sx range)"
-                  % (layer_name, reference_scale, sizes[0], spread * 100,
-                     int(max(ZOOM_FACTORS) / min(ZOOM_FACTORS))))
-
-            # At the reference scale itself the fix must be a no-op, or it
-            # has quietly restyled every map that already read correctly.
+            # At the reference scale the band is 1x, so this is the authored
+            # size carried through the layer's other factors - the yardstick
+            # every other zoom is measured against.
             at_reference = paper_size(layer, settings, feature,
                                       reference_scale, reference_scale)
-            check(abs(at_reference - sizes[ZOOM_FACTORS.index(1.0)]) < 1e-9
-                  and at_reference > 0,
-                  "%-14s ref 1:%-7d unchanged at the reference scale"
-                  % (layer_name, reference_scale))
+            for zoom in ZOOM_FACTORS:
+                got = paper_size(layer, settings, feature, reference_scale,
+                                 reference_scale * zoom)
+                want = at_reference * expected_growth(reference_scale,
+                                                      reference_scale * zoom)
+                ok = abs(got - want) <= max(want * TOLERANCE, 1e-6)
+                if not ok or zoom in (1.0, min(ZOOM_FACTORS)):
+                    check(ok, "%-14s ref 1:%-7d at %4sx zoom  %6.2f pt "
+                               "(want %.2f, band %.2fx)"
+                          % (layer_name, reference_scale, zoom, got, want,
+                             expected_growth(reference_scale,
+                                             reference_scale * zoom)))
+                elif not ok:
+                    check(False, "band broken")
+
+            check(at_reference > 0,
+                  "%-14s ref 1:%-7d %.2f pt at the reference scale - the fix "
+                  "is a no-op where the map already read correctly"
+                  % (layer_name, reference_scale, at_reference))
 
         # The authored static is what a geologist restyles in QGIS; the
         # expression is rebuilt from it, so the two must still agree.
+        authored = settings.format().size()
         at_ref = paper_size(layer, settings, feature,
                             sizing.TEMPLATE_REFERENCE_SCALE,
                             sizing.TEMPLATE_REFERENCE_SCALE)
         check(0.5 * authored <= at_ref <= 2.0 * authored,
               "%-14s renders near its authored %.1f pt (got %.2f pt)"
               % (layer_name, authored, at_ref))
+
+
+def test_the_baked_literal_works_without_the_variable():
+    """A project handed to someone without the plugin must still be right.
+
+    The project variable only exists while the plugin is loaded to publish
+    it. script_setmapping bakes the same number into the style as a literal,
+    so this is the path a shared .qgz actually takes.
+    """
+    print("\n7. the baked literal carries a project with no plugin")
+    pattern = setmapping.REFERENCE_SCALE_LITERAL_RE
+    for layer_name in SIZED_LAYERS:
+        layer = load(layer_name)
+        settings = QgsPalLayerSettings(layer.labeling().settings())
+        prop = settings.dataDefinedProperties().property(
+            QgsPalLayerSettings.Property.Size)
+        baked = prop.expressionString()
+
+        found = pattern.findall(baked)
+        check(bool(found),
+              "%-14s the injector's literal is where script_setmapping looks "
+              "for it (%d occurrence(s))" % (layer_name, len(found)))
+        check(all(f[1] == "0" for f in found),
+              "%-14s ships baked as 0, i.e. 'unknown, behave as before'"
+              % layer_name)
+
+        for reference_scale in (5000, 100000):
+            rewritten = pattern.sub(
+                lambda m: m.group(1) + str(reference_scale) + m.group(3), baked)
+            p = settings.dataDefinedProperties()
+            p.setProperty(QgsPalLayerSettings.Property.Size,
+                          QgsProperty.fromExpression(rewritten))
+            probe = QgsPalLayerSettings(settings)
+            probe.setDataDefinedProperties(p)
+            feature = probe_feature(layer)
+
+            with_literal = paper_size(layer, probe, feature, reference_scale,
+                                      reference_scale / 5.0, publish=False)
+            with_variable = paper_size(layer, settings, feature,
+                                       reference_scale, reference_scale / 5.0)
+            check(abs(with_literal - with_variable) < 0.01,
+                  "%-14s ref 1:%-7d literal alone matches the variable "
+                  "(%.2f pt vs %.2f pt)"
+                  % (layer_name, reference_scale, with_literal, with_variable))
 
 
 def test_small_polygons_still_shrink():
@@ -269,6 +335,57 @@ def test_a_missing_variable_degrades_to_the_old_behaviour():
                   "%-14s ref 1:%-7d no variable at 5x zoom grows 5x (%.2fx), "
                   "the old behaviour and no worse"
                   % (layer_name, reference_scale, ratio))
+
+
+class _StubConfigurator(object):
+    """Just enough of LayerConfigurator to drive one method of it."""
+
+    def __init__(self, project):
+        self.project = project
+
+    def get_layer(self, layer_id):
+        return self.project.mapLayer(layer_id)
+
+
+def test_set_mapping_scale_bakes_the_literal():
+    """The real method, on real layers: export, rewrite, import.
+
+    Test 7 proves the arithmetic of the literal; this proves the machinery
+    that writes it. The risk here is not the regex but importNamedStyle -
+    the rewrite goes through QGIS' own style serialisation, and a renderer
+    or a labeling block that failed to survive the round trip would take the
+    whole layer's styling with it.
+    """
+    print("\n8. Set Mapping Scale writes the literal into the live styles")
+    project = QgsProject.instance()
+    project.clear()
+    layers = {}
+    for name in (WELDED_LAYER,) + SIZED_LAYERS:
+        layer = load(name)
+        layer.loadDefaultStyle()
+        project.addMapLayer(layer, False)
+        layers[name] = layer
+
+    stub = _StubConfigurator(project)
+    ids = dict((name, layer.id()) for name, layer in layers.items())
+    changed = setmapping.LayerConfigurator.bake_reference_scale_into_styles(
+        stub, ids, 100000)
+    check(changed == len(SIZED_LAYERS),
+          "rewrote %d layers - the three that read the reference scale, and "
+          "not %s, which has no literal" % (changed, WELDED_LAYER))
+
+    for name in SIZED_LAYERS:
+        layer = layers[name]
+        check(layer.labeling() is not None and layer.renderer() is not None,
+              "%-14s kept its renderer and labeling through the round trip"
+              % name)
+        expression = layer.labeling().settings().dataDefinedProperties(
+            ).property(QgsPalLayerSettings.Property.Size).expressionString()
+        found = set(m[1] for m in
+                    setmapping.REFERENCE_SCALE_LITERAL_RE.findall(expression))
+        check(found == {"100000"},
+              "%-14s literal now reads %s" % (name, sorted(found)))
+    project.clear()
 
 
 def test_fallback_matches_the_template():
@@ -379,24 +496,29 @@ def test_the_engine_agrees():
     if not check(all(h > 0 for h in heights),
                  "labels actually rendered at both zooms"):
         return
-    spread = abs(heights[0] - heights[1]) / float(max(heights))
-    # Glyph hinting moves a rendered cap-height by a pixel; a units bug moves
-    # it by the zoom factor, here 5x.
-    check(spread <= 0.15,
-          "rendered label height holds across a 5x zoom "
-          "(%d px vs %d px, %.0f%% apart)"
-          % (heights[0], heights[1], spread * 100))
+    # 5x in, the band is at its ceiling, so the engine should draw GROWTH_CEIL
+    # times the reference-scale height - not 5x (no compensation at all) and
+    # not 1x (a flat cancel). Glyph hinting moves a rendered cap-height by a
+    # pixel, hence the generous tolerance on a 5 px measurement.
+    want = heights[0] * sizing.GROWTH_CEIL
+    off = abs(heights[1] - want) / float(want)
+    check(off <= 0.20,
+          "rendered label height follows the band across a 5x zoom "
+          "(%d px -> %d px, want ~%.1f at the %.1fx ceiling)"
+          % (heights[0], heights[1], want, sizing.GROWTH_CEIL))
 
 
 def main():
     print("Template:", TEMPLATE)
     print("Fallback reference scale:", sizing.TEMPLATE_REFERENCE_SCALE)
-    test_paper_size_is_invariant()
+    test_the_growth_band_holds()
     test_fallback_matches_the_template()
     test_fieldnotebook_is_untouched()
     test_the_engine_agrees()
     test_small_polygons_still_shrink()
     test_a_missing_variable_degrades_to_the_old_behaviour()
+    test_the_baked_literal_works_without_the_variable()
+    test_set_mapping_scale_bakes_the_literal()
     print("\n%d passed, %d failed" % (_passed, _failed))
     return 1 if _failed else 0
 
