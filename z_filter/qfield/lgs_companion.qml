@@ -2347,58 +2347,54 @@ Item {
   // covered throughout.
   // ================================================================
 
-  property var layerSwitchEntries: []        // [{name, letter}], present only
+  property var layerSwitchEntries: []        // [{name, glyph}], present only
   property string layerSwitchActiveName: ''  // '' = something else is active
   property bool layerSwitchAwake: true       // false once it has dimmed
   property bool layerSwitchSupported: true   // false once a write no-ops
   property bool layerSwitchAttached: false   // parked on the canvas
 
-  // A letter per layer by convention rather than a table: the initial of
-  // the ordinal-free name (mirror of lgs_layers.base_name). The canonical
-  // four give F / L / O / B. Layers sharing an initial widen to two
-  // characters — and the second is the first character at which they
-  // actually DIVERGE, so Linework and Lithology read Ln and Lt rather
-  // than Li and Li. A renamed or re-ordinalled layer therefore still gets
-  // a usable button with nothing to configure.
-  // Kept pure JS — the test harness runs this verbatim.
-  function layerSwitchLetters(names) {
-    let bases = []
-    for (const name of names)
-      bases.push(baseName(name))
-    let groups = ({})
-    for (const base of bases) {
-      const key = base.charAt(0).toUpperCase()
-      if (groups[key] === undefined)
-        groups[key] = []
-      groups[key].push(base)
-    }
-    // Per shared initial, the offset of the first differing character.
-    let divergeAt = ({})
-    for (const key in groups) {
-      const members = groups[key]
-      let at = 1
-      while (members.length > 1 && at < 8 && members[0].charAt(at) !== '') {
-        let same = true
-        for (const base of members) {
-          if (base.charAt(at).toLowerCase() !==
-              members[0].charAt(at).toLowerCase()) {
-            same = false
-            break
-          }
-        }
-        if (!same)
-          break
-        at++
+  // A mark per layer, DRAWN rather than lettered. The sidecar reaches
+  // tablets carrying whatever fonts the vendor shipped, and this file
+  // already documents seven glyphs that had to be swapped out because
+  // Android's fonts lack them ('✕', '∿', '⤳', '⇄', '⧉', '∪', '⌖' — see
+  // the pills above). A Rectangle cannot be missing from a font.
+  //
+  // Keyed by the ordinal-free name, so the pre-swap spellings in
+  // legacyLayerNames land on the same mark with no extra case. Each kind
+  // copies how the layer actually reads on the map.
+  readonly property var layerSwitchGlyphs: ({
+    'FieldNotebook': 'point',  // a filled dot
+    'Linework': 'line',        // a bar laid over at a map-like angle
+    'Overlay': 'wash',         // hatched box — the see-through layer
+    'Basemap': 'fill'          // solid box — the lithology underneath
+  })
+
+  // The pure half of the lookup — the test harness runs this verbatim.
+  // '' means "no opinion", and the caller falls back to the geometry.
+  function layerSwitchGlyphForBase(base) {
+    const glyph = layerSwitchGlyphs[base]
+    return glyph === undefined ? '' : glyph
+  }
+
+  function layerSwitchGlyphFor(name) {
+    const known = layerSwitchGlyphForBase(baseName(name))
+    if (known !== '')
+      return known
+    // A layer we do not recognise still gets an honest mark: ask its own
+    // geometry (0 point, 1 line, 2 polygon). Read defensively — a build
+    // that will not answer falls through to the solid box, so a button is
+    // never blank.
+    try {
+      const layer = layerByName(name)
+      if (layer !== null) {
+        const type = layer.geometryType()
+        if (type === 0)
+          return 'point'
+        if (type === 1)
+          return 'line'
       }
-      divergeAt[key] = at
-    }
-    let letters = []
-    for (const base of bases) {
-      const key = base.charAt(0).toUpperCase()
-      letters.push(groups[key].length > 1
-          ? key + base.charAt(divergeAt[key]).toLowerCase() : key)
-    }
-    return letters
+    } catch (error) {}
+    return 'fill'
   }
 
   function initLayerSwitch() {
@@ -2409,10 +2405,9 @@ Item {
       if (layerByName(name) !== null)
         names.push(name)
     }
-    const letters = layerSwitchLetters(names)
     let entries = []
-    for (let i = 0; i < names.length; i++)
-      entries.push({ name: names[i], letter: letters[i] })
+    for (const name of names)
+      entries.push({ name: name, glyph: layerSwitchGlyphFor(name) })
     layerSwitchEntries = entries
     syncLayerSwitchActive()
     // Start awake so the column is seen at least once, then let it settle
@@ -2569,13 +2564,90 @@ Item {
         color: plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
             ? '#E6FFFFFF' : '#99000000'
 
-        Text {
+        // One expression for the mark's colour, inverted with the chip.
+        // A string, not a color: every Rectangle here coerces it, and it
+        // keeps the declaration to types this file already leans on.
+        readonly property string ink:
+            plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+            ? 'black' : 'white'
+
+        // All four marks are declared INLINE and gated by the glyph kind,
+        // rather than loaded from plugin-scope Components: a Component
+        // resolves its ids in the context it was declared in, so it could
+        // not see layerSwitchButton at all. Three spare Items per button
+        // costs nothing.
+        Item {
           anchors.centerIn: parent
-          font.pixelSize: 14
-          font.bold: true
-          color: plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
-              ? 'black' : 'white'
-          text: layerSwitchButton.modelData.letter
+          width: 16
+          height: 16
+
+          // Points — the same filled-dot recipe as the spline and reshape
+          // vertex markers further down.
+          Rectangle {
+            visible: layerSwitchButton.modelData.glyph === 'point'
+            anchors.centerIn: parent
+            width: 9
+            height: 9
+            radius: 4.5
+            color: layerSwitchButton.ink
+          }
+
+          // Lines — one bar, laid over the way a contact runs.
+          Rectangle {
+            visible: layerSwitchButton.modelData.glyph === 'line'
+            anchors.centerIn: parent
+            width: 20
+            height: 2.5
+            radius: 1.25
+            rotation: -35
+            color: layerSwitchButton.ink
+          }
+
+          // Overlay — a see-through box under hatching. Hollow-versus-solid
+          // would have read as a second on/off signal against the chip's
+          // own inversion, so the wash is hatched instead. The two bars are
+          // deliberately longer than the box and cropped by clip, which is
+          // what lets them meet the edges instead of floating inside it.
+          // (clip is axis-aligned, so it squares off the 2px corner radius
+          // — invisible at this size.)
+          Rectangle {
+            visible: layerSwitchButton.modelData.glyph === 'wash'
+            anchors.fill: parent
+            radius: 2
+            color: 'transparent'
+            border.color: layerSwitchButton.ink
+            border.width: 2
+            clip: true
+
+            Item {
+              anchors.centerIn: parent
+              width: parent.width * 1.5
+              height: parent.height * 1.5
+              rotation: -45
+
+              Rectangle {
+                y: parent.height * 0.34
+                width: parent.width
+                height: 2
+                color: layerSwitchButton.ink
+              }
+
+              Rectangle {
+                y: parent.height * 0.62
+                width: parent.width
+                height: 2
+                color: layerSwitchButton.ink
+              }
+            }
+          }
+
+          // Basemap — the solid fill everything else sits on.
+          Rectangle {
+            visible: layerSwitchButton.modelData.glyph === 'fill'
+            anchors.fill: parent
+            radius: 2
+            color: layerSwitchButton.ink
+          }
         }
 
         TapHandler {
