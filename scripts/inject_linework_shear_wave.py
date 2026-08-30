@@ -29,8 +29,20 @@ a mm wave re-flows on every zoom.  Ground units derived from
 cannot re-phase it (clip_to_extent is switched off on the symbol), and
 render simplification is disabled layer-wide (simplifyDrawingHints=0,
 as FieldNotebook already ships) so the base line the wave follows is
-identical at every scale.  Symbol-42 precedent still proves the
-neighbouring injectors need no changes:
+identical at every scale.
+
+The scale reaches the expression two ways, both maintained by
+script_setmapping.py: the @lgs_reference_scale project variable, and -
+for projects where no variable is published - the literal fallback
+inside the coalesce, which bake_reference_scale_into_styles() rewrites
+in the live style.  That literal is baked 0, meaning "unknown, behave
+as before", never a guessed scale; the expression guards it explicitly
+because wave() with a zero wavelength returns NULL, which would erase
+the boundary rather than degrade it.  Keep the coalesce token in step
+with script_setmapping.REFERENCE_SCALE_LITERAL_RE.
+
+Symbol-42 precedent still proves the neighbouring injectors need no
+changes:
 
 * inject_confidence_system.py no longer lists this code (the generator
   handles Inferred/Queried itself), so it never touches the symbol; the
@@ -100,7 +112,13 @@ NEUTRAL_DASH = "'100000;1'"
 # template's authored 1:5000 as the fallback - same shape as
 # inject_label_size_scaling.py.
 GEN_UNITS = "MapUnit"
-FALLBACK_SCALE = 5000
+# 0 means "unknown - behave as before", never a guess at the scale someone
+# is working at (a guessed 5000 draws a 1:100000 map's wave 20x too small,
+# the same class of bug that drew labels at 110 pt).  Set Mapping Scale
+# rewrites this literal in the live style - the token and its shape must
+# stay in step with script_setmapping.REFERENCE_SCALE_LITERAL_RE and
+# inject_label_size_scaling.REF_SCALE.
+FALLBACK_SCALE = 0
 REF = "coalesce(to_real(@lgs_reference_scale), %s)" % FALLBACK_SCALE
 
 
@@ -120,7 +138,7 @@ _TILDE_WAVE = ("wave(line_substring($geometry, @element, @element + %s), "
 # generate_series edge (it returns NULL below its range).  Flat on purpose:
 # QgsExpression parse cost doubles per with_variable nesting level, so the
 # coalesce is repeated inline rather than bound once.
-WAVE_EXPR = (
+_WAVED = (
     "CASE WHEN \"Confidence\" IN ('Inferred','Queried') "
     "AND length($geometry) >= %s "
     "THEN collect_geometries(array_foreach("
@@ -128,6 +146,12 @@ WAVE_EXPR = (
     "ELSE %s END"
     % (_ground(TILDE_MM), _ground(TILDE_MM), _ground(TILDE_MM + GAP_MM),
        _TILDE_WAVE, _SOLID_WAVE))
+# Unknown scale MUST be guarded, not left to arithmetic: wave() with a
+# zero wavelength returns NULL, so the generator would draw nothing at all
+# and the boundary would silently vanish.  Degrade to the plain line
+# instead - the arrows are a separate layer and still mark it as a shear
+# zone boundary - until Set Mapping Scale or the plugin supplies a scale.
+WAVE_EXPR = "CASE WHEN %s <= 0 THEN $geometry ELSE %s END" % (REF, _WAVED)
 
 GEN_ID = "{%s}" % uuid.uuid5(uuid.NAMESPACE_URL, "lgs-shear-wave-gen:" + CODE)
 

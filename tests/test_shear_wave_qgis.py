@@ -114,6 +114,13 @@ def test_structure():
           "modifier is the injector's WAVE_EXPR")
     check("@lgs_reference_scale" in opts.get("geometryModifier", ""),
           "the wave size follows the mapping scale variable")
+    # Set Mapping Scale rewrites this literal in the live style; if the
+    # token drifts from its regex the bake silently stops reaching us.
+    import re as _re
+    _lit = _re.compile(
+        r"coalesce\(\s*to_real\(\s*@lgs_reference_scale\s*\)\s*,\s*[0-9.]+\s*\)")
+    check(bool(_lit.search(opts.get("geometryModifier", ""))),
+          "the coalesce literal matches script_setmapping's bake regex")
     check(sym.get("clip_to_extent") == "0",
           "unclipped: clipped input would re-phase the tildes on pan")
 
@@ -293,6 +300,23 @@ def test_wave_evaluates():
 
     _, err = evaluate(_inj.WAVE_EXPR, "LINESTRING(50 50, 50 50)", "Observed")
     check(err is None, "zero-length line does not error (%s)" % err)
+
+    # No scale published: the fallback literal is 0 ("unknown"), and an
+    # unguarded 0 would make wave() return NULL and erase the boundary.
+    check(_inj.FALLBACK_SCALE == 0,
+          "the baked fallback is 0, not a guess at someone's scale")
+    for conf in ("Observed", "Inferred"):
+        out, err = evaluate(_inj.WAVE_EXPR, straight, conf, scale=None)
+        if not check(err is None and not is_blank(out),
+                     "unknown scale/%s still draws something (%s)"
+                     % (conf, err)):
+            continue
+        flat = max(abs(p.y()) for p in out.vertices()) < 1e-9
+        check(flat, "unknown scale/%s degrades to the plain line, it does "
+              "NOT vanish or guess a wave" % conf)
+        check(abs(out.length() - 235.0) < 0.01,
+              "unknown scale/%s keeps the whole line (%.2f m)"
+              % (conf, out.length()))
 
 
 # ---------------------------------------------------------------------------
