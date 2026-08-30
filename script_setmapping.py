@@ -49,11 +49,23 @@ REFERENCE_SCALE_VAR = "lgs_reference_scale"
 #: finds it wherever it appears - the data-defined label Size baked by
 #: scripts/inject_label_size_scaling.py, the Shear Zone Boundary wave's
 #: geometry generator, and anything added later that needs the reference
-#: scale. Baked as 0 (meaning "unknown, behave as before") and rewritten in
-#: the live styles by bake_reference_scale_into_styles() below.
+#: scale. Baked as 0 and rewritten in the live styles by
+#: bake_reference_scale_into_styles() below.
 #:
-#: Keep in step with inject_label_size_scaling.REF_SCALE;
-#: tests/test_label_size_invariance_qgis.py asserts the two still agree.
+#: ZERO MEANS "I DO NOT KNOW", AND EVERY READER MUST GUARD IT. It is not a
+#: scale, and it is not safe to divide by or feed onward. What "unknown"
+#: should fall back to differs per consumer and only the consumer knows it:
+#: the label size drops to a factor of 1, which is simply the old behaviour,
+#: while the shear-zone wave falls back to $geometry - because wave() with a
+#: zero wavelength returns NULL, so an unguarded zero would erase the
+#: boundary rather than mis-size it, and a geometry generator that emits
+#: nothing fails invisibly. A new reader that divides by this without a
+#: `<= 0` branch inherits that failure mode.
+#:
+#: Keep in step with inject_label_size_scaling.REF_SCALE. Both sides pin the
+#: token so a reformat fails loudly instead of the bake quietly missing a
+#: consumer: tests/test_label_size_invariance_qgis.py for the label Size,
+#: tests/test_shear_wave_qgis.py for the generator.
 REFERENCE_SCALE_LITERAL_RE = re.compile(
     r"(coalesce\(\s*to_real\(\s*@lgs_reference_scale\s*\)\s*,\s*)([0-9.]+)(\s*\))")
 
