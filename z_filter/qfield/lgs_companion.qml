@@ -120,7 +120,11 @@
  *    vertices that made ✓ slow. Never coarser than the map can show and
  *    never finer than the baked tolerance, so zoomed-in fidelity is
  *    exactly what it always was. The control points themselves always
- *    survive, so they are the floor on the saved vertex count.
+ *    survive, so they are the floor on the saved vertex count. The
+ *    density is anchored to the finer of the mapping scale and the live
+ *    zoom (v29), and the turn angle between output nodes is capped, so
+ *    curves keep their nodes where they bend instead of faceting —
+ *    Douglas-Peucker alone bounds distance, not angle.
  *
  * 6. NATIVE CONFIRM FIXUP — always on (no export flag): QField's own
  *    line/polygon digitizing also harvests the floating crosshair vertex
@@ -5126,9 +5130,40 @@ Item {
   // splineEffectiveTolerance), so zoomed-in drawing behaves exactly as it
   // always has and the savings land at the small scales where the big
   // polygons get drawn.
-  readonly property real splineTolPoints: 0.7
+  //
+  // v29: 0.7 pt was ~0.25 mm, which is not "well under" the Linework ink —
+  // the thinnest common stroke is Contact at 0.8 pt = 0.28 mm, so the
+  // tolerance was about equal to the finest line on the map. 0.35 pt is
+  // ~0.12 mm: under half that stroke and under a quarter of the most
+  // common one (1.46 pt).
+  readonly property real splineTolPoints: 0.35
   readonly property real splineSampleSpacingPoints: 1.0
   readonly property int splineMinSamples: 4
+
+  // Douglas-Peucker bounds how far a vertex sits from the true curve and
+  // says nothing about the CORNER left between consecutive chords — and a
+  // corner is what the eye reads as faceting. v27 pruned a gentle cover
+  // boundary drawn zoomed out into chords that cornered by a whole
+  // millimetre on the map while every vertex was still legitimately
+  // within tolerance.
+  //
+  // The measure used here is the kink: min(chord)/2 * tan(turn/2), i.e.
+  // how far the line visibly corners at a vertex. Unlike a turn angle it
+  // is meaningful on its own — five degrees across a 20 mm chord is a
+  // glaring facet, five degrees across a half-millimetre chord is
+  // invisible — and it self-limits, because halving a chord quarters the
+  // kink. 0.25 pt is ~0.09 mm: a third of the thinnest Linework stroke.
+  //
+  // Expressed as a FRACTION OF THE PRUNE TOLERANCE rather than an
+  // absolute size, for two reasons. Both are distances on the map, so the
+  // ratio is the honest statement of the rule: corners must stay well
+  // inside the positional error already being accepted. And it inherits
+  // splineEffectiveTolerance's never-finer-than-baked floor for free, so
+  // zooming right in cannot drive the refinement past the detail the
+  // legacy path kept -- without that, a deep zoom would demand a kink
+  // limit far below the tolerance and hand back more vertices than the
+  // fixed algorithm ever produced.
+  readonly property real splineMaxKinkRatio: 0.4
 
   property bool splineArmed: false
   property var splineLocator: null    // the coordinateLocator QQuickItem
@@ -5183,9 +5218,16 @@ Item {
   // Stand-in for the desktop QgsGeometry.simplify call (Douglas-Peucker).
   // Iterative so deep sample lists cannot hit recursion limits; endpoints
   // are always kept; tolerance <= 0 returns the input unchanged.
-  function splineSimplify(points, tolerance) {
-    if (!(tolerance > 0) || points.length < 3)
-      return points.slice()
+  // Index form of the Douglas-Peucker pass. Split out (v29) so the angle
+  // refinement can re-insert points from the ORIGINAL dense block by
+  // index; splineSimplify below is the unchanged point-returning wrapper.
+  function splineSimplifyIndices(points, tolerance) {
+    if (!(tolerance > 0) || points.length < 3) {
+      const all = []
+      for (let i = 0; i < points.length; i++)
+        all.push(i)
+      return all
+    }
     const keep = new Array(points.length).fill(false)
     keep[0] = true
     keep[points.length - 1] = true
@@ -5212,9 +5254,139 @@ Item {
     const out = []
     for (let i = 0; i < points.length; i++) {
       if (keep[i])
-        out.push(points[i])
+        out.push(i)
     }
     return out
+  }
+
+  function splineSimplify(points, tolerance) {
+    const idx = splineSimplifyIndices(points, tolerance)
+    const out = []
+    for (let i = 0; i < idx.length; i++)
+      out.push(points[idx[i]])
+    return out
+  }
+
+  // Put nodes back wherever the pruned polyline corners visibly. Points
+  // come from the dense block the sampler already built, so nothing new
+  // is evaluated; only vertices that actually bend attract insertions, so
+  // straight runs are left exactly as the prune left them.
+  //
+  // Two stages. First an even-spacing floor: a coarse prune can keep
+  // NOTHING but the block's two endpoints, and with no interior vertices
+  // there is nothing for the walk below to test — all of the segment's
+  // turning then piles up at the control-point junction, unrefined and
+  // unseen. Splitting a block of length L and total turning T into k
+  // intervals leaves a kink of about L*T/(4k^2), so k = sqrt(L*T/(4*max))
+  // is the count that brings it under the limit. Then a bisection walk
+  // catches whatever is still cornered where curvature is uneven.
+  //
+  // maxKink <= 0 disables the whole thing (the legacy path).
+  function splineRefineAngles(points, kept, maxKink) {
+    if (!(maxKink > 0) || points.length < 3)
+      return kept
+
+    let totalTurn = 0
+    let totalLen = 0
+    for (let i = 0; i < points.length - 1; i++) {
+      const dx = points[i + 1].x - points[i].x
+      const dy = points[i + 1].y - points[i].y
+      totalLen += Math.sqrt(dx * dx + dy * dy)
+    }
+    for (let i = 1; i < points.length - 1; i++) {
+      const ax = points[i].x - points[i - 1].x
+      const ay = points[i].y - points[i - 1].y
+      const bx = points[i + 1].x - points[i].x
+      const by = points[i + 1].y - points[i].y
+      const la = Math.sqrt(ax * ax + ay * ay)
+      const lb = Math.sqrt(bx * bx + by * by)
+      if (!(la > 0) || !(lb > 0))
+        continue
+      let c = (ax * bx + ay * by) / (la * lb)
+      c = c > 1 ? 1 : (c < -1 ? -1 : c)
+      totalTurn += Math.acos(c)
+    }
+
+    let current = kept
+    let want = Math.ceil(Math.sqrt(totalLen * totalTurn / (4 * maxKink)))
+    if (want > points.length - 1)
+      want = points.length - 1
+    if (want > current.length - 1) {
+      // Pure even spacing, NOT a union with the pruned indices: mixing a
+      // uniform grid into an uneven one leaves a long chord beside a
+      // short one, and that pairing corners harder than either would
+      // alone. Uniform chords give the smallest corner for a node count.
+      const even = []
+      for (let k = 0; k <= want; k++)
+        even.push(Math.round(k * (points.length - 1) / want))
+      const dedup = [even[0]]
+      for (let k = 1; k < even.length; k++)
+        if (even[k] !== even[k - 1])
+          dedup.push(even[k])
+      current = dedup
+    }
+    if (current.length < 3)
+      return current
+
+    for (let pass = 0; pass < 12; pass++) {
+      const insert = {}
+      let added = 0
+      for (let j = 1; j < current.length - 1; j++) {
+        const prev = points[current[j - 1]]
+        const here = points[current[j]]
+        const next = points[current[j + 1]]
+        const ax = here.x - prev.x
+        const ay = here.y - prev.y
+        const bx = next.x - here.x
+        const by = next.y - here.y
+        const la = Math.sqrt(ax * ax + ay * ay)
+        const lb = Math.sqrt(bx * bx + by * by)
+        if (!(la > 0) || !(lb > 0))
+          continue  // a zero-length chord has no direction to turn through
+        let c = (ax * bx + ay * by) / (la * lb)
+        c = c > 1 ? 1 : (c < -1 ? -1 : c)
+        const turn = Math.acos(c)
+        const kink = (la < lb ? la : lb) / 2 * Math.tan(turn / 2)
+        if (!(kink > maxKink))
+          continue
+        // Split the longer neighbouring gap; that is the chord carrying
+        // the corner, and shortening it is what reduces the kink.
+        const gapA = current[j] - current[j - 1]
+        const gapB = current[j + 1] - current[j]
+        const wide = gapA >= gapB ? [current[j - 1], current[j]]
+                                  : [current[j], current[j + 1]]
+        const narrow = gapA >= gapB ? [current[j], current[j + 1]]
+                                    : [current[j - 1], current[j]]
+        const pairs = [wide, narrow]
+        for (let k = 0; k < pairs.length; k++) {
+          if (pairs[k][1] - pairs[k][0] >= 2) {
+            const mid = Math.floor((pairs[k][0] + pairs[k][1]) / 2)
+            if (insert[mid] !== true) {
+              insert[mid] = true
+              added++
+            }
+            break
+          }
+        }
+      }
+      if (added === 0)
+        return current
+      const extra = Object.keys(insert).map(Number).sort(function (x, y) {
+        return x - y
+      })
+      const merged = []
+      let at = 0
+      for (let k = 0; k < extra.length; k++) {
+        while (at < current.length && current[at] < extra[k])
+          merged.push(current[at++])
+        if (at >= current.length || current[at] !== extra[k])
+          merged.push(extra[k])
+      }
+      while (at < current.length)
+        merged.push(current[at++])
+      current = merged
+    }
+    return current
   }
 
   // Thin a dense point run (freehand strokes): keep a point only when it
@@ -5325,8 +5497,25 @@ Item {
                 Math.sqrt((b2x - b1x) ** 2 + (b2y - b1y) ** 2) +
                 Math.sqrt((p1.x - b2x) ** 2 + (p1.y - b2y) ** 2)
     const floor = density.minSamples > 0 ? density.minSamples : 1
-    const wanted = Math.ceil(arc / (density.unitsPerPoint *
-                                    density.spacingPoints))
+    let wanted = Math.ceil(arc / (density.unitsPerPoint *
+                                  density.spacingPoints))
+    // Curvature term (v29): the kink refinement can only re-insert points
+    // this block actually contains, so a segment that turns a long way has
+    // to be sampled finely enough to hold them. Twice the count the
+    // refinement will ask for leaves bisection somewhere to land.
+    if (density.maxKinkRatio > 0) {
+      const la = Math.sqrt(t0.x * t0.x + t0.y * t0.y)
+      const lb = Math.sqrt(t1.x * t1.x + t1.y * t1.y)
+      if (la > 0 && lb > 0) {
+        let cos = (t0.x * t1.x + t0.y * t1.y) / (la * lb)
+        cos = cos > 1 ? 1 : (cos < -1 ? -1 : cos)
+        const byTurn = 2 * Math.ceil(Math.sqrt(
+            arc * Math.acos(cos) / (4 * density.maxKinkRatio *
+                                    splineEffectiveTolerance(0, density))))
+        if (byTurn > wanted)
+          wanted = byTurn
+      }
+    }
     if (!isFinite(wanted) || wanted < floor)
       return Math.min(floor, maxSegments)
     return Math.min(wanted, maxSegments)
@@ -5338,7 +5527,8 @@ Item {
     if (!density || !(density.unitsPerPoint > 0))
       return ''
     return density.unitsPerPoint + '|' + density.tolPoints + '|' +
-           density.spacingPoints + '|' + density.minSamples
+           density.spacingPoints + '|' + density.minSamples + '|' +
+           density.maxKinkRatio
   }
 
   // Segment cache for the full-density curves. A segment's pruned sample
@@ -5426,7 +5616,12 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, effTol)
+        const kept = splineRefineAngles(
+            block, splineSimplifyIndices(block, effTol),
+            density ? density.maxKinkRatio * effTol : 0)
+        const pruned = []
+        for (let k = 0; k < kept.length; k++)
+          pruned.push(block[kept[k]])
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5489,7 +5684,12 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, effTol)
+        const kept = splineRefineAngles(
+            block, splineSimplifyIndices(block, effTol),
+            density ? density.maxKinkRatio * effTol : 0)
+        const pruned = []
+        for (let k = 0; k < kept.length; k++)
+          pruned.push(block[kept[k]])
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5737,20 +5937,46 @@ Item {
     return 0
   }
 
-  // Re-latch the output density from the current zoom. Called when a
-  // session starts and whenever a control point is adopted — that is,
-  // while the user is DRAWING — never on zoom alone. Two reasons:
-  // panning and zooming to look around must not wipe the segment cache,
-  // and a curve drawn at 1:2000 must not be saved at 1:50000 density
-  // because the user zoomed out to check their work before tapping the
-  // green tick. Quantized, so re-latching is usually a no-op.
+  // Re-latch the output density. Called when a session starts and
+  // whenever a control point is adopted — that is, while the user is
+  // DRAWING — never on zoom alone. Two reasons: panning and zooming to
+  // look around must not wipe the segment cache, and a curve drawn at
+  // 1:2000 must not be saved at 1:50000 density because the user zoomed
+  // out to check their work before tapping the green tick. Quantized, so
+  // re-latching is usually a no-op. projVar rebuilds the whole project
+  // variable map, which is another reason this is latched and not read
+  // per rebuild.
+  //
+  // ANCHORED TO THE MAPPING SCALE (v29). v27 keyed purely off the zoom
+  // the user happened to be drawing at, and big polygons — transported
+  // cover especially — are drawn zoomed OUT. The map is then viewed and
+  // printed at the project's reference scale, so those curves were
+  // permanently too coarse for the scale they actually live at. Density
+  // now targets whichever is finer, the reference scale or the live zoom,
+  // so drawing zoomed out no longer costs smoothness and deliberately
+  // zooming in for detail still buys it.
+  //
+  // The scale denominator is NOT converted to map units directly — that
+  // would assume metres and break in a geographic CRS. Taking it as the
+  // ratio referenceScale/liveScale against the live mapUnitsPerPoint
+  // cancels the map units out entirely.
   function splineRefreshDensity() {
     let perPoint = 0
+    let liveScale = 0
     try {
       perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      liveScale = Number(canvas.mapSettings.scale)
     } catch (error) {
       perPoint = 0
+      liveScale = 0
     }
+    // '' (absent) and '0' (published as "unknown") both fall through to
+    // the live zoom, i.e. exactly the v27 behaviour.
+    const refScale = Number(projVar('lgs_reference_scale', ''))
+    if (isFinite(perPoint) && perPoint > 0 &&
+        isFinite(liveScale) && liveScale > 0 &&
+        isFinite(refScale) && refScale > 0 && refScale < liveScale)
+      perPoint = perPoint * (refScale / liveScale)
     splineDensityUnits = splineQuantizeUnits(perPoint)
   }
 
@@ -5765,7 +5991,8 @@ Item {
     return { unitsPerPoint: splineDensityUnits,
              tolPoints: splineTolPoints,
              spacingPoints: splineSampleSpacingPoints,
-             minSamples: splineMinSamples }
+             minSamples: splineMinSamples,
+             maxKinkRatio: splineMaxKinkRatio }
   }
 
   // Take the model's committed vertices (all but the floating crosshair

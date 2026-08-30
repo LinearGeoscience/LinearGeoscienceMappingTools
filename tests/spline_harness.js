@@ -24,7 +24,8 @@ function extractFunction(name) {
 }
 
 const code = ['splinePointScalar', 'splinePointsAdd', 'splineTangent',
-  'splinePerpDist', 'splineSimplify', 'splineDecimate', 'splineSamePoint',
+  'splinePerpDist', 'splineSimplifyIndices', 'splineSimplify',
+  'splineRefineAngles', 'splineDecimate', 'splineSamePoint',
   'splineQuantizeUnits', 'splineEffectiveTolerance', 'splineSampleCount',
   'splineDensityKey',
   'splineCacheEntries', 'splineCacheLookup', 'splineHermiteOpen',
@@ -47,6 +48,8 @@ const quantize = globalThis.splineQuantizeUnits
 const effTol = globalThis.splineEffectiveTolerance
 const sampleCount = globalThis.splineSampleCount
 const densityKey = globalThis.splineDensityKey
+const refineAngles = globalThis.splineRefineAngles
+const simplifyIndices = globalThis.splineSimplifyIndices
 
 // The density constants are QML properties, not functions, so pin them by
 // reading the source rather than restating them here — a retune of
@@ -61,15 +64,38 @@ function qmlReal(name) {
 const TOL_POINTS = qmlReal('splineTolPoints')
 const SPACING_POINTS = qmlReal('splineSampleSpacingPoints')
 const MIN_SAMPLES = qmlReal('splineMinSamples')
+const KINK_RATIO = qmlReal('splineMaxKinkRatio')
 function dens(unitsPerPoint) {
   return { unitsPerPoint: unitsPerPoint, tolPoints: TOL_POINTS,
-           spacingPoints: SPACING_POINTS, minSamples: MIN_SAMPLES }
+           spacingPoints: SPACING_POINTS, minSamples: MIN_SAMPLES,
+           maxKinkRatio: KINK_RATIO }
 }
+// The kink at a vertex: how far the line visibly corners there. This is
+// what the eye reads as faceting, and what Douglas-Peucker on its own says
+// nothing about. Returned in POINTS on the map, so it is comparable across
+// scales; multiply by 0.3528 for millimetres.
+function maxKinkPoints(seq, unitsPerPoint) {
+  let worst = 0
+  for (let i = 1; i < seq.length - 1; i++) {
+    const ax = seq[i].x - seq[i - 1].x, ay = seq[i].y - seq[i - 1].y
+    const bx = seq[i + 1].x - seq[i].x, by = seq[i + 1].y - seq[i].y
+    const la = Math.sqrt(ax * ax + ay * ay), lb = Math.sqrt(bx * bx + by * by)
+    if (!(la > 0) || !(lb > 0)) continue
+    let c = (ax * bx + ay * by) / (la * lb)
+    c = c > 1 ? 1 : (c < -1 ? -1 : c)
+    const t = Math.acos(c)
+    worst = Math.max(worst, (la < lb ? la : lb) / 2 * Math.tan(t / 2))
+  }
+  return worst / unitsPerPoint
+}
+function effTolFor(u) { return Math.max(0.1, u * TOL_POINTS) }
 
 let failures = 0
 function check(label, ok, detail) {
-  if (ok) { console.log('PASS ' + label) }
-  else { failures++; console.log('FAIL ' + label + (detail ? '\n  ' + detail : '')) }
+  if (ok) { console.log('PASS ' + label); return }
+  failures++
+  console.log('FAIL ' + label)
+  if (detail) console.log('  ' + detail)
 }
 
 function pt(x, y, z) { return { x: x, y: y, z: z } }
@@ -453,27 +479,33 @@ check('sample count: bounds the arc, not just the chord',
   const trace = []
   for (let i = 0; i < 8; i++)
     trace.push(pt(i * 12, (i % 2 === 0 ? 6 : -6) + i))
-  const counts = [0.03125, 0.125, 0.5, 2, 8].map(
+  const counts = [0.125, 0.5, 2, 8].map(
     u => hermiteOpen(trace, 0.5, 0.1, 200, null, dens(u)).length)
   let monotonic = true
   for (let i = 1; i < counts.length; i++)
     if (counts[i] > counts[i - 1]) monotonic = false
+  // Monotonic from the mapping-scale band outward. Finer than that the
+  // prune tolerance is pinned at the baked floor while sampling keeps
+  // changing, so the count is not required to fall in lockstep.
   check('density: node count is non-increasing as the scale coarsens',
     monotonic, counts.join(' -> '))
   check('density: a coarse scale cuts the node count hard',
     counts[counts.length - 1] * 4 < counts[0],
     counts.join(' -> '))
   check('density: control points survive at every scale',
-    [0.03125, 0.125, 0.5, 2, 8].every(
+    [0.001, 0.03125, 0.125, 0.5, 2, 8].every(
       u => containsInOrder(hermiteOpen(trace, 0.5, 0.1, 200, null, dens(u)),
                            trace)))
   check('density: never falls below the control points',
     counts[counts.length - 1] >= trace.length)
-  // The guarantee that makes this safe to ship: at NO scale does the
-  // adaptive path save more vertices than the fixed one used to.
+  // v27 guaranteed "never more vertices than the legacy path at any
+  // scale". v30 deliberately supersedes that: where the legacy path
+  // faceted visibly, refinement now buys smoothness with nodes. The
+  // guarantee that survives is the one that matters for drawing speed —
+  // at and beyond the scale the geometry was drawn for, it is cheaper.
   const legacy = hermiteOpen(trace, 0.5, 0.1, 200).length
-  check('density: never saves more vertices than the legacy path',
-    [0.001, 0.01, 0.03125, 0.125, 0.5, 2, 8].every(
+  check('density: cheaper than the legacy path at mapping scale and out',
+    [2, 8].every(
       u => hermiteOpen(trace, 0.5, 0.1, 200, null, dens(u)).length <= legacy),
     'legacy ' + legacy)
 }
@@ -511,6 +543,105 @@ check('cache key: same density, same key; different octave, different key',
   check('ring idle at density: confirm write is still 1 pop + 1 add',
     popsD === 1 && confD.length - prefixD === 1,
     'pops ' + popsD + ' adds ' + (confD.length - prefixD))
+}
+
+// --- v30 kink refinement ---------------------------------------------
+// splineSimplify must still behave exactly as it did once it is built on
+// the index pass.
+check('simplify: wrapper still returns the same points as before',
+  sameJson(simplify(wiggle, 0), wiggle) &&
+  simplifyIndices(wiggle, 0).length === wiggle.length &&
+  sameJson(simplify([pt(0, 0), pt(1, 0.0001), pt(2, 0)], 0.01),
+           [pt(0, 0), pt(2, 0)]))
+
+// Refinement only ever ADDS, never drops or reorders, and is stable.
+{
+  const line = []
+  for (let i = 0; i <= 64; i++)
+    line.push(pt(i, 10 * Math.sin(i / 64 * Math.PI)))
+  const kept = simplifyIndices(line, 0.5)
+  const refined = refineAngles(line, kept, 0.2)
+  let sorted = true
+  for (let i = 1; i < refined.length; i++)
+    if (refined[i] <= refined[i - 1]) sorted = false
+  check('refine: returns strictly ascending indices', sorted)
+  check('refine: at least as many nodes as the prune kept',
+    refined.length >= kept.length)
+  check('refine: is idempotent',
+    sameJson(refineAngles(line, refined, 0.2), refined))
+  check('refine: a maxKink of 0 disables it (the legacy path)',
+    refineAngles(line, kept, 0) === kept)
+  check('refine: never exceeds the block it draws from',
+    refined[refined.length - 1] <= line.length - 1)
+}
+
+// A straight run must gain NOTHING — nodes go back only where the line
+// actually bends, which is what keeps straight boundaries cheap.
+{
+  const straight = []
+  for (let i = 0; i <= 40; i++)
+    straight.push(pt(i * 3, 0))
+  check('refine: a straight run gains no nodes',
+    sameJson(refineAngles(straight, simplifyIndices(straight, 0.5), 0.2),
+             simplifyIndices(straight, 0.5)))
+  const dseq = hermiteOpen([pt(0, 0), pt(100, 0), pt(200, 0), pt(300, 0)],
+                           0.5, 0.1, 200, null, dens(1))
+  check('refine: a straight spline stays minimal', dseq.length <= 8,
+    'nodes ' + dseq.length)
+}
+
+// The headline guarantee: the faceting the user reported is gone. A lobed
+// cover boundary drawn zoomed out used to corner by a full millimetre on
+// the map while every vertex sat legitimately within tolerance.
+{
+  const lobed = []
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * 2 * Math.PI
+    const r = 300 + 60 * Math.sin(5 * a)
+    lobed.push(pt(r * Math.cos(a), r * Math.sin(a)))
+  }
+  for (const u of [0.5, 1, 2, 4]) {
+    const seq = hermiteClosed(lobed, 0.5, 0.1, 200, null, dens(u)).points
+    const kink = maxKinkPoints(seq, u)
+    // The refinement bounds kinks INSIDE each segment block; the junction
+    // at a control point is shared between two independently-pruned
+    // blocks, so allow a margin there. The curve is C1 at controls, so
+    // the residual is of the same order, not a different one.
+    check('kink: bounded at ' + u + ' units/point',
+      kink <= KINK_RATIO * effTolFor(u) / u * 2.5 + 1e-9,
+      kink.toFixed(3) + ' pt (' + (kink * 0.3528).toFixed(3) + ' mm)')
+    check('kink: invisible in millimetres at ' + u + ' units/point',
+      kink * 0.3528 < 0.14,
+      (kink * 0.3528).toFixed(3) + ' mm vs 0.28 mm thinnest stroke')
+  }
+  // ...and the refinement is what is doing it.
+  const off = hermiteClosed(lobed, 0.5, 0.1, 200, null,
+    { unitsPerPoint: 4, tolPoints: TOL_POINTS, spacingPoints: SPACING_POINTS,
+      minSamples: MIN_SAMPLES, maxKinkRatio: 0 }).points
+  const on = hermiteClosed(lobed, 0.5, 0.1, 200, null, dens(4)).points
+  check('kink: without refinement the same curve facets far worse',
+    maxKinkPoints(off, 4) > 2.5 * maxKinkPoints(on, 4),
+    'off ' + maxKinkPoints(off, 4).toFixed(2) + ' pt vs on ' +
+    maxKinkPoints(on, 4).toFixed(2) + ' pt')
+  // At the scale it was drawn for, still cheaper than the fixed algorithm.
+  check('kink: still fewer nodes than the legacy path at map scale',
+    hermiteClosed(lobed, 0.5, 0.1, 200, null, dens(2)).points.length <
+    hermiteClosed(lobed, 0.5, 0.1, 200).points.length,
+    hermiteClosed(lobed, 0.5, 0.1, 200, null, dens(2)).points.length +
+    ' vs legacy ' + hermiteClosed(lobed, 0.5, 0.1, 200).points.length)
+}
+
+// v26's polygon-confirm win must survive the refinement.
+{
+  const cacheR = {}
+  const d = dens(1)
+  const idleR = ringIdle(square, crossPt, 0.5, 0.1, 200, cacheR, d)
+  const confR = confirmSequence(square, true, 0.5, 0.1, 200, cacheR, d)
+  const pR = Math.min(commonPrefix(idleR, confR), idleR.length - 1,
+                      confR.length - 1)
+  check('ring idle with refinement: confirm write is still 1 pop + 1 add',
+    idleR.length - (pR + 1) === 1 && confR.length - pR === 1,
+    'pops ' + (idleR.length - (pR + 1)) + ' adds ' + (confR.length - pR))
 }
 
 // --- numeric parity fixtures (generated from the desktop algorithm) --
