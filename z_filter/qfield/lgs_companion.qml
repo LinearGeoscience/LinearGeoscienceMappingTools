@@ -122,9 +122,12 @@
  *    exactly what it always was. The control points themselves always
  *    survive, so they are the floor on the saved vertex count. The
  *    density is anchored to the finer of the mapping scale and the live
- *    zoom (v29), and the turn angle between output nodes is capped, so
- *    curves keep their nodes where they bend instead of faceting —
- *    Douglas-Peucker alone bounds distance, not angle.
+ *    zoom (v30), so a boundary drawn zoomed out is still saved dense
+ *    enough for the map it belongs to; and the visible KINK at each
+ *    node is bounded, so curves keep their nodes where they bend
+ *    instead of faceting. Douglas-Peucker alone bounds a vertex's
+ *    distance from the curve and says nothing about the corner left
+ *    between chords, which is what the eye actually reads.
  *
  * 6. NATIVE CONFIRM FIXUP — always on (no export flag): QField's own
  *    line/polygon digitizing also harvests the floating crosshair vertex
