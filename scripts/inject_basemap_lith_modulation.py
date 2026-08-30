@@ -16,10 +16,14 @@ expression, byte-identical on every renderer symbol:
                      canonical palette colour (lith_palette.build(), the same
                      palette the patterns injector paints), grouped one branch
                      per distinct fill. NULL when Lithology2 is empty/unknown.
-  LGS_TextureNudge - Qt darker()/lighter() factor from the curated `nudge`
-                     rows of Template/patterns/texture_modulation.tsv, read
-                     off Lith1Texture1/Lith1Texture2 (Texture1 wins). 100
-                     when no whitelisted texture is present.
+  LGS_TextureNudge - Qt darker()/lighter() factor from the `nudge` rows of
+                     Template/patterns/texture_modulation.tsv, read off
+                     Lith1Texture1/Lith1Texture2 (Texture1 wins). 100 when
+                     no listed texture is present. Grain sizes ladder from
+                     92 (very fine, lighter) to 108 (very coarse, deeper) -
+                     so grain survives where the tile channel cannot reach
+                     (the plain template, and past the pattern scale gate) -
+                     and the fabric textures sit at the +-8% extremes.
   LGS_MixCap       - this code's blend ratio: LITH2_MIX for most codes,
                      stepped down per code by the fill-identity audit.
   LGS_BaseFill     - this code's own palette colour (CASE over Lithology1,
@@ -110,7 +114,6 @@ ALL_FIELDS = (LITH2_FIELD, NUDGE_FIELD, MIXCAP_FIELD, BASE_FIELD,
 # number defensible rather than hopeful - turn it DOWN if the audit names
 # offenders after a palette change.
 LITH2_MIX = patterns.LITH2_MIX
-NUDGE_FACTORS = patterns.NUDGE_FACTORS
 MOD_IDENTITY_MARGIN = patterns.IDENTICAL_DE
 
 
@@ -152,10 +155,13 @@ def build_mixcap_case(mix_of):
 
 
 def build_nudge_case(nudge_of):
-    """CASE over Lith1Texture1/2 -> darker() factor; Texture1 wins, ELSE 100."""
+    """CASE over Lith1Texture1/2 -> darker() factor; Texture1 wins, ELSE 100.
+    Factor-100 rows (Medium Grained) are documentation - the ELSE already
+    says 100, so they get no branch."""
     groups = {}
     for texture, factor in nudge_of.items():
-        groups.setdefault(factor, []).append(texture)
+        if factor != 100:
+            groups.setdefault(factor, []).append(texture)
     parts = ["CASE"]
     for field in ("Lith1Texture1", "Lith1Texture2"):
         for factor in sorted(groups):
@@ -213,7 +219,7 @@ mix_rgb = patterns.mix_rgb
 qt_darker = patterns.qt_darker
 
 
-def resolve_mix_caps(fill_of, tex_map):
+def resolve_mix_caps(fill_of, tex_map, nudge_extremes):
     """{code: mix ratio} - the largest MIX_LADDER step at which NO worst-case
     combo of this code collapses a well-separated neighbour.
 
@@ -262,7 +268,7 @@ def resolve_mix_caps(fill_of, tex_map):
         return True
 
     distinct_fills = sorted(set(fill_of.values()))
-    factors = (100,) + tuple(NUDGE_FACTORS)
+    factors = (100,) + tuple(nudge_extremes)
 
     def collapses(a, mix):
         """Worst-case combos of A at this mix that erase a >=MIN_FILL_DE
@@ -313,8 +319,8 @@ def resolve_mix_caps(fill_of, tex_map):
         print("     " + ", ".join("%s %.2f" % c for c in sorted(capped)))
     if stuck:
         bail("nudge extremes alone collapse a well-separated pair for: %s - "
-             "shrink NUDGE_FACTORS or separate the base pair"
-             % ", ".join(stuck))
+             "step the nudge ladder in texture_modulation.tsv closer to 100, "
+             "or separate the base pair" % ", ".join(stuck))
     return mix_of
 
 
@@ -433,7 +439,7 @@ def main():
         bail("no fill colour for: %s" % ", ".join(missing[:15]))
 
     tex_map = lith_palette.read_texture_map()
-    mix_of = resolve_mix_caps(fill_of, tex_map)
+    mix_of = resolve_mix_caps(fill_of, tex_map, patterns.nudge_factors(mod))
 
     lith2_case = build_fill_case(fill_of, "Lithology2")
     base_case = build_fill_case(fill_of, "Lithology1")

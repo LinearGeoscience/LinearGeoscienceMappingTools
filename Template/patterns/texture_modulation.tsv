@@ -1,7 +1,9 @@
 # Per-feature texture modulation for '4 - Basemap'.
 #
 # Two channels, both driven by the mapper's Lith1Texture1/Lith1Texture2
-# entries (exact TextureCodes.Code strings - the column stores full text):
+# entries (exact TextureCodes.Code strings - the column stores full text).
+# A texture may carry ONE row per channel - the grain sizes carry both, so
+# a coarse-grained unit draws a coarser motif AND a slightly deeper fill:
 #
 #   tile   - multiplier on the SVG pattern tile width. Grain size made
 #            literal: a coarse-grained unit draws a visibly coarser motif,
@@ -10,11 +12,15 @@
 #            ~10% of the calibrated 8% (see inject_basemap_lith_patterns).
 #            Patterns template only - the plain template has no tile.
 #   nudge  - Qt darker()/lighter() factor on the polygon fill (100 = no
-#            change, >100 darker, <100 lighter). A curated whitelist, not
-#            all ~330 texture codes: fabric textures (foliated/banded/
-#            laminated) lift the fill slightly, clast textures (brecciated/
-#            porphyritic) deepen it slightly. +-4% - a whisper; the label
-#            parenthetical still carries the full words. Works in BOTH
+#            change, >100 darker, <100 lighter). Grain sizes ladder from
+#            92 (very fine, lighter) to 108 (very coarse, deeper), so the
+#            distinction survives in the plain template and past the
+#            pattern scale gate, where the tile channel does not exist.
+#            Fabric textures: clast fabrics (brecciated/porphyritic)
+#            deepen, planar fabrics (foliated/banded/laminated) lift.
+#            +-8% extremes - visible at a glance; the fill-identity audit
+#            in inject_basemap_lith_modulation.py re-validates every
+#            worst-case combo whenever these values change. Works in BOTH
 #            templates via the dd fillColor expression.
 #
 # Consumed by scripts/inject_basemap_lith_modulation.py (nudge) and
@@ -31,8 +37,18 @@ Coarse Grained	tile	1.16
 Phaneritic	tile	1.16
 Very Coarse Grained	tile	1.38
 Pegmatitic	tile	1.38
-Brecciated	nudge	104
-Porphyritic	nudge	104
-Foliated	nudge	96
-Banded	nudge	96
-Laminated	nudge	96
+Very Fine Grained	nudge	92
+Cryptocrystalline	nudge	92
+Fine Grained	nudge	96
+Aphanitic	nudge	96
+Microcrystalline	nudge	96
+Medium Grained	nudge	100
+Coarse Grained	nudge	104
+Phaneritic	nudge	104
+Very Coarse Grained	nudge	108
+Pegmatitic	nudge	108
+Brecciated	nudge	108
+Porphyritic	nudge	108
+Foliated	nudge	92
+Banded	nudge	92
+Laminated	nudge	92

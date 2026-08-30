@@ -246,6 +246,24 @@ def run(app):
     check(images_equal(im_mas, im_plain),
           "non-whitelisted texture (Massive) changes nothing")
 
+    # grain size rides the LIGHTNESS channel too, so it survives in the
+    # plain template where there is no pattern tile: fine = lighter,
+    # coarse = darker, medium = untouched
+    lum = _inj._srgb_lum
+    vf_rgb = centre_rgb(render_one(make_mem(
+        live, {"Lithology1": "SST", "Lith1Texture1": "Very Fine Grained"})))
+    vc_rgb = centre_rgb(render_one(make_mem(
+        live, {"Lithology1": "SST",
+               "Lith1Texture1": "Very Coarse Grained"})))
+    check(lum(vf_rgb) > lum(base_rgb),
+          "Very Fine Grained renders LIGHTER than base")
+    check(lum(vc_rgb) < lum(base_rgb),
+          "Very Coarse Grained renders DARKER than base")
+    im_med = render_one(make_mem(live, {"Lithology1": "SST",
+                                        "Lith1Texture1": "Medium Grained"}))
+    check(images_equal(im_med, im_plain),
+          "Medium Grained changes nothing in the plain template")
+
     # a feature of a capped code still blends, just less
     im_cap = render_one(make_mem(live, {"Lithology1": "SSTM",
                                         "Lithology2": "UKO"}))
@@ -290,6 +308,13 @@ def run(app):
         QgsSymbolLayer.PropertyStrokeWidth).asExpression()
 
     mod_tsv = _inj.load_texture_modulation()
+    for tex, factor in (("Very Fine Grained", 92), ("Pegmatitic", 108),
+                        ("Foliated", 92), ("Brecciated", 108),
+                        ("Medium Grained", 100)):
+        check(mod_tsv["nudge"].get(tex) == factor,
+              "texture_modulation.tsv nudges %s at %d" % (tex, factor))
+    check(_inj.nudge_factors(mod_tsv) == (92, 96, 104, 108),
+          "nudge_factors() derives the TSV's real extremes")
     for tex, mult in (("Pegmatitic", 1.38), ("Very Fine Grained", 0.78)):
         check(abs(mod_tsv["tile"][tex] - mult) < 1e-9,
               "texture_modulation.tsv holds %s at %.2f" % (tex, mult))

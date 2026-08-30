@@ -388,9 +388,17 @@ COVER_INK_TARGET = 1.28
 # the two halves of one feature cannot disagree.
 LITH2_MIX = 0.15       # fill leans 15% toward Lithology2's palette colour
 MINERAL_MIX = 0.35     # pattern ink leans 35% toward the mineral family ink
-NUDGE_FACTORS = (96, 104)   # darker()/lighter() extremes of the texture nudge
 MODULATION_MARK = "LGS_Lith2Fill"   # virtual field: presence = applied
 MODULATION_DD_MARK = "LGS_ModFill"  # what the symbols' dd fillColor reads
+
+
+def nudge_factors(mod_tsv):
+    """The distinct darker()/lighter() factors the nudge channel can apply,
+    read from texture_modulation.tsv (100 = no-op, excluded). The audits
+    enumerate these as worst cases, so they must always be the TSV's real
+    values, never a constant that can go stale."""
+    return tuple(sorted(set(v for v in mod_tsv["nudge"].values()
+                            if v != 100)))
 
 
 def ink_target(code, texture, tile_ink, type_of):
@@ -599,9 +607,9 @@ def load_texture_modulation():
             if len(p) < 3 or p[1] not in out:
                 bail("%s:%d malformed row: %r" % (TEXTURE_MODULATION, n, line))
             texture, channel = p[0], p[1]
-            if texture in out["tile"] or texture in out["nudge"]:
-                bail("%s:%d duplicate texture %r"
-                     % (TEXTURE_MODULATION, n, texture))
+            if texture in out[channel]:
+                bail("%s:%d duplicate %s row for texture %r"
+                     % (TEXTURE_MODULATION, n, channel, texture))
             try:
                 value = float(p[2]) if channel == "tile" else int(p[2])
             except ValueError:
@@ -1203,7 +1211,8 @@ def main():
             modx.LITH2_FIELD: modx.build_fill_case(fill_of, "Lithology2"),
             modx.BASE_FIELD: modx.build_fill_case(fill_of, "Lithology1"),
             modx.MIXCAP_FIELD: modx.build_mixcap_case(
-                modx.resolve_mix_caps(fill_of, pal_tex_map)),
+                modx.resolve_mix_caps(fill_of, pal_tex_map,
+                                      nudge_factors(mod_tsv))),
         }
         ef = re.search(r'<expressionfields>.*?</expressionfields>', qml, re.S)
         if not ef:
