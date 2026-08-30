@@ -80,6 +80,8 @@ TEXTURE_MAP = os.path.join(PATTERN_DIR, "lith_textures.tsv")
 STROKE_WIDTHS = os.path.join(PATTERN_DIR, "stroke_widths.tsv")
 MINERAL_INKS = os.path.join(PATTERN_DIR, "mineral_inks.tsv")
 LITH_FILLS = os.path.join(PATTERN_DIR, "lith_fills.tsv")
+TEXTURE_MODULATION = os.path.join(PATTERN_DIR, "texture_modulation.tsv")
+MINERAL_FAMILIES = os.path.join(PATTERN_DIR, "mineral_families.tsv")
 
 LAYER = "4 - Basemap"
 FIELD = "Lithology1"
@@ -304,6 +306,23 @@ def delta_e(a, b):
     return sum((x - y) ** 2 for x, y in zip(la, lb)) ** 0.5
 
 
+def mix_rgb(a, b, ratio):
+    """What the expression function color_mix_rgb does: linear per-component
+    RGB interpolation. The audits must model the render maths exactly."""
+    return tuple(round(a[i] + (b[i] - a[i]) * ratio) for i in range(3))
+
+
+def qt_darker(rgb, factor):
+    """Qt QColor::darker() semantics, as darker(color, factor) evaluates
+    them: HSV round-trip, V divided by factor/100 - so factor < 100
+    LIGHTENS. Shared with inject_basemap_lith_modulation.py's audit."""
+    if factor == 100:
+        return rgb
+    h, s, v = colorsys.rgb_to_hsv(*[c / 255.0 for c in rgb])
+    v = min(1.0, v * 100.0 / factor)
+    return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(h, s, v))
+
+
 # Tile pairs that read as the same texture on a map, so using one of each
 # separates nothing. Judged by eye against rendered previews rather than by
 # a similarity metric - a first attempt at scoring tile similarity
@@ -356,6 +375,30 @@ COVER_ADVISORY_DE = 5.0
 # tests/test_basemap_lith_patterns_qgis.py calls ink_target() too, so
 # the two cannot disagree.
 COVER_INK_TARGET = 1.28
+
+# ---- per-feature modulation (see inject_basemap_lith_modulation.py) ----
+# The Lith2 fill blend and texture nudge live in the LIVE template (virtual
+# fields + a dd fillColor on every class symbol, written by the modulation
+# injector and carried into this template by convertFromRenderer). What is
+# added HERE is the pattern side: grain-size textures scale the one SVGFill's
+# tile, and the mapper's Lith1Mineral1 tints the pattern ink toward its
+# mineral family's colour from mineral_inks.tsv.
+#
+# The constants are shared: the modulation injector imports them from here so
+# the two halves of one feature cannot disagree.
+LITH2_MIX = 0.15       # fill leans 15% toward Lithology2's palette colour
+MINERAL_MIX = 0.35     # pattern ink leans 35% toward the mineral family ink
+MODULATION_MARK = "LGS_Lith2Fill"   # virtual field: presence = applied
+MODULATION_DD_MARK = "LGS_ModFill"  # what the symbols' dd fillColor reads
+
+
+def nudge_factors(mod_tsv):
+    """The distinct darker()/lighter() factors the nudge channel can apply,
+    read from texture_modulation.tsv (100 = no-op, excluded). The audits
+    enumerate these as worst cases, so they must always be the TSV's real
+    values, never a constant that can go stale."""
+    return tuple(sorted(set(v for v in mod_tsv["nudge"].values()
+                            if v != 100)))
 
 
 def ink_target(code, texture, tile_ink, type_of):
@@ -546,6 +589,73 @@ def load_mineral_inks():
     return out
 
 
+def load_texture_modulation():
+    """{'tile': {texture: multiplier}, 'nudge': {texture: factor}} from
+    texture_modulation.tsv. Texture-name validity against TextureCodes is the
+    caller's job (each injector reads its own gpkg)."""
+    if not os.path.exists(TEXTURE_MODULATION):
+        bail("missing %s" % TEXTURE_MODULATION)
+    out = {"tile": {}, "nudge": {}}
+    with open(TEXTURE_MODULATION, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            p = line.split("\t")
+            if p[0] == "texture":
+                continue
+            if len(p) < 3 or p[1] not in out:
+                bail("%s:%d malformed row: %r" % (TEXTURE_MODULATION, n, line))
+            texture, channel = p[0], p[1]
+            if texture in out[channel]:
+                bail("%s:%d duplicate %s row for texture %r"
+                     % (TEXTURE_MODULATION, n, channel, texture))
+            try:
+                value = float(p[2]) if channel == "tile" else int(p[2])
+            except ValueError:
+                bail("%s:%d bad value: %r" % (TEXTURE_MODULATION, n, line))
+            if channel == "tile" and not 0.5 <= value <= 2.0:
+                bail("%s:%d tile multiplier %s outside sanity range 0.5-2.0"
+                     % (TEXTURE_MODULATION, n, p[2]))
+            if channel == "nudge" and not 80 <= value <= 125:
+                bail("%s:%d nudge factor %s outside sanity range 80-125"
+                     % (TEXTURE_MODULATION, n, p[2]))
+            out[channel][texture] = value
+    if not out["tile"]:
+        bail("%s has no tile rows" % TEXTURE_MODULATION)
+    return out
+
+
+def load_mineral_families(inks):
+    """{mineral_abbrev: ink_name} from mineral_families.tsv. Every ink must
+    exist in mineral_inks.tsv; mineral validity against MineralCodes is the
+    caller's job."""
+    if not os.path.exists(MINERAL_FAMILIES):
+        bail("missing %s" % MINERAL_FAMILIES)
+    out = {}
+    with open(MINERAL_FAMILIES, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            p = line.split("\t")
+            if p[0] == "mineral":
+                continue
+            if len(p) < 2:
+                bail("%s:%d malformed row: %r" % (MINERAL_FAMILIES, n, line))
+            mineral, ink = p[0], p[1]
+            if mineral in out:
+                bail("%s:%d duplicate mineral %r"
+                     % (MINERAL_FAMILIES, n, mineral))
+            if ink not in inks:
+                bail("%s:%d unknown ink %r (not in mineral_inks.tsv)"
+                     % (MINERAL_FAMILIES, n, ink))
+            out[mineral] = ink
+    if not out:
+        bail("%s has no rows" % MINERAL_FAMILIES)
+    return out
+
+
 def load_texture_map(codes, tiles):
     """{code: (texture, note, ink)} from the TSV, asserted 1:1 against codes."""
     if not os.path.exists(TEXTURE_MAP):
@@ -623,11 +733,51 @@ def main():
     con = sqlite3.connect("file:%s?mode=ro" % ORIGINAL.replace("\\", "/"),
                           uri=True)
     rows = con.execute("SELECT Code FROM BasemapCodes").fetchall()
+    minerals = {r[0] for r in con.execute("SELECT Value FROM MineralCodes")}
+    texture_codes = {r[0] for r in con.execute("SELECT Code FROM TextureCodes")}
+    live_qml = con.execute(
+        "SELECT styleQML FROM layer_styles WHERE f_table_name=?",
+        (LAYER,)).fetchone()[0]
     con.close()
     codes = [r[0] for r in rows]
     if not codes:
         bail("BasemapCodes is empty")
     tex_map = load_texture_map(codes, tiles)
+
+    # ---- per-feature modulation: is the live template carrying it? -------
+    # Half-applied is the one state that must not slip through a re-bake: the
+    # virtual field without the dd fillColor renders nothing, the dd without
+    # the field is an expression error on every polygon.
+    has_vf = ('<field name="%s"' % MODULATION_MARK) in live_qml
+    has_dd = ('name="fillColor"' in live_qml
+              and MODULATION_DD_MARK in live_qml.split("<renderer-v2", 1)[-1])
+    if has_vf != has_dd:
+        bail("live template carries a half-applied modulation state "
+             "(virtual field %s, dd fillColor %s) - run "
+             "scripts/inject_basemap_lith_modulation.py first"
+             % (has_vf, has_dd))
+    modulation_active = has_vf and has_dd
+    if modulation_active:
+        mod_tsv = load_texture_modulation()
+        unknown = sorted((set(mod_tsv["tile"]) | set(mod_tsv["nudge"]))
+                         - texture_codes)
+        if unknown:
+            bail("texture_modulation.tsv names textures not in TextureCodes: "
+                 + ", ".join(unknown))
+        families = load_mineral_families(inks)
+        unknown = sorted(set(families) - minerals)
+        if unknown:
+            bail("mineral_families.tsv names minerals not in MineralCodes: "
+                 + ", ".join(unknown))
+        print("modulation: live template carries %s - adding tile-width and "
+              "mineral-ink channels (%d grain textures, %d minerals -> %d "
+              "families)" % (MODULATION_MARK, len(mod_tsv["tile"]),
+                             len(families), len(set(families.values()))))
+    else:
+        mod_tsv, families = None, None
+        print("modulation: live template does not carry %s - baking the "
+              "pre-modulation pattern (run inject_basemap_lith_modulation.py "
+              "to enable)" % MODULATION_MARK)
 
     # ---- fills and inks: pure colour maths, no QGIS needed ------------
     # Deliberately ahead of initQgis(). Any failure here aborts with a clean
@@ -828,6 +978,82 @@ def main():
     col_expr = case_expr(by_colour, lambda h: h, hexof((0x13, 0x13, 0x13)))
     wid_expr = case_expr(by_width, lambda w: w, "%.3f" % TILE_STROKE_PT)
 
+    # ---- per-feature modulation: pattern-side channels -------------------
+    tile_width_expr = None
+    if modulation_active:
+        # Mineral -> ink family tint. A code whose ink, pulled MINERAL_MIX
+        # toward a family colour, can no longer separate from its own fill is
+        # EXCLUDED from that family's branch and keeps its base ink - the
+        # same "legibility wins over the mineral signal" rule as unfittable
+        # inks above. Exclusions ride the expression as AND NOT clauses, so
+        # the decision is baked, auditable, and costs nothing at render.
+        fam_minerals = {}
+        for m, f in families.items():
+            fam_minerals.setdefault(f, []).append(m)
+        excl, n_excl_pairs = {}, 0
+        for fam in sorted(fam_minerals):
+            fam_rgb = inks[fam]
+            for code in sorted(tex_map):
+                blended = mix_rgb(ink_of[code], fam_rgb, MINERAL_MIX)
+                target = ink_target(code, tex_map[code][0], tile_ink, type_of)
+                floor = max(WEAK_INK_FLOOR, target * WEAK_INK_MARGIN)
+                if contrast(fill_of[code], blended) < floor:
+                    excl.setdefault(fam, []).append(code)
+                    n_excl_pairs += 1
+        parts = ["CASE"]
+        for fam in sorted(fam_minerals):
+            mins = ", ".join(sql_quote(m) for m in sorted(fam_minerals[fam]))
+            cond = '"Lith1Mineral1" IN (%s)' % mins
+            if fam in excl:
+                cond += (' AND NOT "%s" IN (%s)'
+                         % (FIELD, ", ".join(sql_quote(c)
+                                             for c in sorted(excl[fam]))))
+            parts.append("  WHEN %s THEN %s"
+                         % (cond, sql_quote(hexof(inks[fam]))))
+        parts.append("  ELSE ''")
+        parts.append("END")
+        mineral_case = "\n".join(parts)
+        col_expr = ("if(%s = '', %s,\ncolor_mix_rgb(%s,\n%s, %s))"
+                    % (mineral_case, col_expr, col_expr, mineral_case,
+                       MINERAL_MIX))
+        print("mineral ink tint: %d families, %d code/family pairs excluded "
+              "(ink could not separate from its own fill)"
+              % (len(fam_minerals), n_excl_pairs))
+        if excl:
+            for fam in sorted(excl):
+                print("     %-12s keeps base ink on: %s"
+                      % (fam, ", ".join(sorted(excl[fam])[:10])
+                         + (" ..." if len(excl[fam]) > 10 else "")))
+
+        # Grain size -> tile width. The multiplier is relative, so it is
+        # scale-neutral under referenceScale; the stroke is compensated by
+        # sqrt(m) so ink density stays within ~10% of the calibrated 8%
+        # while coarse tiles still read slightly airier - which is the
+        # point: coarse = bigger, sparser motifs.
+        tile_groups = {}
+        for tex, mult in mod_tsv["tile"].items():
+            if mult != 1.0:
+                tile_groups.setdefault(mult, []).append(tex)
+
+        def grain_case(fmt):
+            gparts = ["CASE"]
+            for field in ("Lith1Texture1", "Lith1Texture2"):
+                for mult in sorted(tile_groups):
+                    names = ", ".join(sql_quote(t)
+                                      for t in sorted(tile_groups[mult]))
+                    gparts.append('  WHEN "%s" IN (%s) THEN %s'
+                                  % (field, names, fmt(mult)))
+            gparts.append("  ELSE 1.0")
+            gparts.append("END")
+            return "\n".join(gparts)
+
+        tile_width_expr = ("%s * %s"
+                           % (TILE_WIDTH_PT, grain_case(lambda m: "%.2f" % m)))
+        wid_expr = ("(%s) * %s"
+                    % (wid_expr, grain_case(lambda m: "%.3f" % (m ** 0.5))))
+        print("tile width: %d grain-size multipliers, %.2f-%.2fx"
+              % (len(tile_groups), min(tile_groups), max(tile_groups)))
+
     print("%d codes -> %d textures" % (len(tex_map), len(by_texture)))
     anchors = lith_palette.read_code_anchors()
     kept = sum(1 for c, rgb in fill_of.items() if anchors.get(c) == rgb)
@@ -930,6 +1156,12 @@ def main():
                                    QgsProperty.fromExpression(col_expr))
         svg.setDataDefinedProperty(QgsSymbolLayer.PropertyStrokeWidth,
                                    QgsProperty.fromExpression(wid_expr))
+        if tile_width_expr is not None:
+            # grain-size textures scale the tile; the multiplier is relative
+            # to TILE_WIDTH_PT so Set Mapping Scale stays agnostic of it
+            svg.setDataDefinedProperty(QgsSymbolLayer.PropertyWidth,
+                                       QgsProperty.fromExpression(
+                                           tile_width_expr))
         # the SVGFill's own sub-symbol would draw a SECOND polygon outline on
         # top of the ContactType line the colour rules already draw
         svg.setSubSymbol(QgsLineSymbol.createSimple({"line_style": "no"}))
@@ -965,6 +1197,48 @@ def main():
     if "FilterExpression" not in qml:
         bail("exported QML lost the ValueRelation FilterExpression config")
 
+    if modulation_active:
+        # The live template blends from ITS anchors; this template just
+        # repainted every rule from lith_palette.build() (plus the
+        # fit_fill_to_ink shifts above), so the colour-carrying virtual
+        # fields are regenerated here from the painted fills - each template
+        # blends from exactly what it draws. Imported lazily: the modulation
+        # injector imports this module at top level, and both are fully
+        # initialised by the time main() runs.
+        import inject_basemap_lith_modulation as modx
+        pal_tex_map = lith_palette.read_texture_map()
+        replacements = {
+            modx.LITH2_FIELD: modx.build_fill_case(fill_of, "Lithology2"),
+            modx.BASE_FIELD: modx.build_fill_case(fill_of, "Lithology1"),
+            modx.MIXCAP_FIELD: modx.build_mixcap_case(
+                modx.resolve_mix_caps(fill_of, pal_tex_map,
+                                      nudge_factors(mod_tsv))),
+        }
+        ef = re.search(r'<expressionfields>.*?</expressionfields>', qml, re.S)
+        if not ef:
+            bail("baked QML lost the <expressionfields> block")
+        body = ef.group(0)
+        for name in sorted(replacements):
+            att = modx.xml_attr(replacements[name])
+            tag_pat = re.compile(r'<field\b[^>]*name="%s"[^>]*>' % name)
+
+            def fix(m, att=att, name=name):
+                tag, k = re.subn(r'expression="[^"]*"',
+                                 lambda _m: 'expression="%s"' % att,
+                                 m.group(0), count=1)
+                if k != 1:
+                    bail("field %s has no expression attribute" % name)
+                return tag
+
+            body, n = tag_pat.subn(fix, body)
+            if n != 1:
+                bail("could not rewrite %s in the baked QML (%d hits) - "
+                     "the exported expressionfields shape changed"
+                     % (name, n))
+        qml = qml[:ef.start()] + body + qml[ef.end():]
+        print("modulation: re-anchored %s to the painted palette"
+              % ", ".join(sorted(replacements)))
+
     con = sqlite3.connect(TARGET)
     cur = con.cursor()
     cur.execute("UPDATE layer_styles SET styleQML=? WHERE f_table_name=?",
@@ -995,9 +1269,19 @@ def main():
     n_rules = len(re.findall(r'<rule\b', final))
     if n_rules != EXPECT_CATS + 1:
         bail("expected %d rules, found %d" % (EXPECT_CATS + 1, n_rules))
-    for prop in ("file", "outlineColor", "outlineWidth"):
+    props = ("file", "outlineColor", "outlineWidth")
+    if modulation_active:
+        props += ("width",)
+    for prop in props:
         if prop not in final:
             bail("data-defined property %r missing from the written style" % prop)
+    if modulation_active:
+        if not re.search(r'<field\b[^>]*name="%s"' % MODULATION_MARK, final):
+            bail("virtual field %s lost in the bake" % MODULATION_MARK)
+        n_dd = final.split("<renderer-v2", 1)[-1].count(MODULATION_DD_MARK)
+        if n_dd < EXPECT_CATS:
+            bail("dd fillColor modulation survives on only %d of %d rule "
+                 "symbols - convertFromRenderer dropped it" % (n_dd, EXPECT_CATS))
 
     with open(LITH_FILLS, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# Resolved fill + ink per lithology code, for review.\n"
@@ -1008,8 +1292,8 @@ def main():
                                        hexof(ink_of[code])))
     print("wrote %s" % os.path.basename(LITH_FILLS))
     print("round-trip ok: RuleRenderer, %d colour rules + 1 pattern rule, "
-          "exactly 1 SVGFill carrying all three data-defined properties"
-          % EXPECT_CATS)
+          "exactly 1 SVGFill carrying all %d data-defined properties (%s)"
+          % (EXPECT_CATS, len(props), ", ".join(props)))
     print("live template untouched:", ORIGINAL)
     print("test template:", TARGET)
 

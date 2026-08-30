@@ -85,6 +85,8 @@ def describe(settings):
     dd = settings.dataDefinedProperties()
     offset = dd.property(QgsPalLayerSettings.Property.OffsetXY)
     rotation = dd.property(QgsPalLayerSettings.Property.LabelRotation)
+    ring = dd.property(QgsPalLayerSettings.Property.LabelDistance)
+    max_ring = dd.property(QgsPalLayerSettings.Property.MaximumDistance)
     return {
         "fieldName": norm(settings.fieldName),
         "isExpression": settings.isExpression,
@@ -109,6 +111,11 @@ def describe(settings):
         "callout": bool(callout is not None and callout.enabled()),
         "offsetXY": norm(offset.expressionString()) if offset.isActive() else "",
         "rotation": norm(rotation.expressionString()) if rotation.isActive() else "",
+        # The paper-constant leader ring: the template (injector) and the
+        # Set-Mapping-Scale rebuild must carry the SAME expressions, or the
+        # first rescale silently strips the zoom fix.
+        "ddLabelDistance": norm(ring.expressionString()) if ring.isActive() else "",
+        "ddMaximumDistance": norm(max_ring.expressionString()) if max_ring.isActive() else "",
     }
 
 

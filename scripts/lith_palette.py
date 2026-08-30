@@ -194,11 +194,15 @@ def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def read_code_anchors():
+def read_code_anchors(apply_overrides=True):
     """{code: (r,g,b)} - the fill the live template gives THIS code.
 
     Per code, not per family. Using a family modal here is what flattened the
     palette in the first place.
+
+    apply_overrides=False returns the template's colours EXACTLY as stored,
+    without ANCHOR_OVERRIDE - what the live template actually renders, which
+    is what inject_basemap_lith_modulation.py must blend from.
     """
     con = sqlite3.connect("file:%s?mode=ro" % ORIGINAL.replace("\\", "/"),
                           uri=True)
@@ -223,7 +227,8 @@ def read_code_anchors():
         if not code or code == "NULL":
             continue
         out[code] = sym[s.group(1)]
-    out.update(ANCHOR_OVERRIDE)
+    if apply_overrides:
+        out.update(ANCHOR_OVERRIDE)
     return out
 
 

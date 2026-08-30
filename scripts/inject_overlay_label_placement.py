@@ -19,15 +19,24 @@ Overlay" simple labeling to:
       curved; it is converted to the straight "simple" type so leaders
       match the FieldNotebook comment callouts
       (inject_dynamic_callouts.py), whose dynamics are mirrored too:
-      dist=37.5 / maximumDistance=187.5 map units (1x / 5x the
-      scale-5000 callout ring unit, callout_dist_for_scale), minLength
-      1 MM so no stub is drawn on inside-placed labels.
+      dist=25 / maximumDistance=75 map units (1x / 3x the scale-5000
+      callout ring unit, callout_dist_for_scale; tightened 2026-08-30
+      from 7.5 mm / 5x), minLength 1 MM so no stub is drawn on
+      inside-placed labels.
+    - Data-defined LabelDistance / MaximumDistance hold the ring at
+      5 mm / 15 mm ON PAPER at any zoom - the statics are map units,
+      which take the referenceScale/mapScale multiplier, so without
+      the expressions the alteration leaders drifted as the SQUARE of
+      the zoom ratio. Same fix as the Basemap leaders
+      (inject_basemap_label_placement.py RING_MM) and the FieldNotebook
+      comments (inject_dynamic_callouts.py).
     - overlapHandling=AllowOverlapIfRequired: zone labels never vanish.
 
 The map-unit distances are baked for the template's
 symbologyReferenceScale of 5000; Set Mapping Scale rescales dist /
 maximumDistance per mapping scale (script_setmapping.py
-rescale_overlay_label_distance) while everything else here persists.
+rescale_overlay_label_distance - a copy-edit, so the dd ring
+expressions survive it) while everything else here persists.
 
 Untouched: the label expression (text-style), rendering/obstacle settings,
 and the dd_properties auxiliary-storage bindings that back manual label moves
@@ -49,16 +58,35 @@ import xml.etree.ElementTree as ET
 
 LAYER = "3 - Overlay"
 
-U = 37.5  # callout_dist_for_scale(5000) = 0.0075 * 5000 map units, mirrors FieldNotebook
+U = 25    # callout_dist_for_scale(5000) = 0.005 * 5000 map units, mirrors FieldNotebook
 PLACEMENT_ATTRS = {
     "placement": "4",               # Horizontal (surface candidates over holed geometry)
     "polygonPlacementFlags": "3",   # inside (preferred) + outside allowed
     "fitInPolygonOnly": "1",        # inside only when the label truly fits
-    "dist": "37.5",                 # 1 x U
+    "dist": "25",                   # 1 x U
     "distUnits": "MapUnit",
-    "maximumDistance": "187.5",     # 5 x U
+    "maximumDistance": "75",        # 3 x U (COMMENT_MAX_FACTOR)
     "maximumDistanceUnit": "MapUnit",
     "overlapHandling": "AllowOverlapIfRequired",
+}
+
+# The paper-constant ring. Keep byte-identical with
+# script_setmapping.comment_ring_expression(COMMENT_RING_MM) and with
+# scripts/inject_dynamic_callouts.py.
+COMMENT_RING_MM = 5.0
+COMMENT_MAX_FACTOR = 3
+_REF = "coalesce(to_real(@lgs_reference_scale), 0)"
+
+
+def ring_expr(mm):
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _REF +
+            " > 0 THEN %s * @map_scale * @map_scale / (1000 * %s) "
+            "ELSE %s * @map_scale / 1000 END" % (mm, _REF, mm))
+
+
+DD_EXPRESSIONS = {
+    "LabelDistance": ring_expr(COMMENT_RING_MM),
+    "MaximumDistance": ring_expr(COMMENT_RING_MM * COMMENT_MAX_FACTOR),
 }
 CALLOUT_TYPE = "simple"  # straight leader, same as the FieldNotebook callouts
 CALLOUT_OPTS = {
@@ -79,6 +107,39 @@ CURVED_ONLY_OPTS = ("curvature", "orientation")  # meaningless on a simple callo
 def bail(msg):
     print("ERROR:", msg)
     sys.exit(1)
+
+
+def inject_dd(settings, name, expr):
+    """Set one data-defined property, leaving its siblings alone.
+
+    The settings-level dd_properties also carries the auxiliary-storage
+    bindings for manual label moves, so this replaces one named entry and
+    never rewrites the block. Same shape as
+    inject_basemap_label_placement.inject_dd."""
+    dd = settings.find("dd_properties")
+    if dd is None:
+        return False
+    outer = dd.find("Option")
+    if outer is None:
+        outer = ET.SubElement(dd, "Option", {"type": "Map"})
+    props = None
+    for o in outer.findall("Option"):
+        if o.get("name") == "properties":
+            props = o
+    if props is None:
+        props = ET.SubElement(outer, "Option", {"name": "properties"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
 
 
 def main():
@@ -133,6 +194,11 @@ def main():
             opts[k].set("value", v)
             print(f"callout {k} -> {v}")
 
+    for name, expr in DD_EXPRESSIONS.items():
+        if not inject_dd(settings, name, expr):
+            bail(f"no dd_properties block to carry {name}")
+        print(f"dd {name} -> paper-constant ring")
+
     new_block = ET.tostring(lab, encoding="unicode")
     new_qml = qml[:m.start()] + new_block + qml[m.end():]
 
@@ -178,6 +244,16 @@ def main():
     dd = ET.tostring(settings.find("dd_properties"), encoding="unicode")
     assert "auxiliary_storage_labeling_positionx" in dd
     assert "auxiliary_storage_labeling_positiony" in dd
+    # The paper-constant ring expressions are in, verbatim.
+    for name, expr in DD_EXPRESSIONS.items():
+        entry = next((o for o in settings.find("dd_properties").iter("Option")
+                      if o.get("name") == name and o.get("type") == "Map"),
+                     None)
+        assert entry is not None, f"dd {name} missing"
+        by = {o.get("name"): o.get("value")
+              for o in entry.iter("Option") if o.get("name")}
+        assert by.get("active") == "true" and by.get("expression") == expr, \
+            f"dd {name} wrong: {by!r}"
     # Label expression untouched.
     assert "'Alteration'" in settings.find("text-style").get("fieldName")
     # Renderer untouched: still categorized on SubType1 at reference scale 5000.
