@@ -1292,8 +1292,8 @@ def main():
                                        hexof(ink_of[code])))
     print("wrote %s" % os.path.basename(LITH_FILLS))
     print("round-trip ok: RuleRenderer, %d colour rules + 1 pattern rule, "
-          "exactly 1 SVGFill carrying all three data-defined properties"
-          % EXPECT_CATS)
+          "exactly 1 SVGFill carrying all %d data-defined properties (%s)"
+          % (EXPECT_CATS, len(props), ", ".join(props)))
     print("live template untouched:", ORIGINAL)
     print("test template:", TARGET)
 
