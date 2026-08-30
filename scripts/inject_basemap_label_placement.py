@@ -93,6 +93,41 @@ CALLOUT_OPTS = {
     "offsetFromAnchor": "0.5",
     "offsetFromLabel": "1",
 }
+# The leader ring, held at a constant size ON PAPER.
+#
+# dist is in map units, and map units are multiplied by referenceScale/mapScale
+# like everything else, so a ring baked in ground metres drifts as the SQUARE
+# of the zoom: measured at 3.75 mm at the reference scale, 15 mm at 2x in,
+# 93.75 mm at 5x in, 375 mm at 10x. That is the leader sprawl - labels flung
+# nine centimetres off their polygon with a hairline back to it - and it bit
+# 1:1000 field mapping just as hard as a 1:100,000 sheet, since what matters
+# is the ratio, not the scale.
+#
+# Solving paper_mm = D * 1000/mapScale * referenceScale/mapScale for a constant
+# gives D = RING_MM * mapScale^2 / (1000 * referenceScale), which is what the
+# data-defined LabelDistance below computes. RING_MM is the ring's value at
+# the reference scale today, so a map that already read correctly is unchanged.
+#
+# The reference scale comes from the same source as the label sizes - see
+# script_setmapping.REFERENCE_SCALE_LITERAL_RE. Unknown means the linear
+# fallback rather than the quadratic one: still wrong away from the reference
+# scale, but wrong by the zoom rather than by its square, and never worse than
+# what shipped before.
+RING_MM = 3.75
+_REF = "coalesce(to_real(@lgs_reference_scale), 0)"
+_RING = (
+    "CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _REF + " > 0 "
+    "THEN %s * @map_scale * @map_scale / (1000 * %s) "
+    "ELSE %s * @map_scale / 1000 END" % (RING_MM, _REF, RING_MM)
+)
+# 5x the ring, mirroring the static maximumDistance's relationship to dist.
+_MAX_RING = _RING.replace("THEN %s *" % RING_MM, "THEN %s *" % (RING_MM * 5)) \
+                 .replace("ELSE %s *" % RING_MM, "ELSE %s *" % (RING_MM * 5))
+DD_EXPRESSIONS = {
+    "LabelDistance": _RING,
+    "MaximumDistance": _MAX_RING,
+}
+
 RENDERING_ATTRS = {
     "obstacle": "0",
     # A polygon has to be 2 mm across on the rendered page before it is
@@ -109,6 +144,39 @@ RENDERING_ATTRS = {
 def bail(msg):
     print("ERROR:", msg)
     sys.exit(1)
+
+
+def inject_dd(settings, name, expr):
+    """Set one data-defined property, leaving its siblings alone.
+
+    The settings-level dd_properties also carries the auxiliary-storage
+    bindings for manual label moves and the injected Color/Size expressions,
+    so this replaces one named entry and never rewrites the block.
+    """
+    dd = settings.find("dd_properties")
+    if dd is None:
+        return False
+    outer = dd.find("Option")
+    if outer is None:
+        outer = ET.SubElement(dd, "Option", {"type": "Map"})
+    props = None
+    for o in outer.findall("Option"):
+        if o.get("name") == "properties":
+            props = o
+    if props is None:
+        props = ET.SubElement(outer, "Option", {"name": "properties"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
 
 
 def main():
@@ -143,6 +211,11 @@ def main():
         if placement.get(k) != v:
             placement.set(k, v)
             print(f"placement {k} -> {v}")
+
+    for name, expr in DD_EXPRESSIONS.items():
+        if not inject_dd(settings, name, expr):
+            bail("settings-level dd_properties not found")
+        print(f"dd {name} -> paper-constant leader ring")
 
     rendering = settings.find("rendering")
     if rendering is None:
@@ -215,6 +288,20 @@ def main():
     dd = ET.tostring(settings.find("dd_properties"), encoding="unicode")
     assert "auxiliary_storage_labeling_positionx" in dd
     assert "auxiliary_storage_labeling_positiony" in dd
+    # ...and so must the Size/Color expressions inject_label_size_scaling.py
+    # and the cover gold own, which share this block.
+    for name in ("Size", "Color") + tuple(DD_EXPRESSIONS):
+        assert f'name="{name}"' in dd, f"dd {name} lost"
+    for name, expr in DD_EXPRESSIONS.items():
+        node = None
+        for props in settings.find("dd_properties").iter("Option"):
+            if props.get("name") == name:
+                node = props
+        got = None
+        for o in node.findall("Option"):
+            if o.get("name") == "expression":
+                got = o.get("value")
+        assert got == expr, f"dd {name} expression not written"
     # The HTML label expression must be byte-identical.
     assert settings.find("text-style").get("fieldName") == field_name_before
     # Renderer untouched: same renderer opening tag as before the edit.
