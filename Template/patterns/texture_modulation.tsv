@@ -1,0 +1,38 @@
+# Per-feature texture modulation for '4 - Basemap'.
+#
+# Two channels, both driven by the mapper's Lith1Texture1/Lith1Texture2
+# entries (exact TextureCodes.Code strings - the column stores full text):
+#
+#   tile   - multiplier on the SVG pattern tile width. Grain size made
+#            literal: a coarse-grained unit draws a visibly coarser motif,
+#            a fine-grained one a tighter weave. ~x1.12 geometric steps;
+#            the 1.38 ceiling keeps the sqrt-compensated ink density within
+#            ~10% of the calibrated 8% (see inject_basemap_lith_patterns).
+#            Patterns template only - the plain template has no tile.
+#   nudge  - Qt darker()/lighter() factor on the polygon fill (100 = no
+#            change, >100 darker, <100 lighter). A curated whitelist, not
+#            all ~330 texture codes: fabric textures (foliated/banded/
+#            laminated) lift the fill slightly, clast textures (brecciated/
+#            porphyritic) deepen it slightly. +-4% - a whisper; the label
+#            parenthetical still carries the full words. Works in BOTH
+#            templates via the dd fillColor expression.
+#
+# Consumed by scripts/inject_basemap_lith_modulation.py (nudge) and
+# scripts/inject_basemap_lith_patterns.py (tile). Every texture name is
+# validated against TextureCodes at inject time; a typo aborts the run.
+texture	channel	value
+Very Fine Grained	tile	0.78
+Cryptocrystalline	tile	0.78
+Fine Grained	tile	0.88
+Aphanitic	tile	0.88
+Microcrystalline	tile	0.88
+Medium Grained	tile	1.0
+Coarse Grained	tile	1.16
+Phaneritic	tile	1.16
+Very Coarse Grained	tile	1.38
+Pegmatitic	tile	1.38
+Brecciated	nudge	104
+Porphyritic	nudge	104
+Foliated	nudge	96
+Banded	nudge	96
+Laminated	nudge	96

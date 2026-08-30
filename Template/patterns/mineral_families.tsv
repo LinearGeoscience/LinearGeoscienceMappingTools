@@ -1,0 +1,105 @@
+# Mineral -> ink-family mapping for the per-feature pattern ink tint.
+#
+# When a mapper records Lith1Mineral1 on a Basemap polygon, the pattern ink
+# is mixed 35% toward the named family's colour from mineral_inks.tsv, so
+# "SST with quartz" and "SST with hematite" separate on the page while the
+# code's calibrated ink stays recognisably dominant.
+#
+# `mineral` is the MineralCodes.Value abbreviation (what the field stores);
+# `ink` is a name from mineral_inks.tsv. Deliberately NOT all 277 minerals:
+# only rock-formers and field-diagnostic minerals whose presence changes how
+# a unit should read. An unmapped mineral means no tint - the label
+# parenthetical still names it. Both columns are validated at inject time.
+#
+# Consumed by scripts/inject_basemap_lith_patterns.py.
+mineral	ink
+Qz	quartz
+Agt	quartz
+Amy	quartz
+Ccd	quartz
+Cpz	quartz
+Jsp	quartz
+Opl	quartz
+Slc	quartz
+Pl	plagioclase
+Ab	plagioclase
+An	plagioclase
+Ads	plagioclase
+Olg	plagioclase
+Lab	plagioclase
+Byt	plagioclase
+Sau	plagioclase
+Kfs	kfeldspar
+Or	kfeldspar
+Mc	kfeldspar
+Adl	kfeldspar
+Afs	kfeldspar
+Sa	kfeldspar
+Ol	olivine
+Fo	olivine
+MtOl	olivine
+Idd	olivine
+Px	pyroxene
+Cpx	pyroxene
+Opx	pyroxene
+Aug	pyroxene
+Di	pyroxene
+En	pyroxene
+Hd	pyroxene
+Amp	amphibole
+Hbl	amphibole
+Act	amphibole
+Tr	amphibole
+Ath	amphibole
+Cum	amphibole
+Gru	amphibole
+Ts	amphibole
+Bt	mica
+Ms	mica
+Phl	mica
+Ser	mica
+Mca	mica
+Fch	mica
+Pg	mica
+Glt	mica
+Znw	mica
+Cb	carbonate
+Cal	carbonate
+Dol	carbonate
+Ank	carbonate
+Sd	carbonate
+Mgs	carbonate
+Arg	carbonate
+Ccs	carbonate
+Rds	carbonate
+Smi	carbonate
+Str	carbonate
+Wth	carbonate
+Tlc	talc
+Srp	talc
+Chl	talc
+Atg	talc
+Ctl	talc
+Lz	talc
+Stc	talc
+Grt	garnet
+Alm	garnet
+Grs	garnet
+Uv	garnet
+Hem	iron_oxide
+Gth	iron_oxide
+Lm	iron_oxide
+FeOx	iron_oxide
+Mag	iron_oxide
+Mgh	iron_oxide
+Mrt	iron_oxide
+Chr	chromite
+Gr	carbonaceous
+C	carbonaceous
+Spd	lithium
+Lpd	lithium
+Ptl	lithium
+Euc	lithium
+Aby	lithium
+Mtb	lithium
+Hlm	lithium

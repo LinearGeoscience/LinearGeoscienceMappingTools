@@ -21,6 +21,8 @@ Two ways to do it. Use the scripted path unless you are making a throwaway one-o
 | Stroke width + measured ink coverage per texture | `Template/patterns/stroke_widths.tsv` |
 | Mineral ink colours | `Template/patterns/mineral_inks.tsv` |
 | Resolved fill + ink per code (output, for review) | `Template/patterns/lith_fills.tsv` |
+| Grain-size tile multipliers + texture fill nudges (per feature) | `Template/patterns/texture_modulation.tsv` |
+| Mineral → ink-family map for the per-feature ink tint | `Template/patterns/mineral_families.tsv` |
 
 ### Colour belongs in the live template
 
@@ -75,8 +77,15 @@ FMYN	granite	Lithology	My New Granite	-	kfeldspar	granite
 ### 3. Rebuild
 
 ```
+python scripts\inject_basemap_lith_modulation.py
 "C:\OSGeo4W\bin\python-qgis-ltr.bat" scripts\inject_basemap_lith_patterns.py
 ```
+
+The modulation injector runs FIRST: it bakes the per-feature Lith2/texture/
+mineral modulation (virtual fields + the dd fillColor on every class symbol)
+into the live template from the current palette, and a code added or
+recoloured without re-running it would blend from stale colours. The patterns
+injector runs LAST — always — and refuses a half-applied modulation state.
 
 It refuses to run if anything is inconsistent — a code in one table and not the other, a texture
 with no tile, an ink that cannot be seen against its fill, or two different rocks that would
