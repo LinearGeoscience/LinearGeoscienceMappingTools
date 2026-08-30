@@ -33,8 +33,13 @@ without writing.
 
 Run AFTER inject_cover_mechanism.py's state exists (i.e. on a round-2
 template); run inject_basemap_lith_patterns.py after to re-bake the
-patterns template, and inject_label_size_scaling.py for the 6.5 pt cover
-label size (a separate, re-runnable owner of the Size property).
+patterns template.
+
+Round 3 gave cover a size step as well as this colour - 6.5 pt against the
+lithology 5.5 - so it read as its own identity twice over. That half was
+dropped on 30 Aug 2026 and cover now letters at the lithology size; the gold
+below is the whole identity. inject_label_size_scaling.py owns the Size
+property and no longer branches on cover at all.
 
 Usage:  python scripts/inject_cover_gold_round3.py [path\\to\\gpkg]
         (defaults to Template/LGS_MappingTemplate.gpkg next to this repo)

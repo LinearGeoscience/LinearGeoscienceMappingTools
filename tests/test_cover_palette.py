@@ -229,11 +229,14 @@ class TestTemplateMatchesPalette(unittest.TestCase):
         # The static colour still belongs to inject_label_cartography.py.
         self.assertIn('textColor="26,26,26,255', style.group(0))
 
-    def test_cover_labels_are_a_size_step_up(self):
-        # Round 3's second identity channel: the dd Size expression
-        # (inject_label_size_scaling.py) scales Transported Cover labels
-        # by 6.5/5.5 over the lithology base. Pin the branch, not the
-        # whole expression - the extent factor is that script's business.
+    def test_cover_labels_letter_at_the_lithology_size(self):
+        # Round 3 gave cover a size step as well as a colour - 6.5 pt against
+        # the lithology 5.5 - so it read as its own identity twice over. The
+        # size step is gone (user decision, 30 Aug 2026) and gold is now the
+        # only channel. Asserted as an absence because that is what regressed
+        # before: re-running inject_label_size_scaling.py rebuilds this
+        # expression from scratch, so a reinstated factor would come back
+        # silently in the bake rather than in a diff anyone reads.
         style = re.search(r'<text-style\b.*?</text-style>', self.qml, re.S)
         labeling = re.search(r'<labeling.*?</labeling>', self.qml, re.S)
         dd = re.compile(r'<dd_properties>.*?</dd_properties>', re.S).search(
@@ -243,8 +246,16 @@ class TestTemplateMatchesPalette(unittest.TestCase):
                          dd, re.S)
         self.assertIsNotNone(size, "no dd Size on the Basemap labeling")
         expr = size.group(1).replace("&quot;", '"')
-        self.assertIn("\"TypeLith1\" = 'Transported Cover'", expr)
-        self.assertIn("6.5 / 5.5", expr)
+        self.assertNotIn("6.5 / 5.5", expr,
+                         "the cover size step is back in the dd Size")
+        self.assertNotIn("Transported Cover", expr,
+                         "the dd Size branches on cover again - cover must "
+                         "letter at the lithology size and differ by gold only")
+        # The colour half of the identity is still very much on, and is
+        # checked by test_cover_labels_carry_the_gold_token above.
+        self.assertIn("Transported Cover", dd.replace("&quot;", '"'),
+                      "the dd block lost its cover branch entirely - the gold "
+                      "label token should still be there")
 
 
 if __name__ == "__main__":

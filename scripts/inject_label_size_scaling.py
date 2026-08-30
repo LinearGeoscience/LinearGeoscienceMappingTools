@@ -74,12 +74,13 @@ EXTENT_F = (
     "ELSE 1 END"
 )
 
-# Cover round 3: Transported Cover labels sit a step above the lithology
-# lettering (6.5 pt against the 5.5 pt static), the size half of the gold
-# identity that inject_cover_gold_round3.py paints. Written as a ratio so a
-# restyled static fontSize keeps cover proportionally larger.
-COVER_F = ("CASE WHEN \"TypeLith1\" = 'Transported Cover' "
-           "THEN (6.5 / 5.5) ELSE 1 END")
+# Cover round 3 gave Transported Cover labels a size step as well as a
+# colour - 6.5 pt against the lithology 5.5 pt - so cover read as its own
+# identity twice over. The size half is gone (user decision, 30 Aug 2026):
+# cover now letters at exactly the lithology and regolith size and is told
+# apart by the gold alone, which inject_cover_gold_round3.py still paints.
+# Deliberately not left as a factor of 1: an identity CASE over every feature
+# is cost with no effect, and a reader would go looking for what it did.
 
 # Rein in QGIS' reference-scale multiplier, for label text only.
 #
@@ -140,7 +141,7 @@ PAPER_F = (
 LAYER_FACTORS = {
     "2 - Linework": [WEIGHT_F, WIDTH_F, PAPER_F],
     "3 - Overlay": [WEIGHT_F, EXTENT_F, PAPER_F],
-    "4 - Basemap": [COVER_F, EXTENT_F, PAPER_F],
+    "4 - Basemap": [EXTENT_F, PAPER_F],
 }
 
 

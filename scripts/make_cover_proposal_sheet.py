@@ -220,8 +220,10 @@ section h2{
   gap:.15rem; font-size:.78rem; color:var(--muted); line-height:1.45}
 .ident-cap strong{color:var(--ink); font-weight:600;
   font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; font-size:.78rem}
-/* the map lettering: Leelawadee UI Semilight at the 6.5pt cover size,
-   shown beside the 5.5pt lithology black for scale */
+/* the map lettering: Leelawadee UI Semilight, cover gold beside the
+   lithology black. Both letter at the same 5.5pt size on the map now -
+   cover's old 6.5pt step was dropped 30 Aug 2026, leaving gold as the
+   whole identity */
 .maplabel{
   font-family:"Leelawadee UI Semilight","Leelawadee UI","Segoe UI",sans-serif;
   font-weight:350; font-size:21px; letter-spacing:.02em;
