@@ -46,26 +46,29 @@ REFERENCE_SCALE_VAR = "lgs_reference_scale"
 
 #: The literal every style falls back to when the variable is not there.
 #: Written as `coalesce(to_real(@lgs_reference_scale), NNNN)` so one pattern
-#: finds it wherever it appears - the data-defined label Size baked by
-#: scripts/inject_label_size_scaling.py, the Shear Zone Boundary wave's
-#: geometry generator, and anything added later that needs the reference
-#: scale. Baked as 0 and rewritten in the live styles by
-#: bake_reference_scale_into_styles() below.
+#: finds it wherever it appears. Today the only reader is the data-defined
+#: label Size baked by scripts/inject_label_size_scaling.py; the pattern is
+#: deliberately style-wide rather than label-specific so that anything else
+#: needing the reference scale is carried without a hook of its own. Baked as
+#: 0 and rewritten in the live styles by bake_reference_scale_into_styles().
 #:
 #: ZERO MEANS "I DO NOT KNOW", AND EVERY READER MUST GUARD IT. It is not a
 #: scale, and it is not safe to divide by or feed onward. What "unknown"
-#: should fall back to differs per consumer and only the consumer knows it:
-#: the label size drops to a factor of 1, which is simply the old behaviour,
-#: while the shear-zone wave falls back to $geometry - because wave() with a
-#: zero wavelength returns NULL, so an unguarded zero would erase the
-#: boundary rather than mis-size it, and a geometry generator that emits
-#: nothing fails invisibly. A new reader that divides by this without a
-#: `<= 0` branch inherits that failure mode.
+#: falls back to differs per consumer and only the consumer knows it - the
+#: label size drops to a factor of 1, which is simply the old behaviour.
 #:
-#: Keep in step with inject_label_size_scaling.REF_SCALE. Both sides pin the
-#: token so a reformat fails loudly instead of the bake quietly missing a
-#: consumer: tests/test_label_size_invariance_qgis.py for the label Size,
-#: tests/test_shear_wave_qgis.py for the generator.
+#: That rule was bought the hard way by a second reader that has since been
+#: removed: a geometry generator that took a wavelength from this literal.
+#: Zero wavelength made wave() return NULL, so an unguarded zero erased the
+#: line rather than mis-sizing it - and a generator that emits nothing fails
+#: invisibly, where a wrong size at least shows. Keep the guard in mind for
+#: anything ground-locked onto this literal later; a `<= 0` branch choosing
+#: its own old behaviour is the price of reading it.
+#:
+#: Keep in step with inject_label_size_scaling.REF_SCALE, and note that both
+#: ends pin the token shape - tests/test_label_size_invariance_qgis.py checks
+#: this pattern against what the injector actually bakes, so a reformat on
+#: either side fails loudly instead of the bake quietly missing a consumer.
 REFERENCE_SCALE_LITERAL_RE = re.compile(
     r"(coalesce\(\s*to_real\(\s*@lgs_reference_scale\s*\)\s*,\s*)([0-9.]+)(\s*\))")
 
@@ -552,10 +555,12 @@ class LayerConfigurator:
         "unknown" and lose the compensation. The literal lives in the layer's
         own style, so it travels inside the .qgz.
 
-        Done on the serialised style rather than by walking properties: one
-        pattern then catches every consumer - the data-defined label Size, the
-        Shear Zone Boundary wave's geometry generator, and anything added
-        later - instead of each needing its own hook here.
+        Done on the serialised style rather than by walking the labeling
+        properties: one pattern then catches every consumer wherever it sits,
+        so anything that needs the reference scale later - a symbol layer, a
+        geometry generator - is carried without its own hook here. Only the
+        label Size reads it today, but the generality has already earned its
+        keep once, and it costs nothing.
         """
         changed = 0
         for role, layer_id in layers_dict.items():
