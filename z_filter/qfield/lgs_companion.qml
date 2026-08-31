@@ -6918,6 +6918,14 @@ Item {
   // self-intersection scan on the final splined sequence.
   readonly property real reshapeDedupePoints: 0.5
   readonly property int reshapeLoopCap: 2000
+  // Auto-repair ladder constants (v32). The probe WKT cap guards the
+  // expression parser (a 10k-vertex LINESTRING can defeat it and the
+  // scan dies as 'no candidates'); repair decimates at 2 pt; end
+  // extension starts at 24 pt on screen and doubles per iteration.
+  readonly property int reshapeProbeWktCap: 64000
+  readonly property real reshapeRepairPoints: 2.0
+  readonly property real reshapeExtendStartPoints: 24
+  readonly property int reshapeExtendMaxIter: 6
 
   // Dedupe epsilon in map units; 0 (unreadable map settings) degrades
   // to exact-coincident removal only.
@@ -7379,23 +7387,53 @@ Item {
     return 'LINESTRING (' + coords.join(', ') + ')'
   }
 
+  // Wrap a geometry term (in map CRS) with the map→layer transform when
+  // the layer disagrees. Unreadable authids skip the transform (LGS
+  // exports are single-CRS mine grids) — worst case 0 candidates.
+  function reshapeCrsTerm(term) {
+    try {
+      const layerCrs = evalExpr(reshapeLayer, null,
+                                "layer_property(@layer, 'crs')")
+      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
+      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
+        return "transform(" + term + ", '" + mapCrs + "', '" +
+               layerCrs + "')"
+    } catch (error) {}
+    return term
+  }
+
   function reshapeProbeExpr() {
     const wkt = reshapeLineWkt()
     if (wkt === '')
       return ''
     let term = "geom_from_wkt('" + wkt + "')"
-    try {
-      // The line is in map (= project) CRS; reproject the probe when the
-      // layer disagrees. Unreadable authids skip the transform (LGS
-      // exports are single-CRS mine grids) — worst case 0 candidates.
-      const layerCrs = evalExpr(reshapeLayer, null,
-                                "layer_property(@layer, 'crs')")
-      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
-      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
-        term = "transform(" + term + ", '" + mapCrs + "', '" +
-               layerCrs + "')"
-    } catch (error) {}
-    return 'intersects($geometry, ' + term + ')'
+    if (wkt.length > reshapeProbeWktCap) {
+      // A LINESTRING this long can defeat the expression parser, and
+      // the whole scan then dies as 'no candidates'. Fall back to the
+      // conditioned CONTROL polyline buffered by half its longest
+      // chord — a superset of the real candidates (the spline never
+      // strays further from its control polygon than that); the extras
+      // just come back unchanged from the reshape itself (v32).
+      const controls = reshapeConditionSequence(reshapeControls,
+          reshapeConditionEps(), 0)
+      if (controls.length >= 2) {
+        let coords = []
+        let maxChord = 0
+        for (let i = 0; i < controls.length; i++) {
+          coords.push(controls[i].x + ' ' + controls[i].y)
+          if (i > 0) {
+            const dx = controls[i].x - controls[i - 1].x
+            const dy = controls[i].y - controls[i - 1].y
+            const chord = Math.sqrt(dx * dx + dy * dy)
+            if (chord > maxChord)
+              maxChord = chord
+          }
+        }
+        term = "buffer(geom_from_wkt('LINESTRING (" + coords.join(', ') +
+               ")'), " + (maxChord / 2) + ')'
+      }
+    }
+    return 'intersects($geometry, ' + reshapeCrsTerm(term) + ')'
   }
 
   // ----------------------------------------------------------------
@@ -7418,6 +7456,7 @@ Item {
     let plan = []
     let failed = 0
     let iterator = null
+    let scanFailed = false
     try {
       // The iterator honours the layer subsetString, so an active Z
       // filter means only VISIBLE polygons reshape — reshape what you see.
@@ -7435,7 +7474,11 @@ Item {
         }
         plan.push({ fid: feature.id, wkt: wkt, feature: feature })
       }
-    } catch (error) {}
+    } catch (error) {
+      // A dead iterator is NOT 'no candidates' — reporting it as such
+      // sends the user off redrawing a perfectly good line (v32).
+      scanFailed = true
+    }
     try {
       if (iterator !== null)
         iterator.close()
@@ -7443,7 +7486,95 @@ Item {
     if (failed > 0)
       toast(qsTr('%1 polygon(s) skipped (geometry read failed)').arg(failed))
     reshapePlan = plan
+    if (scanFailed && plan.length === 0)
+      return -1
     return plan.length
+  }
+
+  // ----------------------------------------------------------------
+  // Auto-repair ladder (v32). Three attempts per feature, stopping at
+  // the first Success: the line as drawn; the line rebuilt from
+  // harder-decimated controls; the line with its ends extended past
+  // the boundary of the specific polygon that refused it.
+  // ----------------------------------------------------------------
+  function reshapeApplyOnce(layer, fid) {
+    try {
+      return Number(GeometryUtils.reshapeFromRubberband(
+          layer, fid, reshapeModel))
+    } catch (error) {
+      return -1
+    }
+  }
+
+  // Attempt 2: decimate the controls at reshapeRepairPoints (harder
+  // than the 8 pt capture gate ever needed), re-spline with a FRESH
+  // cache (different controls must not pollute the session cache), and
+  // condition the result.
+  function reshapeRepairedSequence() {
+    const eps = reshapeConditionEps()
+    let minDist = 0
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        minDist = perPoint * reshapeRepairPoints
+    } catch (error) {}
+    const controls = splineDecimate(
+        reshapeConditionSequence(reshapeControls, eps, 0), minDist)
+    let seq = controls
+    if (splineArmed) {
+      const s = splineConfirmSequence(controls, false, splineTightness,
+          splineTolerance, splineMaxSegments, ({}), reshapeDensity())
+      if (s !== null)
+        seq = s
+    }
+    return reshapeConditionSequence(seq, eps, reshapeLoopCap)
+  }
+
+  // Does this end of the line sit inside the SNAPSHOT feature, or graze
+  // its boundary within eps? The snapshot matters: the live geometry
+  // may already have been reshaped by an earlier feature this session.
+  // eps is in map units; boundary distance evaluates in layer units —
+  // same thing on the single-CRS mine grids LGS exports.
+  function reshapeEndNeedsExtend(layer, feature, p, eps) {
+    const term = reshapeCrsTerm('make_point(' + p.x + ', ' + p.y + ')')
+    const expr = 'intersects($geometry, ' + term + ')' +
+        (eps > 0 ? ' OR distance(boundary($geometry), ' + term + ') <= ' +
+                   eps : '')
+    return evalExpr(layer, feature, expr) === 'true'
+  }
+
+  // Attempt 3: extend whichever ends land inside (or graze) the target,
+  // doubling the extension until both ends probe clear or the iteration
+  // cap. Extension appends straight external points — it cannot change
+  // the drawn curve.
+  function reshapeExtendedSequence(layer, feature, seq, eps) {
+    if (seq.length < 2)
+      return null
+    const extFirst = reshapeEndNeedsExtend(layer, feature, seq[0], eps)
+    const extLast = reshapeEndNeedsExtend(layer, feature,
+                                          seq[seq.length - 1], eps)
+    if (!extFirst && !extLast)
+      return null
+    let dist = 0
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        dist = perPoint * reshapeExtendStartPoints
+    } catch (error) {}
+    if (!(dist > 0))
+      dist = eps > 0 ? eps * 48 : 1
+    let out = seq
+    for (let i = 0; i < reshapeExtendMaxIter; i++) {
+      out = reshapeExtendEnds(seq, extFirst, extLast, dist)
+      const firstClear = !extFirst ||
+          !reshapeEndNeedsExtend(layer, feature, out[0], eps)
+      const lastClear = !extLast ||
+          !reshapeEndNeedsExtend(layer, feature, out[out.length - 1], eps)
+      if (firstClear && lastClear)
+        break
+      dist = dist * 2
+    }
+    return out
   }
 
   function executeReshape() {
@@ -7454,21 +7585,63 @@ Item {
       reshapeResultText = qsTr('Reshaping…')
       const names = attributeNames(layer, reshapePlan[0].feature)
       const uuidField = detectUuidField(names)
+      const eps = reshapeConditionEps()
+      // Ladder sequences, built once. The final splined line gets its
+      // own loop pass here — live preview skips it above the cap.
+      const seqBase = reshapeConditionSequence(reshapeSequence(), eps,
+                                               reshapeLoopCap)
+      let seqRepaired = null
+      try {
+        seqRepaired = reshapeRepairedSequence()
+        if (seqRepaired.length === seqBase.length &&
+            JSON.stringify(seqRepaired) === JSON.stringify(seqBase))
+          seqRepaired = null
+      } catch (error) {
+        seqRepaired = null
+      }
       let undoEntries = []
       let unchanged = 0
       let failed = 0
+      let repaired = 0
+      let written = null
+      function writeAttempt(tag, seq) {
+        if (written === tag)
+          return
+        reshapeWriteModel(seq)
+        written = tag
+      }
       try {
         layer.startEditing()
       } catch (error) {}
       for (const target of reshapePlan) {
-        let result = -1
-        try {
-          result = Number(GeometryUtils.reshapeFromRubberband(
-              layer, target.fid, reshapeModel))
-        } catch (error) {
-          result = -1
+        let attempts = []
+        writeAttempt('base', seqBase)
+        let result = reshapeApplyOnce(layer, target.fid)
+        attempts.push(result)
+        if (result === 1000 && seqRepaired !== null) {
+          writeAttempt('repaired', seqRepaired)
+          result = reshapeApplyOnce(layer, target.fid)
+          attempts.push(result)
         }
+        if (result === 1000) {
+          let seqExt = null
+          try {
+            seqExt = reshapeExtendedSequence(layer, target.feature,
+                seqRepaired !== null ? seqRepaired : seqBase, eps)
+          } catch (error) {
+            seqExt = null
+          }
+          if (seqExt !== null) {
+            writeAttempt('ext' + target.fid, seqExt)
+            result = reshapeApplyOnce(layer, target.fid)
+            attempts.push(result)
+          }
+        }
+        console.log('LGS reshape: fid ' + target.fid + ' attempts [' +
+                    attempts.join(', ') + ']')
         if (result === 0) {                 // GeometryUtils.Success
+          if (attempts.length > 1)
+            repaired++
           // Reshape mutates in place — fid and UUID stay stable, so the
           // undo can find the feature again by either.
           let uuid = ''
@@ -7520,8 +7693,10 @@ Item {
         iface.mapCanvas().refresh()
       } catch (error) {}
       let message = qsTr('Reshaped %1 polygon(s)').arg(undoEntries.length)
+      if (repaired > 0)
+        message += qsTr(' — %1 repaired automatically').arg(repaired)
       if (unchanged > 0)
-        message += qsTr(' — %1 unchanged (the line must cross the boundary at two points)').arg(unchanged)
+        message += qsTr(' — %1 unchanged (the line must enter and exit through the boundary)').arg(unchanged)
       if (failed > 0)
         message += qsTr(' — %1 failed').arg(failed)
       reshapeResultText = message
@@ -7938,7 +8113,12 @@ Item {
           onClicked: {
             // Count first so the dialog can show how many polygons are
             // about to change; refuse a no-op reshape outright.
-            if (plugin.collectReshapeTargets() === 0) {
+            const count = plugin.collectReshapeTargets()
+            if (count < 0) {
+              plugin.toast(qsTr('Reshape scan failed — try again or simplify the line'))
+              return
+            }
+            if (count === 0) {
               plugin.toast(qsTr('The line does not cross any polygon'))
               return
             }
