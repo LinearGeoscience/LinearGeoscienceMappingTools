@@ -270,6 +270,33 @@ check(view.frame_extent(_NoController(), None) is False,
 check(view.frame_extent(_NoController(), QgsRectangle()) is False,
       'empty extent -> refuses')
 
+section('the panel must always be able to open a view')
+# The panel is cached on the plugin, so most presses of "View in 3D"
+# take the re-show path. That path once just re-showed the panel and
+# returned, so every press after the first silently opened nothing.
+import inspect  # noqa: E402
+
+from view3d import dialog as v3d_dialog  # noqa: E402
+
+run_src = inspect.getsource(v3d_dialog.run)
+check('panel = existing' in run_src,
+      're-show path falls through instead of returning early')
+check(run_src.count('return panel') >= 3,
+      're-show and fresh paths share one open decision')
+check('find_lgs_canvas' in run_src,
+      'run checks whether a view is already open before opening one')
+check('_open_view' in run_src, 'run can still open a view')
+check('QTimer.singleShot' in run_src,
+      'the open stays deferred out of the click dispatch')
+check('pushWarning' in run_src,
+      'a suppressed auto-open is reported where it cannot be missed')
+
+open_src = inspect.getsource(v3d_dialog.View3DPanel._open_view)
+check('SETTING_OPENING' in open_src, 'the crash breadcrumb is still set')
+check('finally' in open_src, 'and always cleared')
+check('3D view open' in open_src,
+      'success is stated, never left on "Opening..."')
+
 section('lighting')
 qe = Qgs3DMapSettings()
 check(qe.eyeDomeLightingEnabled() is False,
