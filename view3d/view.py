@@ -26,7 +26,8 @@ try:
 except ImportError:
     from view3d import terrain
 
-VIEW_NAME = "LGS 3D"
+# QGIS names the view itself ("3D Map N") — see _create_canvas for why we
+# no longer supply one.
 
 # Render quality. QGIS draws the 2D map into square terrain tiles and
 # stretches each over its patch of ground, so the DRAPE sharpness is
@@ -70,15 +71,23 @@ def _map_settings(canvas):
 
 
 def find_lgs_canvas(iface):
-    """The already-open LGS 3D view, or None."""
+    """Our 3D view if it is still open, else None.
+
+    Identified by object identity against the live list, not by name: the
+    view name belongs to the Qgs3DMapCanvasWidget, never to the canvas
+    (canvas.objectName() is empty), so matching on it always failed and
+    every click built another view.
+    """
     global _open_canvas
+    if _open_canvas is None:
+        return None
     try:
         canvases = list(iface.mapCanvases3D())
     except Exception:
         canvases = []
     for canvas in canvases:
         try:
-            if canvas is _open_canvas or canvas.objectName() == VIEW_NAME:
+            if canvas is _open_canvas:
                 return canvas
         except RuntimeError:  # wrapped C++ object deleted
             continue
@@ -180,8 +189,17 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     created = canvas is None
     if created:
         canvas = _create_canvas(iface)
+        if canvas is None:
+            # QGIS refuses and shows its own warning when the project
+            # extent is empty or non-finite.
+            raise RuntimeError(
+                "QGIS would not open a 3D view. This usually means the "
+                "project extent is not valid — add or turn on a layer "
+                "with real extent, then try again.")
         _open_canvas = canvas
     settings = _map_settings(canvas)
+    if settings is None:
+        raise RuntimeError("The 3D view opened without map settings.")
 
     if extent is None:
         extent = iface.mapCanvas().extent()
@@ -211,28 +229,57 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
 
 
 def close_view(iface):
+    """Close our 3D view.
+
+    QGIS closes these by view NAME, which it assigned and we never learn,
+    so close the dock widget the canvas lives in instead.
+    """
     global _open_canvas
     canvas = find_lgs_canvas(iface)
     if canvas is None:
         return False
+    closed = False
     try:
-        iface.closeMapCanvas3D(canvas.objectName() or VIEW_NAME)
-    except Exception:
+        from qgis.PyQt.QtWidgets import QDockWidget
+        parent = canvas.parent()
+        hops = 0
+        while parent is not None and hops < 8:
+            if isinstance(parent, QDockWidget):
+                parent.close()
+                closed = True
+                break
+            parent = parent.parent()
+            hops += 1
+    except Exception as exc:
+        _log(f"3D view: close by dock failed: {exc}",
+             Qgis.MessageLevel.Warning)
+    if not closed:
         try:
             canvas.close()
+            closed = True
         except Exception:
             pass
     _open_canvas = None
-    return True
+    return closed
 
 
 def _create_canvas(iface):
-    # 4.x takes (name, sceneMode); globe mode without an ellipsoid renders
-    # black (qgis#66931), so pass Local explicitly. 3.40 takes (name).
+    """Create a 3D view exactly the way QGIS's own menu action does.
+
+    Pass an EMPTY name on purpose. QGIS then picks "3D Map N", checking it
+    against the project's registered view names. Supplying our own name
+    took a different path: createNew3DMapCanvasDock() returns nullptr when
+    a canvas of that name is already open, and the name uniquifier only
+    consults the project's SAVED views, so a still-open unsaved "LGS 3D"
+    would collide and hand back None.
+
+    4.x takes (name, sceneMode); globe mode without an ellipsoid renders
+    black (qgis#66931), so pass Local explicitly. 3.40 takes (name) only.
+    """
     try:
-        return iface.createNewMapCanvas3D(VIEW_NAME, Qgis.SceneMode.Local)
+        return iface.createNewMapCanvas3D("", Qgis.SceneMode.Local)
     except (TypeError, AttributeError):
-        return iface.createNewMapCanvas3D(VIEW_NAME)
+        return iface.createNewMapCanvas3D("")
 
 
 def _focus(canvas):
