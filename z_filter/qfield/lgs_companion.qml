@@ -7918,12 +7918,17 @@ Item {
     z: 1
 
     TapHandler {
-      // Default DragThreshold gesture policy: passive grab, so pan and
-      // pinch on the canvas underneath keep working — only clean taps
-      // land here. In freehand mode (v32) the accepted devices narrow
-      // to the drawing devices: a finger tap is inert (a real
-      // stray-point hazard once freehand is an explicit mode) while a
-      // clean stylus tap still places a single precise point.
+      // ReleaseWithinBounds (v32): the exclusive grab consumes the tap
+      // so it stops leaking through to QField's identify underneath —
+      // same policy, same reason as every pill. Movement past the drag
+      // threshold still hands the grab to the canvas's pan/pinch (the
+      // default grabPermissions approve the take-over); revert this one
+      // line if pan feel regresses on device. In freehand mode the
+      // accepted devices narrow to the drawing devices: a finger tap is
+      // inert (a real stray-point hazard once freehand is an explicit
+      // mode) while a clean stylus tap still places a single precise
+      // point.
+      gesturePolicy: TapHandler.ReleaseWithinBounds
       acceptedDevices: plugin.reshapeStep === 2 &&
                        plugin.reshapeStyle === 'free'
           ? (plugin.reshapeSettingsItem !== null &&
