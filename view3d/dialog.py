@@ -153,6 +153,12 @@ class View3DPanel(QDialog):
         self.close_view_button = QPushButton("Close 3D View")
         self.close_view_button.clicked.connect(self._close_view)
         button_row.addWidget(self.close_view_button)
+        self.diagnose_button = QPushButton("Diagnose")
+        self.diagnose_button.setToolTip(
+            "Write what the 3D view actually contains — camera, terrain, "
+            "layers, CRSs — to the Linear Geoscience log panel.")
+        self.diagnose_button.clicked.connect(self._diagnose)
+        button_row.addWidget(self.diagnose_button)
         layout.addLayout(button_row)
 
         self.status_label = QLabel("")
@@ -338,8 +344,8 @@ class View3DPanel(QDialog):
                 layer = self._selected_dem_layer()
                 # Move the camera, never the scene extent: setExtent on a
                 # live view shifts the origin and empties it.
-                if layer is not None and view.frame_extent(canvas,
-                                                           layer.extent()):
+                if layer is not None and view.frame_extent(
+                        canvas, view.extent_in_project_crs(layer)):
                     self.status_label.setText(
                         "Framed to the pit surface DEM.")
                 else:
@@ -372,7 +378,8 @@ class View3DPanel(QDialog):
             self.status_label.setText("Select a DEM first.")
             return
         mode = self.mode_combo.currentData()
-        extent = layer.extent() if mode == 'pit' else None
+        extent = (view.extent_in_project_crs(layer)
+                  if mode == 'pit' else None)
         # A crash inside QGIS's 3D creation cannot be caught from Python,
         # so leave a breadcrumb instead: if we never get to clear it, the
         # next session knows not to walk into the same wall unasked.
@@ -400,6 +407,22 @@ class View3DPanel(QDialog):
             self.status_label.setText(
                 "3D view open — mapping is draped on the terrain.")
         self._save_settings()
+
+    def _diagnose(self):
+        try:
+            view.log_diagnostics(self.iface, self._selected_dem_layer())
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                "Diagnostics failed: {0}".format(exc),
+                'Linear Geoscience', Qgis.MessageLevel.Warning)
+            self.status_label.setText("Diagnostics failed: {0}".format(exc))
+            return
+        self.iface.messageBar().pushInfo(
+            "Linear Geoscience",
+            "3D diagnostics written to the log (View ▸ Panels ▸ Log "
+            "Messages ▸ Linear Geoscience).")
+        self.status_label.setText(
+            "Diagnostics written to the Log Messages panel.")
 
     def _close_view(self):
         self._exit_underground_if_active()

@@ -261,6 +261,29 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     return canvas
 
 
+def extent_in_project_crs(layer, project=None):
+    """A layer's extent in the PROJECT's CRS.
+
+    QgsMapLayer.extent() is in the LAYER's own CRS. Aiming the map canvas
+    or the 3D camera with it unprojected puts the view in the wrong place
+    whenever they differ — here the pit DEM is GDA94 / MGA51 while the
+    mapping is GDA2020 / MGA51.
+    """
+    from qgis.core import QgsCoordinateTransform
+    project = project or QgsProject.instance()
+    extent = layer.extent()
+    try:
+        if layer.crs() == project.crs() or not layer.crs().isValid():
+            return extent
+        transform = QgsCoordinateTransform(layer.crs(), project.crs(),
+                                           project)
+        return transform.transformBoundingBox(extent)
+    except Exception as exc:
+        _log(f"3D view: extent reprojection failed, using raw extent: "
+             f"{exc}", Qgis.MessageLevel.Warning)
+        return extent
+
+
 def frame_extent(canvas, extent):
     """Point an already-open view's camera at `extent`, top-down.
 
@@ -295,6 +318,104 @@ def frame_extent(canvas, extent):
         _log(f"3D view: could not aim the camera: {exc}",
              Qgis.MessageLevel.Warning)
         return False
+
+
+def describe(iface, dem_layer=None):
+    """Everything worth knowing about the open 3D view, as text.
+
+    An empty 3D window looks the same whether the camera is in the wrong
+    place, the terrain never built, or nothing is draped on it. This
+    reports which, into the Linear Geoscience log panel.
+    """
+    project = QgsProject.instance()
+    out = []
+
+    def add(label, value):
+        out.append("  {0:<26} {1}".format(label, value))
+
+    out.append("=== View in 3D diagnostics ===")
+    add("QGIS", Qgis.QGIS_VERSION)
+    add("project CRS", project.crs().authid())
+    canvas2d = iface.mapCanvas()
+    add("2D canvas CRS", canvas2d.mapSettings().destinationCrs().authid())
+    add("2D canvas extent", canvas2d.extent().toString(1))
+    add("2D visible layers", len(canvas2d.layers()))
+
+    provider = project.elevationProperties().terrainProvider()
+    add("project terrain type", provider.type() if provider else "NONE")
+    tlayer = terrain.current_terrain_layer(project)
+    add("terrain layer", tlayer.name() if tlayer else "NONE")
+    if tlayer is not None:
+        add("terrain CRS", tlayer.crs().authid())
+        add("terrain extent (own CRS)", tlayer.extent().toString(1))
+        add("terrain extent (proj CRS)",
+            extent_in_project_crs(tlayer, project).toString(1))
+        add("terrain visible in 2D", tlayer in canvas2d.layers())
+
+    canvas = find_lgs_canvas(iface)
+    if canvas is None:
+        try:
+            others = len(list(iface.mapCanvases3D()))
+        except Exception:
+            others = "?"
+        add("our 3D canvas", "NOT OPEN (3D views existing: {0})".format(
+            others))
+        return "\n".join(out)
+
+    add("our 3D canvas", "open")
+    settings = canvas.mapSettings()
+    if settings is None:
+        add("3D map settings", "NONE")
+        return "\n".join(out)
+    add("3D CRS", settings.crs().authid())
+    try:
+        add("3D extent", settings.extent().toString(1))
+    except Exception:
+        pass
+    try:
+        add("3D origin", settings.origin().toString())
+    except Exception:
+        pass
+    add("3D layers draped", len(settings.layers()))
+    add("terrain rendering", settings.terrainRenderingEnabled())
+    add("vertical scale", current_z_factor(settings))
+    add("eye dome lighting", settings.eyeDomeLightingEnabled())
+    if hasattr(settings, 'terrainSettings'):
+        ts = settings.terrainSettings()
+        add("terrain settings class", type(ts).__name__)
+        for attr in ('resolution', 'mapTileResolution', 'verticalScale'):
+            if hasattr(ts, attr):
+                add("  ts." + attr, getattr(ts, attr)())
+
+    controller = canvas.cameraController()
+    if controller is None:
+        add("camera controller", "NONE")
+    else:
+        for attr in ('distance', 'pitch', 'yaw'):
+            if hasattr(controller, attr):
+                add("camera " + attr, getattr(controller, attr)())
+        for attr in ('lookingAtMapPoint', 'lookingAtPoint'):
+            if hasattr(controller, attr):
+                try:
+                    add("camera " + attr, getattr(controller, attr)()
+                        .toString())
+                except Exception:
+                    pass
+
+    scene = None
+    try:
+        scene = canvas.scene()
+    except Exception:
+        pass
+    add("scene", "present" if scene is not None else "NONE")
+    return "\n".join(out)
+
+
+def log_diagnostics(iface, dem_layer=None):
+    text = describe(iface, dem_layer)
+    QgsMessageLog.logMessage(text, 'Linear Geoscience',
+                             Qgis.MessageLevel.Info)
+    return text
 
 
 def close_view(iface):
