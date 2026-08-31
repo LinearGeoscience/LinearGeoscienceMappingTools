@@ -116,6 +116,35 @@ survey edge matters, use `-co COMPRESS=DEFLATE` instead and accept a larger file
 
 ---
 
+## Detail — why 3D can look blurry, and the fix
+
+QGIS does not draw your map onto the terrain directly. It renders it into square **terrain
+tiles**, then stretches each tile over its patch of ground like a decal. Two numbers decide
+how sharp that decal is, and QGIS's defaults are tuned for regional landscapes, not for
+0.5 m linework on a bench:
+
+| Setting | QGIS default | What it costs you |
+|---|---|---|
+| Map tile resolution | 512 px per tile | Too few texture pixels per metre — contours and linework smear |
+| Terrain screen error | 3 px | Tiles subdivide lazily, so one stretched tile covers too much ground |
+
+The **Detail** dropdown in the View in 3D panel sets both:
+
+| Detail | Tile | Screen error | When |
+|---|---|---|---|
+| Standard | 512 px | 3.0 | QGIS defaults — a slow machine, or regional-scale work |
+| **High** *(default)* | **1024 px** | **1.5** | **Pit and detailed mapping — four times the texture detail** |
+| Ultra | 2048 px | 1.0 | Screenshots and presentation; needs a decent GPU |
+
+It applies **live** — change it with the 3D view open and watch it sharpen. Tile resolution
+costs GPU memory quadratically, which is why High rather than Ultra is the default.
+
+Terrain *geometry* detail is handled for you: subdivision is capped at your DEM's own pixel
+size (0.79 m for the Fingals DEM), since subdividing past the data only interpolates. A
+coarse DEM keeps QGIS's 1 m default rather than being made worse.
+
+If it is still soft at Ultra, the limit is your DEM or the ortho, not the drape.
+
 ## Workflow A — regional mapping in 3D
 
 1. Open your mapping project and load the DEM (`1_Second_DEM_Smoothed.tif`).
@@ -221,6 +250,7 @@ and requiring a signal you probably do not have. The bake is what makes it work 
 | 3D view is flat | Project terrain never got set — reopen **View in 3D** rather than QGIS's own 3D menu, which does not configure terrain. |
 | Terrain has holes or spikes | Nodata not declared on the DEM (`gdalinfo` shows `NoData Value=`). Set it: `gdal_edit -a_nodata -9999 dem.tif`. |
 | Pit looks like a mountain range | Exaggeration is on. Turn it off for pits. |
+| Linework and contours look smeared or blurry | The drape texture, not the DEM. Raise **Detail** (see below). |
 | No 3D cube icon in the QField dashboard | QField older than 4.1. |
 | QField 3D shows generic hills, not your pit | The export was not baked — re-export with **Bake 3D terrain** ticked. |
 | Underground mode greyed out | No `MineStrings` layer; run the mining survey import first. |

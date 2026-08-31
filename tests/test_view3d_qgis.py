@@ -1,6 +1,6 @@
 """
-QGIS-side tests for view3d: project terrain wiring and the 3.40 settings
-XML patch helper.
+QGIS-side tests for view3d: project terrain wiring, DEM candidacy and
+3D render-quality settings.
 
 Requires QGIS. Run from the plugin root:
 
@@ -30,7 +30,6 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from qgis.core import QgsProject, QgsRasterLayer  # noqa: E402
-from qgis.PyQt.QtXml import QDomDocument  # noqa: E402
 
 from view3d import detect, terrain, view  # noqa: E402
 from z_filter.expression import (  # noqa: E402
@@ -166,35 +165,61 @@ check(not detect.is_dem_candidate(by_name['pit_ss_dem_hillshade']),
 chosen, reason = detect.choose_dem(rows, terrain.pinned_dem_id(project))
 check(chosen is not None and chosen['name'] == 'pit_ss_dem',
       'the DEM wins outright ({0})'.format(reason))
-project.clear()  # the XML section below needs no layers
+project.clear()
 
-section('3.40 settings XML patch helper')
-doc = QDomDocument()
-elem = doc.createElement('qgis3d')
-terrain_elem = doc.createElement('terrain')
-terrain_elem.setAttribute('exaggeration', '1')
-generator = doc.createElement('generator')
-generator.setAttribute('type', 'flat')
-terrain_elem.appendChild(generator)
-elem.appendChild(terrain_elem)
-doc.appendChild(elem)
+section('quality settings')
+# project.clear() deleted the layers above, so reload the DEM.
+dem = QgsRasterLayer(dem_path, 'topo_dem')
+project.addMapLayer(dem)
+from qgis._3d import Qgs3DMapSettings  # noqa: E402
 
-check(view.patch_terrain_element(elem, 'dem_id_1') is True,
-      'flat generator gets patched')
-check(generator.attribute('type') == 'dem'
-      and generator.attribute('layer') == 'dem_id_1',
-      'patched to DEM with the layer id')
-check(generator.attribute('resolution') != ''
-      and generator.attribute('skirt-height') != '',
-      'sane generator defaults filled in')
-check(view.patch_terrain_element(elem, 'dem_id_1') is False,
-      'already-correct generator is left alone')
-check(view.patch_terrain_element(elem, 'dem_id_2') is True,
-      'different DEM id re-patches')
 
-no_terrain = doc.createElement('qgis3d')
-check(view.patch_terrain_element(no_terrain, 'x') is False,
-      'element without <terrain> is a no-op')
+def read_quality(s):
+    if hasattr(s, 'terrainSettings'):
+        try:
+            ts = s.terrainSettings()
+            return (ts.mapTileResolution(), ts.maximumScreenError(),
+                    ts.maximumGroundError())
+        except Exception:
+            pass
+    return (s.mapTileResolution(), s.maxTerrainScreenError(),
+            s.maxTerrainGroundError())
+
+
+qs = Qgs3DMapSettings()
+base_tile = read_quality(qs)[0]
+check(base_tile == 512, 'QGIS still defaults to 512 px tiles')
+
+view.apply_quality(qs, 'high', dem)
+tile, screen, ground = read_quality(qs)
+check(tile == 1024, 'high raises the drape texture to 1024 px')
+check(screen < 3.0, 'high tightens the screen error ({0})'.format(screen))
+
+qs2 = Qgs3DMapSettings()
+view.apply_quality(qs2, 'ultra', dem)
+check(read_quality(qs2)[0] == 2048, 'ultra reaches 2048 px')
+
+# Ground error tracks the DEM but must never go COARSER than QGIS's 1.0.
+px = view.dem_pixel_size(dem)
+check(px is not None and abs(px - 10.0) < 0.01,
+      'DEM pixel size read back ({0})'.format(px))
+check(abs(read_quality(qs)[2] - 1.0) < 1e-6,
+      'a coarse DEM keeps the 1.0 m default ground error')
+
+qs3 = Qgs3DMapSettings()
+view.apply_quality(qs3, 'high', None)
+check(abs(read_quality(qs3)[2] - 1.0) < 1e-6,
+      'no DEM falls back to the default ground error')
+
+# Quality must survive the rest of the chain (4.x replaces the terrain
+# settings object in _ensure_dem_terrain, so order is load-bearing).
+qs4 = Qgs3DMapSettings()
+view._ensure_dem_terrain(qs4, dem, project)
+view.apply_quality(qs4, 'high', dem)
+view.apply_z_factor(qs4, 2.0)
+check(read_quality(qs4)[0] == 1024, 'quality survives the full open chain')
+check(abs(view.current_z_factor(qs4) - 2.0) < 1e-6,
+      'z factor survives the full open chain')
 
 project.clear()
 print('\n{0} passed, {1} failed'.format(_passed, _failed))

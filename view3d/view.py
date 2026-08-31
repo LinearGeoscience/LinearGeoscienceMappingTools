@@ -12,13 +12,14 @@ first (view3d/terrain.py), then create the native view.
 API branching is by feature detection, never version strings:
   - QGIS 4.x: Qgs3DMapSettings.terrainSettings()/setTerrainSettings()
     (QgsDemTerrainSettings et al.)
-  - QGIS 3.40: Qgs3DMapSettings.setTerrainVerticalScale() plus a
-    writeXml/readXml verify-and-patch fallback should the app not have
-    configured DEM terrain (app behaviour, not API contract).
+  - QGIS 3.40: the flat Qgs3DMapSettings setters (setTerrainVerticalScale,
+    setMapTileResolution, ...).
+
+Nothing here may call Qgs3DMapSettings.writeXml(): it SEGFAULTS on
+3.40.9, taking QGIS with it. See _ensure_dem_terrain.
 """
 
-from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsReadWriteContext
-from qgis.PyQt.QtXml import QDomDocument
+from qgis.core import Qgis, QgsMessageLog, QgsProject
 
 try:
     from . import terrain
@@ -26,6 +27,26 @@ except ImportError:
     from view3d import terrain
 
 VIEW_NAME = "LGS 3D"
+
+# Render quality. QGIS draws the 2D map into square terrain tiles and
+# stretches each over its patch of ground, so the DRAPE sharpness is
+# mapTileResolution (QGIS default 512 px per tile) and how eagerly those
+# tiles subdivide is maxTerrainScreenError (default 3 px). At the
+# defaults, pit-scale linework and contours arrive visibly smeared —
+# there simply are not enough texture pixels per metre of bench.
+#
+# tile px, screen error. Higher tile resolution costs GPU memory
+# quadratically, so 'high' rather than 'ultra' is the default.
+QUALITY_LEVELS = {
+    'standard': (512, 3.0),    # QGIS defaults
+    'high': (1024, 1.5),
+    'ultra': (2048, 1.0),
+}
+DEFAULT_QUALITY = 'high'
+
+# Never let terrain geometry subdivide coarser than QGIS would by
+# default; go finer only where the DEM actually holds finer data.
+DEFAULT_GROUND_ERROR = 1.0
 
 # The canvas we opened, so a second click focuses instead of duplicating.
 # Qt owns the widget; treat this as a hint and re-validate on every use.
@@ -59,8 +80,52 @@ def find_lgs_canvas(iface):
     return None
 
 
+def dem_pixel_size(dem_layer):
+    """Ground size of one DEM pixel in map units, or None."""
+    try:
+        x = abs(dem_layer.rasterUnitsPerPixelX())
+        y = abs(dem_layer.rasterUnitsPerPixelY())
+        size = max(x, y)
+        return size if size > 0 else None
+    except Exception:
+        return None
+
+
+def apply_quality(settings, quality=DEFAULT_QUALITY, dem_layer=None):
+    """Set drape texture resolution and terrain subdivision.
+
+    On 4.x these live on the terrain settings object; the old
+    Qgs3DMapSettings setters still work but are deprecated, so prefer the
+    new home when it exists.
+    """
+    tile_px, screen_error = QUALITY_LEVELS.get(
+        quality, QUALITY_LEVELS[DEFAULT_QUALITY])
+    ground_error = DEFAULT_GROUND_ERROR
+    pixel = dem_pixel_size(dem_layer) if dem_layer is not None else None
+    if pixel:
+        # Subdividing past the DEM's own resolution only interpolates.
+        ground_error = min(DEFAULT_GROUND_ERROR, pixel)
+
+    if hasattr(settings, 'setTerrainSettings'):  # QGIS 4.x
+        try:
+            ts = settings.terrainSettings()
+            ts = ts.clone() if hasattr(ts, 'clone') else ts
+            ts.setMapTileResolution(tile_px)
+            ts.setMaximumScreenError(screen_error)
+            ts.setMaximumGroundError(ground_error)
+            settings.setTerrainSettings(ts)
+            return
+        except Exception as exc:
+            _log(f"3D view: terrainSettings quality failed ({exc}); "
+                 "falling back to legacy setters",
+                 Qgis.MessageLevel.Warning)
+    settings.setMapTileResolution(tile_px)
+    settings.setMaxTerrainScreenError(screen_error)
+    settings.setMaxTerrainGroundError(ground_error)
+
+
 def open_view(iface, dem_layer, z_factor=1.0, extent=None,
-              terrain_enabled=True):
+              terrain_enabled=True, quality=DEFAULT_QUALITY):
     """Open (or refocus) the LGS 3D view over dem_layer.
 
     Sets the project terrain provider, creates the native 3D view, drapes
@@ -92,7 +157,10 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
             _log(f"3D view: could not set extent: {exc}",
                  Qgis.MessageLevel.Warning)
 
+    # Order matters on 4.x: _ensure_dem_terrain may install a fresh
+    # terrain-settings object, which would discard quality set before it.
     _ensure_dem_terrain(settings, dem_layer, project)
+    apply_quality(settings, quality, dem_layer)
     apply_z_factor(settings, z_factor)
     set_terrain_enabled(settings, terrain_enabled)
 
@@ -174,25 +242,26 @@ def set_terrain_enabled(settings, enabled):
 # --------------------------------------- 3.40 verify-and-patch fallback
 
 def _ensure_dem_terrain(settings, dem_layer, project):
-    """On 3.40 the app should have built DEM terrain from the project
-    provider; verify via the settings XML and patch the DOM if it stayed
-    flat. On 4.x the terrainSettings API is authoritative instead."""
+    """Make sure the view's terrain is the DEM.
+
+    On 4.x we set it outright through the terrain-settings API.
+
+    On 3.40 we deliberately do NOTHING, and rely on the app having called
+    configureTerrainFromProject() when it created the view — which is why
+    terrain.ensure_project_terrain() must run first. There is no safe way
+    to check or correct it from Python on 3.40:
+
+      * no terrain generator/settings class is exposed at all, and
+      * Qgs3DMapSettings.writeXml() SEGFAULTS on 3.40.9 (verified: it
+        crashes on a freshly constructed settings object, before any of
+        our calls), so the obvious introspect-and-patch route takes the
+        whole of QGIS down with it.
+
+    The failure mode without a fallback is flat terrain, which is
+    visible and harmless. Do not reintroduce an XML round-trip here.
+    """
     if hasattr(settings, 'setTerrainSettings'):
         _ensure_dem_terrain_4x(settings, dem_layer)
-        return
-    try:
-        doc = QDomDocument()
-        context = QgsReadWriteContext()
-        elem = settings.writeXml(doc, context)
-        if patch_terrain_element(elem, dem_layer.id()):
-            settings.readXml(elem, context)
-            if hasattr(settings, 'resolveReferences'):
-                settings.resolveReferences(project)
-            _log("3D view: patched settings XML to DEM terrain (3.40 "
-                 "fallback)")
-    except Exception as exc:
-        _log(f"3D view: DEM terrain verify/patch failed: {exc}",
-             Qgis.MessageLevel.Warning)
 
 
 def _ensure_dem_terrain_4x(settings, dem_layer):
@@ -208,27 +277,3 @@ def _ensure_dem_terrain_4x(settings, dem_layer):
     except Exception as exc:
         _log(f"3D view: 4.x DEM terrain setup failed: {exc}",
              Qgis.MessageLevel.Warning)
-
-
-def patch_terrain_element(elem, dem_layer_id):
-    """Point a <terrain><generator> DOM at the DEM layer if it isn't a
-    DEM generator already. Returns True when a patch was applied.
-    Split out (QDomElement in, QDomElement out) so the qgis-bound test
-    can exercise it against a captured fragment."""
-    terrain_elem = elem.firstChildElement('terrain')
-    if terrain_elem.isNull():
-        return False
-    generator = terrain_elem.firstChildElement('generator')
-    if generator.isNull():
-        generator = elem.ownerDocument().createElement('generator')
-        terrain_elem.appendChild(generator)
-    if generator.attribute('type') == 'dem' and \
-            generator.attribute('layer') == dem_layer_id:
-        return False
-    generator.setAttribute('type', 'dem')
-    generator.setAttribute('layer', dem_layer_id)
-    if not generator.hasAttribute('resolution'):
-        generator.setAttribute('resolution', '16')
-    if not generator.hasAttribute('skirt-height'):
-        generator.setAttribute('skirt-height', '10')
-    return True

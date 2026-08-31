@@ -648,6 +648,11 @@ current map extent.</p>
        Only a genuinely ambiguous project asks you to pick.</li>
    <li><b>Vertical exaggeration:</b> live on/off toggle and factor (e.g. 2x) in the
        control panel &mdash; terrain height changes immediately in the open view.</li>
+   <li><b>Detail control:</b> QGIS drapes the map as a texture on terrain tiles, and its
+       default 512&nbsp;px tiles leave pit linework visibly smeared. <i>High</i> (the
+       default here) uses 1024&nbsp;px tiles and tighter subdivision; <i>Ultra</i> doubles
+       it again. Terrain geometry detail is capped at the DEM's own pixel size
+       automatically.</li>
    <li><b>Pit mode:</b> frames the pit-surface DEM so mapping drapes onto bench faces
        and walls. The Z filter's bench subsetting carries into the 3D view
        automatically.</li>

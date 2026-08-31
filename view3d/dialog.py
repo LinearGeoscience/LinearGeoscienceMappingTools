@@ -33,7 +33,14 @@ except ImportError:
 SETTINGS_PREFIX = "LinearGeosciencePlugin/View3D/"
 SETTING_Z_ENABLED = SETTINGS_PREFIX + "zEnabled"
 SETTING_Z_FACTOR = SETTINGS_PREFIX + "zFactor"
+SETTING_QUALITY = SETTINGS_PREFIX + "quality"
 SETTING_GEOMETRY = SETTINGS_PREFIX + "dialogGeometry"
+
+QUALITY_CHOICES = [
+    ("standard", "Standard — QGIS default"),
+    ("high", "High — sharp linework (default)"),
+    ("ultra", "Ultra — slowest, needs a good GPU"),
+]
 
 MODES = [
     ("surface", "Surface — topography"),
@@ -103,6 +110,19 @@ class View3DPanel(QDialog):
         z_row.addStretch()
         view_layout.addLayout(z_row)
 
+        qual_row = QHBoxLayout()
+        qual_row.addWidget(QLabel("Detail:"))
+        self.quality_combo = QComboBox()
+        for key, label in QUALITY_CHOICES:
+            self.quality_combo.addItem(label, key)
+        self.quality_combo.setToolTip(
+            "How sharply the map is drawn onto the terrain. Raise this if "
+            "linework or contours look smeared; lower it if the view is "
+            "slow.")
+        self.quality_combo.currentIndexChanged.connect(self._quality_changed)
+        qual_row.addWidget(self.quality_combo, 1)
+        view_layout.addLayout(qual_row)
+
         view_group.setLayout(view_layout)
         layout.addWidget(view_group)
 
@@ -134,12 +154,20 @@ class View3DPanel(QDialog):
         self.z_check.setChecked(
             settings.value(SETTING_Z_ENABLED, False, bool))
         self.z_spin.setValue(settings.value(SETTING_Z_FACTOR, 2.0, float))
+        quality = settings.value(SETTING_QUALITY, view.DEFAULT_QUALITY, str)
+        idx = self.quality_combo.findData(quality)
+        if idx < 0:
+            idx = self.quality_combo.findData(view.DEFAULT_QUALITY)
+        self.quality_combo.blockSignals(True)
+        self.quality_combo.setCurrentIndex(max(0, idx))
+        self.quality_combo.blockSignals(False)
 
     def _save_settings(self):
         settings = QgsSettings()
         settings.setValue(SETTING_GEOMETRY, self.saveGeometry())
         settings.setValue(SETTING_Z_ENABLED, self.z_check.isChecked())
         settings.setValue(SETTING_Z_FACTOR, self.z_spin.value())
+        settings.setValue(SETTING_QUALITY, self.quality_combo.currentData())
 
     def closeEvent(self, event):
         # Leaving temporary subsets/renderers behind with no panel to undo
@@ -230,6 +258,17 @@ class View3DPanel(QDialog):
         if canvas is not None:
             view.apply_z_factor(canvas.mapSettings(), self._z_factor())
 
+    def _quality_changed(self, _index):
+        canvas = view.find_lgs_canvas(self.iface)
+        if canvas is None:
+            return
+        view.apply_quality(canvas.mapSettings(),
+                           self.quality_combo.currentData(),
+                           self._selected_dem_layer())
+        self.status_label.setText(
+            "Detail set to {0}.".format(self.quality_combo.currentText()))
+        self._save_settings()
+
     def _mode_changed(self, _index):
         canvas = view.find_lgs_canvas(self.iface)
         if canvas is None:
@@ -281,7 +320,8 @@ class View3DPanel(QDialog):
             canvas = view.open_view(
                 self.iface, layer, z_factor=self._z_factor(),
                 extent=extent,
-                terrain_enabled=(mode != 'underground'))
+                terrain_enabled=(mode != 'underground'),
+                quality=self.quality_combo.currentData())
         except Exception as exc:
             import traceback
             QgsMessageLog.logMessage(
