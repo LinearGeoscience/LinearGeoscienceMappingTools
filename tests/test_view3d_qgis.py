@@ -338,6 +338,51 @@ open_src = inspect.getsource(view.open_view)
 check('_TerrainExtentOverride' in open_src,
       'open_view constrains the extent while QGIS builds the view')
 
+section('the camera must be aimed at the ground, close in')
+# Left to itself QGIS parked the camera 101 km above a 1.2 km pit, so
+# the pit was a sub-pixel dot in an apparently empty window. We now aim
+# it ourselves for new views as well as reused ones.
+mid = view.mid_elevation(dem)
+check(90.0 < mid < 250.0,
+      'mid_elevation reads the synthetic DEM range ({0:.1f})'.format(mid))
+check(view.mid_elevation(None) == 0.0,
+      'mid_elevation degrades to 0 rather than raising')
+
+ext = view.extent_in_project_crs(dem, project)
+
+
+class _RecordingController:
+    def __init__(self):
+        self.called = None
+
+    def setLookingAtMapPoint(self, point, distance, pitch, yaw):
+        self.called = (point.x(), point.y(), point.z(), distance, pitch)
+
+
+class _RecordingCanvas:
+    def __init__(self, controller):
+        self._c = controller
+
+    def cameraController(self):
+        return self._c
+
+
+rc = _RecordingController()
+check(view.frame_extent(_RecordingCanvas(rc), ext, mid) is True,
+      'frame_extent aims the camera')
+x, y, z, dist, pitch = rc.called
+check(abs(x - ext.center().x()) < 0.01 and abs(y - ext.center().y()) < 0.01,
+      'aimed at the extent centre')
+check(abs(z - mid) < 0.01, 'aimed at the ground, not at Z=0')
+check(abs(dist - max(ext.width(), ext.height())) < 0.01,
+      'distance is the larger extent dimension, not a scene-sized number')
+check(pitch == 0.0, 'top-down')
+
+open_src = inspect.getsource(view.open_view)
+check('frame_extent' in open_src, 'open_view aims the camera itself')
+check(open_src.index('apply_z_factor') < open_src.index('frame_extent'),
+      'framing happens after the vertical scale is applied')
+
 section('lighting')
 qe = Qgs3DMapSettings()
 check(qe.eyeDomeLightingEnabled() is False,

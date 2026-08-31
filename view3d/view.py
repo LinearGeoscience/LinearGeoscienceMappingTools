@@ -251,8 +251,6 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
         except Exception as exc:
             _log(f"3D view: could not set draped layers: {exc}",
                  Qgis.MessageLevel.Warning)
-        if extent is not None:
-            frame_extent(canvas, extent)
 
     # Order matters on 4.x: _ensure_dem_terrain may install a fresh
     # terrain-settings object, which would discard quality set before it.
@@ -261,6 +259,18 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     apply_lighting(settings, eye_dome)
     apply_z_factor(settings, z_factor)
     set_terrain_enabled(settings, terrain_enabled)
+
+    # Aim the camera LAST, and for a new view as well as a reused one:
+    # left to itself QGIS put it 101 km above a 1.2 km pit, which reads
+    # as an empty window. After the vertical scale, so the framing suits
+    # the scene as it will actually be drawn.
+    target = extent
+    if target is None or target.isEmpty():
+        try:
+            target = iface.mapCanvas().extent()
+        except Exception:
+            target = None
+    frame_extent(canvas, target, mid_elevation(dem_layer) * z_factor)
 
     if not created:
         _focus(canvas)
@@ -347,12 +357,16 @@ def extent_in_project_crs(layer, project=None):
         return extent
 
 
-def frame_extent(canvas, extent):
-    """Point an already-open view's camera at `extent`, top-down.
+def frame_extent(canvas, extent, ground_z=0.0):
+    """Point the view's camera at `extent`, top-down.
+
+    Always called after creating a view, not only when reusing one: left
+    to itself QGIS put the camera 101 km above a 1.2 km pit, so the pit
+    was a sub-pixel dot in an apparently empty window. Distance is the
+    larger extent dimension, which is the rule QGIS means to use.
 
     Moves the CAMERA, never the scene extent — see open_view for why
-    setExtent() after creation empties the view. QGIS itself frames with
-    distance = the larger extent dimension.
+    setExtent() after creation empties the view.
     """
     if extent is None or extent.isEmpty():
         return False
@@ -364,13 +378,17 @@ def frame_extent(canvas, extent):
         return False
     centre = extent.center()
     distance = max(extent.width(), extent.height())
+    if not distance or distance <= 0:
+        return False
     try:
         from qgis.core import QgsVector3D
-        # 4.x: takes MAP coordinates, so no origin arithmetic to get wrong.
+        # 4.x: takes MAP coordinates, so no origin arithmetic to get
+        # wrong. Aim at the ground, not at Z=0, or a high-RL surface sits
+        # off-centre in the view.
         if hasattr(controller, 'setLookingAtMapPoint'):
             controller.setLookingAtMapPoint(
-                QgsVector3D(centre.x(), centre.y(), 0.0), distance, 0.0,
-                0.0)
+                QgsVector3D(centre.x(), centre.y(), ground_z), distance,
+                0.0, 0.0)
             return True
         # 3.40: world coordinates, i.e. map coordinates less the origin.
         origin = canvas.mapSettings().origin()
@@ -381,6 +399,18 @@ def frame_extent(canvas, extent):
         _log(f"3D view: could not aim the camera: {exc}",
              Qgis.MessageLevel.Warning)
         return False
+
+
+def mid_elevation(dem_layer):
+    """Middle of a DEM's elevation range, for aiming the camera."""
+    try:
+        provider = dem_layer.dataProvider()
+        stats = provider.bandStatistics(1)
+        if stats is not None and stats.maximumValue >= stats.minimumValue:
+            return (stats.minimumValue + stats.maximumValue) / 2.0
+    except Exception:
+        pass
+    return 0.0
 
 
 def describe(iface, dem_layer=None):
