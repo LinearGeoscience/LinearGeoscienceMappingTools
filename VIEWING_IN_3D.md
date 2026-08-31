@@ -116,34 +116,62 @@ survey edge matters, use `-co COMPRESS=DEFLATE` instead and accept a larger file
 
 ---
 
-## Detail — why 3D can look blurry, and the fix
+## When 3D looks bad — three different causes
 
-QGIS does not draw your map onto the terrain directly. It renders it into square **terrain
-tiles**, then stretches each tile over its patch of ground like a decal. Two numbers decide
-how sharp that decal is, and QGIS's defaults are tuned for regional landscapes, not for
-0.5 m linework on a bench:
+They look similar on screen and have nothing to do with each other. Work down the list.
 
-| Setting | QGIS default | What it costs you |
+### 1. It looks *flat* — you cannot see the pit is a pit
+
+**Cause: no shading.** QGIS ships with lighting effects off, so the terrain is lit evenly.
+Our cartography is deliberately pale, and a pale texture on evenly-lit relief is a flat white
+sheet — the shape is being rendered, there is just nothing to reveal it.
+
+**Fix: "Shade relief (eye dome lighting)"** in the panel, on by default now. It darkens slope
+breaks, so bench crests and toes appear as lines of shade. QField turns the same effect on
+for its own 3D view, for the same reason.
+
+This is usually the one. Try it before touching anything else.
+
+### 2. Linework and contours look *smeared*
+
+**Cause: drape texture resolution.** QGIS does not draw your map onto the terrain directly.
+It renders it into square tiles and stretches each over its patch of ground like a decal. Two
+numbers decide the sharpness, and both default to landscape scale, not 0.5 m linework:
+
+| Setting | QGIS default | Cost |
 |---|---|---|
-| Map tile resolution | 512 px per tile | Too few texture pixels per metre — contours and linework smear |
-| Terrain screen error | 3 px | Tiles subdivide lazily, so one stretched tile covers too much ground |
+| Map tile resolution | 512 px per tile | Too few texture pixels per metre |
+| Terrain screen error | 3 px | Tiles subdivide lazily, so one decal covers too much ground |
 
-The **Detail** dropdown in the View in 3D panel sets both:
+**Fix: the Detail dropdown**, which sets both (and the mesh grid below):
 
-| Detail | Tile | Screen error | When |
-|---|---|---|---|
-| Standard | 512 px | 3.0 | QGIS defaults — a slow machine, or regional-scale work |
-| **High** *(default)* | **1024 px** | **1.5** | **Pit and detailed mapping — four times the texture detail** |
-| Ultra | 2048 px | 1.0 | Screenshots and presentation; needs a decent GPU |
+| Detail | Drape tile | Screen error | Terrain mesh | When |
+|---|---|---|---|---|
+| Standard | 512 px | 3.0 | 16 px | QGIS defaults — slow machine, regional work |
+| **High** *(default)* | **1024 px** | **1.5** | **64 px** | **Pit and detailed mapping** |
+| Ultra | 2048 px | 1.0 | 128 px | Presentation; needs a decent GPU |
 
-It applies **live** — change it with the 3D view open and watch it sharpen. Tile resolution
-costs GPU memory quadratically, which is why High rather than Ultra is the default.
+Applies live — change it with the view open and watch it sharpen.
 
-Terrain *geometry* detail is handled for you: subdivision is capped at your DEM's own pixel
-size (0.79 m for the Fingals DEM), since subdividing past the data only interpolates. A
-coarse DEM keeps QGIS's 1 m default rather than being made worse.
+### 3. The *surface itself* is mushy — bench faces rounded off
 
-If it is still soft at Ultra, the limit is your DEM or the ortho, not the drape.
+**Cause: terrain mesh resolution.** Separate from the drape: this is how many elevation
+samples build each terrain tile's mesh. **QGIS defaults to 16 px**, meaning a 16×16 grid per
+tile, which averages a bench crest away no matter how good your DEM is.
+
+**Fix depends on your QGIS version:**
+
+- **QGIS 4.x** — handled by the Detail dropdown (64 px at High, 128 at Ultra).
+- **QGIS 3.40 LTR** — ⚠️ **must be done by hand.** The terrain generator is not exposed to
+  Python at all on 3.40, so no plugin can set it. In the 3D view, open **3D Configuration ▸
+  Terrain** and raise **Tile resolution** from `16 px` to **64 px** (128 for presentation).
+  Once per 3D view; it saves with the project. The panel reminds you when this applies.
+
+Subdivision depth *is* handled for you on both versions: it stops at your DEM's own pixel
+size (0.79 m for the Fingals DEM), since going finer only interpolates. A coarse DEM keeps
+QGIS's 1 m default rather than being made worse.
+
+If it is still soft after all three, the limit is the DEM or the ortho, not the rendering.
 
 ## Workflow A — regional mapping in 3D
 
@@ -250,7 +278,9 @@ and requiring a signal you probably do not have. The bake is what makes it work 
 | 3D view is flat | Project terrain never got set — reopen **View in 3D** rather than QGIS's own 3D menu, which does not configure terrain. |
 | Terrain has holes or spikes | Nodata not declared on the DEM (`gdalinfo` shows `NoData Value=`). Set it: `gdal_edit -a_nodata -9999 dem.tif`. |
 | Pit looks like a mountain range | Exaggeration is on. Turn it off for pits. |
-| Linework and contours look smeared or blurry | The drape texture, not the DEM. Raise **Detail** (see below). |
+| Terrain looks flat / cannot see the pit is a pit | No shading. Tick **Shade relief**. See "When 3D looks bad". |
+| Linework and contours look smeared | Drape texture. Raise **Detail**. |
+| Bench faces rounded and mushy | Terrain mesh grid. On 3.40 raise **3D Configuration ▸ Terrain ▸ Tile resolution** to 64 px by hand. |
 | No 3D cube icon in the QField dashboard | QField older than 4.1. |
 | QField 3D shows generic hills, not your pit | The export was not baked — re-export with **Bake 3D terrain** ticked. |
 | Underground mode greyed out | No `MineStrings` layer; run the mining survey import first. |

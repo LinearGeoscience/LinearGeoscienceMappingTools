@@ -206,6 +206,53 @@ check(px is not None and abs(px - 10.0) < 0.01,
 check(abs(read_quality(qs)[2] - 1.0) < 1e-6,
       'a coarse DEM keeps the 1.0 m default ground error')
 
+# Terrain MESH resolution lives on the DEM terrain settings, so it is
+# only reachable once DEM terrain is installed (4.x) — a bare settings
+# object still carries FLAT terrain, which has no resolution at all.
+def dem_settings(q):
+    st = Qgs3DMapSettings()
+    view._ensure_dem_terrain(st, dem, project)
+    view.apply_quality(st, q, dem)
+    return st
+
+
+bare = Qgs3DMapSettings()
+check(view.terrain_resolution_reachable(bare) is False,
+      'flat terrain reports no mesh resolution')
+
+with_dem = dem_settings('high')
+if view.terrain_resolution_reachable(with_dem):
+    check(with_dem.terrainSettings().resolution() == 64,
+          'high raises the terrain mesh grid to 64 px')
+    check(dem_settings('ultra').terrainSettings().resolution() == 128,
+          'ultra reaches a 128 px terrain mesh grid')
+    check(dem_settings('standard').terrainSettings().resolution() == 16,
+          'standard leaves the QGIS 16 px mesh grid alone')
+    check(with_dem.terrainSettings().mapTileResolution() == 1024,
+          'drape and mesh resolution coexist')
+else:
+    print('  note terrain mesh resolution is not settable from Python on '
+          'this QGIS (expected on 3.40); the panel says so')
+
+section('lighting')
+qe = Qgs3DMapSettings()
+check(qe.eyeDomeLightingEnabled() is False,
+      'QGIS still ships with eye dome lighting off')
+view.apply_lighting(qe, True)
+check(qe.eyeDomeLightingEnabled() is True, 'apply_lighting turns EDL on')
+view.apply_lighting(qe, False)
+check(qe.eyeDomeLightingEnabled() is False, 'apply_lighting turns EDL off')
+
+qe2 = Qgs3DMapSettings()
+view._ensure_dem_terrain(qe2, dem, project)
+view.apply_quality(qe2, 'high', dem)
+view.apply_lighting(qe2, True)
+view.apply_z_factor(qe2, 2.0)
+check(qe2.eyeDomeLightingEnabled() is True,
+      'EDL survives the full open chain')
+check(read_quality(qe2)[0] == 1024,
+      'drape quality survives alongside EDL')
+
 qs3 = Qgs3DMapSettings()
 view.apply_quality(qs3, 'high', None)
 check(abs(read_quality(qs3)[2] - 1.0) < 1e-6,

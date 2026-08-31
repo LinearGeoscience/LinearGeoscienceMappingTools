@@ -34,6 +34,7 @@ SETTINGS_PREFIX = "LinearGeosciencePlugin/View3D/"
 SETTING_Z_ENABLED = SETTINGS_PREFIX + "zEnabled"
 SETTING_Z_FACTOR = SETTINGS_PREFIX + "zFactor"
 SETTING_QUALITY = SETTINGS_PREFIX + "quality"
+SETTING_EDL = SETTINGS_PREFIX + "eyeDomeLighting"
 SETTING_GEOMETRY = SETTINGS_PREFIX + "dialogGeometry"
 
 QUALITY_CHOICES = [
@@ -123,6 +124,20 @@ class View3DPanel(QDialog):
         qual_row.addWidget(self.quality_combo, 1)
         view_layout.addLayout(qual_row)
 
+        self.edl_check = QCheckBox("Shade relief (eye dome lighting)")
+        self.edl_check.setToolTip(
+            "Darkens slope breaks so bench crests and toes read as shape. "
+            "Without it a pale basemap draped on terrain looks flat, "
+            "because nothing shades the relief.")
+        self.edl_check.toggled.connect(self._edl_changed)
+        view_layout.addWidget(self.edl_check)
+
+        self.terrain_note = QLabel("")
+        self.terrain_note.setWordWrap(True)
+        self.terrain_note.setStyleSheet("color: #b8860b; padding: 2px;")
+        self.terrain_note.hide()
+        view_layout.addWidget(self.terrain_note)
+
         view_group.setLayout(view_layout)
         layout.addWidget(view_group)
 
@@ -161,6 +176,9 @@ class View3DPanel(QDialog):
         self.quality_combo.blockSignals(True)
         self.quality_combo.setCurrentIndex(max(0, idx))
         self.quality_combo.blockSignals(False)
+        self.edl_check.blockSignals(True)
+        self.edl_check.setChecked(settings.value(SETTING_EDL, True, bool))
+        self.edl_check.blockSignals(False)
 
     def _save_settings(self):
         settings = QgsSettings()
@@ -168,6 +186,7 @@ class View3DPanel(QDialog):
         settings.setValue(SETTING_Z_ENABLED, self.z_check.isChecked())
         settings.setValue(SETTING_Z_FACTOR, self.z_spin.value())
         settings.setValue(SETTING_QUALITY, self.quality_combo.currentData())
+        settings.setValue(SETTING_EDL, self.edl_check.isChecked())
 
     def closeEvent(self, event):
         # Leaving temporary subsets/renderers behind with no panel to undo
@@ -262,12 +281,37 @@ class View3DPanel(QDialog):
         canvas = view.find_lgs_canvas(self.iface)
         if canvas is None:
             return
-        view.apply_quality(canvas.mapSettings(),
-                           self.quality_combo.currentData(),
+        settings = canvas.mapSettings()
+        view.apply_quality(settings, self.quality_combo.currentData(),
                            self._selected_dem_layer())
         self.status_label.setText(
             "Detail set to {0}.".format(self.quality_combo.currentText()))
+        self._update_terrain_note(settings)
         self._save_settings()
+
+    def _edl_changed(self, checked):
+        canvas = view.find_lgs_canvas(self.iface)
+        if canvas is not None:
+            view.apply_lighting(canvas.mapSettings(), checked)
+        self._save_settings()
+
+    def _update_terrain_note(self, settings):
+        """On 3.40 the terrain mesh resolution cannot be set from Python,
+        and its 16 px default is what makes bench faces look mushy. Say so
+        once, with the exact field to change, rather than silently
+        under-delivering."""
+        if settings is None or view.terrain_resolution_reachable(settings):
+            self.terrain_note.hide()
+            return
+        wanted = view.QUALITY_LEVELS.get(
+            self.quality_combo.currentData(),
+            view.QUALITY_LEVELS[view.DEFAULT_QUALITY])[2]
+        self.terrain_note.setText(
+            "This QGIS cannot set terrain mesh detail from a plugin. For "
+            "crisper bench faces, open the 3D view's <b>3D Configuration "
+            "▸ Terrain</b> and raise <b>Tile resolution</b> from 16 px "
+            "to {0} px (once per view).".format(wanted))
+        self.terrain_note.show()
 
     def _mode_changed(self, _index):
         canvas = view.find_lgs_canvas(self.iface)
@@ -321,7 +365,8 @@ class View3DPanel(QDialog):
                 self.iface, layer, z_factor=self._z_factor(),
                 extent=extent,
                 terrain_enabled=(mode != 'underground'),
-                quality=self.quality_combo.currentData())
+                quality=self.quality_combo.currentData(),
+                eye_dome=self.edl_check.isChecked())
         except Exception as exc:
             import traceback
             QgsMessageLog.logMessage(
@@ -330,6 +375,7 @@ class View3DPanel(QDialog):
             self.status_label.setText(f"Could not open 3D view: {exc}")
             return
         self._apply_mode(canvas)
+        self._update_terrain_note(canvas.mapSettings())
         if not self.status_label.text():
             self.status_label.setText(
                 "3D view open — mapping is draped on the terrain.")

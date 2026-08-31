@@ -35,12 +35,18 @@ VIEW_NAME = "LGS 3D"
 # defaults, pit-scale linework and contours arrive visibly smeared —
 # there simply are not enough texture pixels per metre of bench.
 #
-# tile px, screen error. Higher tile resolution costs GPU memory
-# quadratically, so 'high' rather than 'ultra' is the default.
+# Terrain GEOMETRY detail is a separate number: the DEM terrain tile
+# resolution, i.e. how many elevation samples make each tile's mesh
+# (QGIS default 16 -> a 16x16 grid per tile). At 16 a bench crest gets
+# averaged away no matter how good the DEM is. Reachable only on 4.x
+# (QgsDemTerrainSettings.setResolution); on 3.40 the terrain generator
+# is not exposed to Python at all — see terrain_resolution_reachable().
+#
+# drape tile px, screen error, terrain sample grid.
 QUALITY_LEVELS = {
-    'standard': (512, 3.0),    # QGIS defaults
-    'high': (1024, 1.5),
-    'ultra': (2048, 1.0),
+    'standard': (512, 3.0, 16),    # QGIS defaults
+    'high': (1024, 1.5, 64),
+    'ultra': (2048, 1.0, 128),
 }
 DEFAULT_QUALITY = 'high'
 
@@ -98,7 +104,7 @@ def apply_quality(settings, quality=DEFAULT_QUALITY, dem_layer=None):
     Qgs3DMapSettings setters still work but are deprecated, so prefer the
     new home when it exists.
     """
-    tile_px, screen_error = QUALITY_LEVELS.get(
+    tile_px, screen_error, terrain_res = QUALITY_LEVELS.get(
         quality, QUALITY_LEVELS[DEFAULT_QUALITY])
     ground_error = DEFAULT_GROUND_ERROR
     pixel = dem_pixel_size(dem_layer) if dem_layer is not None else None
@@ -113,6 +119,8 @@ def apply_quality(settings, quality=DEFAULT_QUALITY, dem_layer=None):
             ts.setMapTileResolution(tile_px)
             ts.setMaximumScreenError(screen_error)
             ts.setMaximumGroundError(ground_error)
+            if hasattr(ts, 'setResolution'):
+                ts.setResolution(terrain_res)
             settings.setTerrainSettings(ts)
             return
         except Exception as exc:
@@ -124,8 +132,40 @@ def apply_quality(settings, quality=DEFAULT_QUALITY, dem_layer=None):
     settings.setMaxTerrainGroundError(ground_error)
 
 
+def terrain_resolution_reachable(settings):
+    """Can we set the terrain mesh sample grid from Python?
+
+    Only on 4.x. On 3.40 QgsDemTerrainGenerator is not wrapped and
+    Qgs3DMapSettings.setTerrainGenerator is SIP_SKIP, so the 16 px
+    default can only be raised by hand in 3D Configuration ▸ Terrain ▸
+    Tile resolution.
+    """
+    if not hasattr(settings, 'terrainSettings'):
+        return False
+    try:
+        return hasattr(settings.terrainSettings(), 'setResolution')
+    except Exception:
+        return False
+
+
+def apply_lighting(settings, eye_dome=True):
+    """Eye dome lighting: darkens creases and slope breaks.
+
+    Off in QGIS by default, and without it a pale minimal basemap draped
+    on terrain reads as a flat white sheet — the relief is rendered but
+    invisible, because nothing shades it. QField enables the same effect
+    on its own 3D view for exactly this reason.
+    """
+    try:
+        settings.setEyeDomeLightingEnabled(bool(eye_dome))
+    except Exception as exc:
+        _log(f"3D view: eye dome lighting unavailable: {exc}",
+             Qgis.MessageLevel.Warning)
+
+
 def open_view(iface, dem_layer, z_factor=1.0, extent=None,
-              terrain_enabled=True, quality=DEFAULT_QUALITY):
+              terrain_enabled=True, quality=DEFAULT_QUALITY,
+              eye_dome=True):
     """Open (or refocus) the LGS 3D view over dem_layer.
 
     Sets the project terrain provider, creates the native 3D view, drapes
@@ -161,6 +201,7 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     # terrain-settings object, which would discard quality set before it.
     _ensure_dem_terrain(settings, dem_layer, project)
     apply_quality(settings, quality, dem_layer)
+    apply_lighting(settings, eye_dome)
     apply_z_factor(settings, z_factor)
     set_terrain_enabled(settings, terrain_enabled)
 

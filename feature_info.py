@@ -648,11 +648,14 @@ current map extent.</p>
        Only a genuinely ambiguous project asks you to pick.</li>
    <li><b>Vertical exaggeration:</b> live on/off toggle and factor (e.g. 2x) in the
        control panel &mdash; terrain height changes immediately in the open view.</li>
+   <li><b>Shaded relief:</b> eye dome lighting is on by default. QGIS ships it off, and
+       without it our pale cartography draped on evenly-lit terrain reads as a flat white
+       sheet &mdash; the relief renders, but nothing reveals it.</li>
    <li><b>Detail control:</b> QGIS drapes the map as a texture on terrain tiles, and its
        default 512&nbsp;px tiles leave pit linework visibly smeared. <i>High</i> (the
-       default here) uses 1024&nbsp;px tiles and tighter subdivision; <i>Ultra</i> doubles
-       it again. Terrain geometry detail is capped at the DEM's own pixel size
-       automatically.</li>
+       default here) uses 1024&nbsp;px tiles with tighter subdivision, and a 64&nbsp;px
+       terrain mesh grid in place of QGIS's 16; <i>Ultra</i> doubles both again.
+       Subdivision stops at the DEM's own pixel size automatically.</li>
    <li><b>Pit mode:</b> frames the pit-surface DEM so mapping drapes onto bench faces
        and walls. The Z filter's bench subsetting carries into the 3D view
        automatically.</li>
@@ -671,6 +674,11 @@ current map extent.</p>
 </ol>
 <p><b>Note:</b> the 3D view requires QGIS's 3D support (standard in OSGeo4W installs).
 On devices, the 3D map view requires QField 4.1 or newer.</p>
+<p><b>QGIS 3.40 users:</b> terrain mesh detail is the one thing no plugin can set on 3.40
+(the terrain generator is not exposed to Python). If bench faces look rounded, open the 3D
+view's <b>3D Configuration &rarr; Terrain</b> and raise <b>Tile resolution</b> from
+16&nbsp;px to 64&nbsp;px &mdash; once per view, saved with the project. The panel reminds
+you when this applies.</p>
 """
 
 INFO_PIT_SURFACE_DEM = """
