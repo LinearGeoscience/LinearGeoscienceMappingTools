@@ -133,6 +133,41 @@ chosen, reason = detect.choose_dem(terrain.dem_rows(project),
 check(chosen is not None and chosen['id'] == dem.id()
       and reason == 'pinned', 'pinned choice persists and wins')
 
+section('imagery and derivatives are not terrain')
+# The shape of a real pit folder: DEM + RGBA ortho + hillshade + slope.
+# Only the DEM may be offered as terrain, and it must win outright.
+ortho_path = os.path.join(TMP, 'FF_Pit_transparent_mosaic.tif')
+build_dem(ortho_path)  # geometry only; band count is forced below
+from osgeo import gdal  # noqa: E402
+gdal.UseExceptions()
+rgba = gdal.GetDriverByName('GTiff').Create(
+    os.path.join(TMP, 'ortho_rgba.tif'), 20, 20, 4, gdal.GDT_Byte)
+rgba.SetGeoTransform((500000, 10, 0, 7000000, 0, -10))
+rgba = None
+project.clear()
+project.addMapLayer(QgsRasterLayer(dem_path, 'pit_ss_dem'))
+project.addMapLayer(QgsRasterLayer(os.path.join(TMP, 'ortho_rgba.tif'),
+                                   'FF_Pit_transparent_mosaic_group1'))
+hill_path = os.path.join(TMP, 'pit_ss_dem_hillshade.tif')
+build_dem(hill_path)
+project.addMapLayer(QgsRasterLayer(hill_path, 'pit_ss_dem_hillshade'))
+
+rows = terrain.dem_rows(project)
+by_name = {r['name']: r for r in rows}
+check(by_name['FF_Pit_transparent_mosaic_group1']['bands'] == 4,
+      'band count read off the layer')
+check(detect.is_dem_candidate(by_name['pit_ss_dem']),
+      'the DEM is a candidate')
+check(not detect.is_dem_candidate(
+    by_name['FF_Pit_transparent_mosaic_group1']),
+    'the 4-band ortho is rejected despite its pit-ish name')
+check(not detect.is_dem_candidate(by_name['pit_ss_dem_hillshade']),
+      'the hillshade is rejected')
+chosen, reason = detect.choose_dem(rows, terrain.pinned_dem_id(project))
+check(chosen is not None and chosen['name'] == 'pit_ss_dem',
+      'the DEM wins outright ({0})'.format(reason))
+project.clear()  # the XML section below needs no layers
+
 section('3.40 settings XML patch helper')
 doc = QDomDocument()
 elem = doc.createElement('qgis3d')

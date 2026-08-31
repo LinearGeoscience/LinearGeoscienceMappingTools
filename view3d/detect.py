@@ -17,7 +17,29 @@ A row is {'id': str, 'name': str, 'role': str, 'tied': bool}:
 PIT_TOKENS = ('pit', 'bench', 'asbuilt', 'as_built', 'as-built',
               'eom', 'end_of_month', 'drone', 'survey')
 
+# Rasters DERIVED from a DEM. They are single-band and numeric, so nothing
+# but the name gives them away — and a hillshade used as terrain would
+# render 0-255 "metres" of nonsense relief. Orthophotos are excluded by
+# band count instead (see is_dem_candidate).
+DERIVED_TOKENS = ('hillshade', 'shaded_relief', 'shadedrelief', 'slope',
+                  'aspect', 'roughness', 'ruggedness', 'contour')
+
 ROLE_PIT = 'pit'
+
+
+def is_dem_candidate(row):
+    """Could this raster be terrain at all?
+
+    Multi-band rasters are imagery (an RGB/RGBA orthophoto has no single
+    elevation per pixel), and DEM derivatives are not elevation either.
+    A role stamp overrides both — an explicit pick beats a guess.
+    """
+    if row.get('role') == ROLE_PIT:
+        return True
+    if (row.get('bands') or 1) > 1:
+        return False
+    name = (row.get('name') or '').lower()
+    return not any(token in name for token in DERIVED_TOKENS)
 
 
 def classify(row):
@@ -45,13 +67,14 @@ def choose_dem(rows, pinned_id=None):
     raster. Pit beats regional because pit mapping is the case where the
     wrong DEM is useless. Ambiguity never guesses (fuzzy-never-decides).
     """
-    rows = list(rows)
+    # A pinned pick wins even if it would otherwise be filtered out: the
+    # user has overruled the heuristic on purpose.
+    for row in rows:
+        if pinned_id and row.get('id') == pinned_id:
+            return row, 'pinned'
+    rows = [r for r in rows if is_dem_candidate(r)]
     if not rows:
         return None, 'none'
-    if pinned_id:
-        for row in rows:
-            if row.get('id') == pinned_id:
-                return row, 'pinned'
     stamped = [r for r in rows if r.get('role') == ROLE_PIT]
     if len(stamped) == 1:
         return stamped[0], 'role'

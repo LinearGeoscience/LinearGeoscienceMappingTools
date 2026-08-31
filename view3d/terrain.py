@@ -43,11 +43,16 @@ def dem_rows(project=None):
     rows = []
     for item in detect_raster_layers(project):
         layer = item['layer']
+        try:
+            bands = layer.bandCount()
+        except Exception:
+            bands = 1
         rows.append({
             'id': layer.id(),
             'name': layer.name(),
             'role': layer.customProperty(ROLE_PROPERTY, '') or '',
             'tied': layer.id() in tied_ids,
+            'bands': bands,
             'layer': layer,
         })
     return rows

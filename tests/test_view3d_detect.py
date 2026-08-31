@@ -16,8 +16,52 @@ detect = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(detect)
 
 
-def row(rid, name, role='', tied=False):
-    return {'id': rid, 'name': name, 'role': role, 'tied': tied}
+def row(rid, name, role='', tied=False, bands=1):
+    return {'id': rid, 'name': name, 'role': role, 'tied': tied,
+            'bands': bands}
+
+
+class TestIsDemCandidate(unittest.TestCase):
+    def test_single_band_elevation_is_a_candidate(self):
+        self.assertTrue(detect.is_dem_candidate(row('a', 'pit_dem')))
+
+    def test_multiband_imagery_rejected(self):
+        # The Fingals drone mosaic: 4-band RGBA, and named "..._Pit_..."
+        # so the name alone would have made it a pit candidate.
+        self.assertFalse(detect.is_dem_candidate(
+            row('a', '260606_FF_Pit_transparent_mosaic_group1', bands=4)))
+
+    def test_derived_products_rejected(self):
+        for name in ('pit_dem_hillshade', 'dem_slope', 'aspect_map',
+                     'Shaded_Relief', 'roughness'):
+            self.assertFalse(detect.is_dem_candidate(row('a', name)), name)
+
+    def test_role_stamp_overrides_both(self):
+        self.assertTrue(detect.is_dem_candidate(
+            row('a', 'weird_hillshade_name', role='pit', bands=3)))
+
+    def test_ortho_and_hillshade_leave_one_clear_winner(self):
+        # The real Fingals raster set: DEM + ortho + hillshade + slope.
+        rows = [
+            row('d', '260606_ff_pit_ss_dem'),
+            row('o', '260606_FF_Pit_transparent_mosaic_group1', bands=4),
+            row('h', '260606_ff_pit_ss_dem_hillshade'),
+            row('s', '260606_ff_pit_ss_dem_slope'),
+        ]
+        chosen, reason = detect.choose_dem(rows)
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen['id'], 'd')
+        self.assertEqual(reason, 'pit')
+
+    def test_pinned_survives_filtering(self):
+        rows = [row('o', 'ortho', bands=4)]
+        chosen, reason = detect.choose_dem(rows, pinned_id='o')
+        self.assertEqual(chosen['id'], 'o')
+        self.assertEqual(reason, 'pinned')
+
+    def test_only_imagery_reads_as_none(self):
+        rows = [row('o', 'ortho', bands=4), row('h', 'dem_hillshade')]
+        self.assertEqual(detect.choose_dem(rows), (None, 'none'))
 
 
 class TestClassify(unittest.TestCase):

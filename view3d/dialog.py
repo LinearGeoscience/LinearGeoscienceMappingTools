@@ -152,16 +152,21 @@ class View3DPanel(QDialog):
 
     def refresh(self):
         project = QgsProject.instance()
-        self._rows = terrain.dem_rows(project)
-        chosen, reason = detect.choose_dem(
-            self._rows, terrain.pinned_dem_id(project))
+        all_rows = terrain.dem_rows(project)
+        pinned = terrain.pinned_dem_id(project)
+        chosen, reason = detect.choose_dem(all_rows, pinned)
+        # Orthophotos and hillshades are not elevation; keep them out of the
+        # list entirely rather than inviting the wrong pick.
+        self._rows = [r for r in all_rows
+                      if detect.is_dem_candidate(r) or r['id'] == pinned]
         self.dem_combo.blockSignals(True)
         self.dem_combo.clear()
         if not self._rows:
-            self.dem_combo.addItem("No local rasters in project", None)
+            self.dem_combo.addItem("No DEM raster in project", None)
             self.dem_caption.setText(
                 "Load a DEM (or run Pit Surface to DEM on a Surpac/DXF "
-                "pit shell) first.")
+                "pit shell) first. Imagery and hillshades are not "
+                "elevation and are not listed.")
         else:
             self.dem_combo.addItem("Select a DEM...", None)
             for row in self._rows:
