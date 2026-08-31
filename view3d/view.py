@@ -19,7 +19,7 @@ Nothing here may call Qgs3DMapSettings.writeXml(): it SEGFAULTS on
 3.40.9, taking QGIS with it. See _ensure_dem_terrain.
 """
 
-from qgis.core import Qgis, QgsMessageLog, QgsProject
+from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsRectangle
 
 # Import the 3D module up front so SIP has the Qgs3DMapCanvas wrapper
 # registered before anything hands us one back. Guarded: a QGIS built
@@ -216,8 +216,14 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
                 _log(f"3D view: could not aim the 2D canvas: {exc}",
                      Qgis.MessageLevel.Warning)
                 restore_2d = None
+        # Terrain is built over the PROJECT full extent, which a web
+        # basemap inflates to continental size — see
+        # _TerrainExtentOverride. Hold it to the DEM while QGIS builds.
+        terrain_extent = extent_in_project_crs(dem_layer, project)
         try:
-            canvas = _create_canvas(iface)
+            with _TerrainExtentOverride(project, terrain_extent,
+                                        project.crs()):
+                canvas = _create_canvas(iface)
         finally:
             if restore_2d is not None:
                 try:
@@ -259,6 +265,63 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     if not created:
         _focus(canvas)
     return canvas
+
+
+TERRAIN_MARGIN = 0.15  # a little ground around the DEM, for context
+
+
+class _TerrainExtentOverride:
+    """Constrain the scene extent QGIS builds terrain over, for one call.
+
+    QGIS sizes a new 3D scene from the PROJECT's full extent — which a web
+    basemap or a regional raster stretches to continental size. Terrain is
+    then a quadtree over that whole area, so the tiles around a pit get
+    sampled kilometres apart, land on the DEM's nodata, and render as
+    nothing: a correctly aimed camera over an empty world. (Measured on
+    the Fingals project: a 1745 x 2434 km scene for a 911 x 1015 m DEM.)
+
+    Terrain outside the DEM has no data anyway, so the DEM's own extent
+    plus a margin is the honest scene size. Set as the project's preset
+    full extent, which is what QGIS reads, and restored afterwards.
+    """
+
+    def __init__(self, project, extent, crs):
+        self._project = project
+        self._extent = extent
+        self._crs = crs
+        self._previous = None
+        self._applied = False
+
+    def __enter__(self):
+        if self._extent is None or self._extent.isEmpty():
+            return self
+        try:
+            from qgis.core import QgsReferencedRectangle
+            settings = self._project.viewSettings()
+            self._previous = QgsReferencedRectangle(
+                settings.presetFullExtent())
+            padded = QgsRectangle(self._extent)
+            padded.grow(max(self._extent.width(),
+                            self._extent.height()) * TERRAIN_MARGIN)
+            settings.setPresetFullExtent(
+                QgsReferencedRectangle(padded, self._crs))
+            self._applied = True
+        except Exception as exc:
+            _log(f"3D view: could not constrain the scene extent: {exc}",
+                 Qgis.MessageLevel.Warning)
+        return self
+
+    def __exit__(self, *_exc):
+        if not self._applied:
+            return False
+        try:
+            # An invalid previous preset means "no preset"; setting that
+            # back is how QGIS itself clears one.
+            self._project.viewSettings().setPresetFullExtent(self._previous)
+        except Exception as exc:
+            _log(f"3D view: could not restore the project full extent: "
+                 f"{exc}", Qgis.MessageLevel.Warning)
+        return False
 
 
 def extent_in_project_crs(layer, project=None):

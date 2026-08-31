@@ -297,6 +297,47 @@ check('finally' in open_src, 'and always cleared')
 check('3D view open' in open_src,
       'success is stated, never left on "Opening..."')
 
+section('terrain extent must be held to the DEM')
+# QGIS sizes a new 3D scene from the PROJECT full extent, which a web
+# basemap inflates to continental size. Terrain tiles are then sampled
+# kilometres apart, land on the DEM's nodata and render as nothing.
+# Measured on the real pit project: a 1745 x 2434 km scene for a
+# 911 x 1015 m DEM.
+from qgis.core import QgsReferencedRectangle, QgsRectangle  # noqa: E402
+
+vs = project.viewSettings()
+dem_extent = view.extent_in_project_crs(dem, project)
+
+with view._TerrainExtentOverride(project, dem_extent, project.crs()):
+    inside = vs.fullExtent()
+    check(inside.width() < dem_extent.width() * 2,
+          'scene extent is held near the DEM, not the project')
+    check(inside.width() > dem_extent.width(),
+          'a margin of ground is kept around the DEM')
+check(vs.presetFullExtent().isNull() or vs.presetFullExtent().isEmpty(),
+      'a project with no preset is left with none')
+
+# A user's own preset must survive the round trip untouched.
+mine = QgsReferencedRectangle(QgsRectangle(1, 2, 3, 4), project.crs())
+vs.setPresetFullExtent(mine)
+with view._TerrainExtentOverride(project, dem_extent, project.crs()):
+    check(vs.fullExtent().width() > dem_extent.width() * 0.5,
+          'our override wins while it is in force')
+back = vs.presetFullExtent()
+check(abs(back.xMinimum() - 1) < 1e-6 and abs(back.yMaximum() - 4) < 1e-6,
+      "the user's own preset extent is restored exactly")
+
+# A degenerate extent must be a no-op rather than an exception.
+with view._TerrainExtentOverride(project, QgsRectangle(), project.crs()):
+    pass
+check(abs(vs.presetFullExtent().xMinimum() - 1) < 1e-6,
+      'an empty extent leaves the project untouched')
+vs.setPresetFullExtent(QgsReferencedRectangle())
+
+open_src = inspect.getsource(view.open_view)
+check('_TerrainExtentOverride' in open_src,
+      'open_view constrains the extent while QGIS builds the view')
+
 section('lighting')
 qe = Qgs3DMapSettings()
 check(qe.eyeDomeLightingEnabled() is False,
