@@ -47,6 +47,46 @@ from .core.utils import get_icon_from_subdir
 # Import geometry fixer engine
 from .core.geometry_fixer_engine import GeometryFixerEngine
 
+# Dock areas a QDockWidget may legally be added to. NoDockWidgetArea (0)
+# is what a floating panel reports, and addDockWidget rejects it.
+_VALID_DOCK_AREAS = (
+    Qt.DockWidgetArea.LeftDockWidgetArea,
+    Qt.DockWidgetArea.RightDockWidgetArea,
+    Qt.DockWidgetArea.TopDockWidgetArea,
+    Qt.DockWidgetArea.BottomDockWidgetArea,
+)
+
+
+def _enum_int(value):
+    """Numeric value of a Qt enum (or of a plain number), or None.
+
+    Qt5 enums are int-like, so int() works. Qt6 enums are real
+    enum.Enum members: int() raises and you must go through .value.
+    """
+    if value is None:
+        return None
+    inner = getattr(value, 'value', value)  # Qt6 enum -> its number
+    try:
+        return int(inner)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dock_area(value):
+    """A saved dock area as a Qt.DockWidgetArea, or None if unusable.
+
+    Qt6 enums are strongly typed, so the plain int QgsSettings hands back
+    is refused by addDockWidget ("argument 1 has unexpected type 'int'").
+    Qt5 accepted it, which is why this only ever broke under QGIS 4.
+    """
+    wanted = _enum_int(value)
+    if wanted is None:
+        return None
+    for area in _VALID_DOCK_AREAS:
+        if _enum_int(area) == wanted:
+            return area
+    return None  # 0/NoDockWidgetArea, or junk from a future Qt
+
 
 class MapCleaningToolkit(object):
     """
@@ -1124,7 +1164,12 @@ class MapCleaningToolkit(object):
         settings.setValue(f"{self.settings_key}/geometry", self.dockwidget.saveGeometry())
 
         area = self.iface.mainWindow().dockWidgetArea(self.dockwidget)
-        settings.setValue(f"{self.settings_key}/dockarea", area)
+        # Store the plain int, not the enum: on Qt6 a DockWidgetArea would
+        # come back as something addDockWidget refuses, and the settings
+        # file has to stay readable by both Qt versions.
+        area_int = _enum_int(area)
+        if area_int is not None:
+            settings.setValue(f"{self.settings_key}/dockarea", area_int)
 
     def restore_panel_state(self):
         """Restore panel position, size, and visibility"""
@@ -1137,7 +1182,8 @@ class MapCleaningToolkit(object):
         if geometry:
             self.dockwidget.restoreGeometry(geometry)
 
-        area = settings.value(f"{self.settings_key}/dockarea", type=int)
+        area = _dock_area(settings.value(f"{self.settings_key}/dockarea",
+                                         type=int))
         if area is not None:
             self.iface.removeDockWidget(self.dockwidget)
             self.iface.addDockWidget(area, self.dockwidget)
