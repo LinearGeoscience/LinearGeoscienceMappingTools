@@ -268,7 +268,24 @@ class TestWriteSidecar(unittest.TestCase):
                        'setActiveLayerByName', 'writeActiveLayer',
                        'layerSwitchChangeAllowed',
                        'syncLayerSwitchActive', 'layerSwitchAwake',
-                       'attachLayerSwitch'):
+                       'attachLayerSwitch',
+                       # v32 reshape refactor: density regression guard
+                       # (reshapeDensity's only call site is the 7th
+                       # argument of reshape's splineConfirmSequence
+                       # call), line conditioning, retry ladder,
+                       # digitisation-style toolbar + persistence:
+                       'reshapeDensity', 'reshapeConditionSequence',
+                       'reshapeDedupe', 'reshapeForce2DPolicy',
+                       'reshapeRemoveLoops', 'reshapeExtendEnds',
+                       'reshapeWriteModel', 'reshapeApplyOnce',
+                       'reshapeRepairedSequence',
+                       'reshapeExtendedSequence',
+                       'reshapeEndNeedsExtend', 'reshapeCrsTerm',
+                       'reshapeStyle', 'lgs_reshape_style',
+                       'lgs_reshape_spline_tap',
+                       'lgs_reshape_spline_free',
+                       'reshapeSplineArmed', 'toggleReshapeSpline',
+                       'setReshapeStyle', 'reshapeLoadStyle'):
             self.assertIn(needle, text, needle)
 
 

@@ -2128,12 +2128,9 @@ Item {
 
     Rectangle {
       id: splinePill
-      // Also shown during reshape drawing (browse mode, so no digitizing
-      // model and splinePillVisible is false) — arming there decides
-      // whether the reshape line is smoothed or straight.
-      visible: plugin.featureSpline &&
-               (plugin.splinePillVisible || plugin.reshapeStep === 1 ||
-                plugin.reshapeStep === 2)
+      // Digitizing only (v32): reshape has its own per-style spline
+      // toggle in the reshape banner and no longer shares this switch.
+      visible: plugin.featureSpline && plugin.splinePillVisible
       anchors.verticalCenter: parent.verticalCenter
       width: splinePillText.contentWidth + 24
       height: splinePillText.contentHeight + 12
@@ -6144,9 +6141,6 @@ Item {
       splineRebuildTimer.restart()
       toast(qsTr('Splines digitise better with the freehand tool turned off'))
     }
-    // The reshape line follows the spline arming — re-render mid-draw.
-    if (reshapeStep === 2)
-      reshapeRebuildPreview()
   }
 
   // splineMinNodePx converted to map units at the current zoom (0 = gate
@@ -6926,6 +6920,52 @@ Item {
   readonly property real reshapeRepairPoints: 2.0
   readonly property real reshapeExtendStartPoints: 24
   readonly property int reshapeExtendMaxIter: 6
+  // Digitisation style (v32): 'tap' = point by point, 'free' = stylus
+  // freehand. Persisted, and the spline arming is remembered PER STYLE
+  // ('freehand + spline' and 'tap + straight' are both coherent working
+  // styles a mapper flips between). Reshape stopped sharing the
+  // digitizing tool's lgs_spline_armed switch at v32 — that key now
+  // only seeds the first read.
+  property string reshapeStyle: 'tap'
+  property bool reshapeSplineArmed: false
+
+  function reshapeSplineKey() {
+    return reshapeStyle === 'free' ? 'lgs_reshape_spline_free'
+                                   : 'lgs_reshape_spline_tap'
+  }
+
+  function reshapeLoadStyle() {
+    reshapeStyle = projVar('lgs_reshape_style', 'tap') === 'free'
+        ? 'free' : 'tap'
+    reshapeSplineArmed = featureSpline &&
+        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+  }
+
+  function setReshapeStyle(style) {
+    if (style !== 'tap' && style !== 'free')
+      return
+    if (reshapeStyle === style)
+      return
+    reshapeStyle = style
+    saveVar('lgs_reshape_style', style)
+    reshapeSplineArmed = featureSpline &&
+        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+    if (style === 'free')
+      toast(qsTr('Freehand — stylus draws, finger pans'))
+    // Drawn points are kept across a style switch: controls are
+    // style-agnostic and the undo stack is per action either way.
+    if (reshapeStep === 2)
+      reshapeRebuildPreview()
+  }
+
+  function toggleReshapeSpline() {
+    if (!featureSpline)
+      return
+    reshapeSplineArmed = !reshapeSplineArmed
+    saveVar(reshapeSplineKey(), reshapeSplineArmed ? '1' : '0')
+    if (reshapeStep === 2)
+      reshapeRebuildPreview()
+  }
 
   // Dedupe epsilon in map units; 0 (unreadable map settings) degrades
   // to exact-coincident removal only.
@@ -7115,6 +7155,7 @@ Item {
       reshapeUndoStack = []
       reshapeStrokeStart = -1
       reshapeModel.reset(true)
+      reshapeLoadStyle()
       reshapeStep = 1
       toast(qsTr('Tap polygons to limit reshape (optional), then draw the line'))
     } catch (error) {
@@ -7302,7 +7343,7 @@ Item {
     // cheap — controls are already gated at 8 pt spacing.
     const controls = reshapeConditionSequence(reshapeControls,
         reshapeConditionEps(), 0)
-    if (splineArmed) {
+    if (reshapeSplineArmed) {
       const seq = splineConfirmSequence(controls, false,
           splineTightness, splineTolerance, splineMaxSegments, reshapeCache,
           reshapeDensity())
@@ -7521,7 +7562,7 @@ Item {
     const controls = splineDecimate(
         reshapeConditionSequence(reshapeControls, eps, 0), minDist)
     let seq = controls
-    if (splineArmed) {
+    if (reshapeSplineArmed) {
       const s = splineConfirmSequence(controls, false, splineTightness,
           splineTolerance, splineMaxSegments, ({}), reshapeDensity())
       if (s !== null)
@@ -7879,7 +7920,17 @@ Item {
     TapHandler {
       // Default DragThreshold gesture policy: passive grab, so pan and
       // pinch on the canvas underneath keep working — only clean taps
-      // land here.
+      // land here. In freehand mode (v32) the accepted devices narrow
+      // to the drawing devices: a finger tap is inert (a real
+      // stray-point hazard once freehand is an explicit mode) while a
+      // clean stylus tap still places a single precise point.
+      acceptedDevices: plugin.reshapeStep === 2 &&
+                       plugin.reshapeStyle === 'free'
+          ? (plugin.reshapeSettingsItem !== null &&
+             plugin.reshapeSettingsItem.mouseAsTouchScreen
+              ? PointerDevice.Stylus
+              : PointerDevice.Stylus | PointerDevice.Mouse)
+          : PointerDevice.AllDevices
       onSingleTapped: function(eventPoint, button) {
         plugin.handleReshapeTap(eventPoint.position)
       }
@@ -7894,7 +7945,9 @@ Item {
       // handler and falls through to the TapHandler above — inherent
       // tap/stroke dedupe. grabPermissions omits CanTakeOverFromItems
       // so banner Buttons keep their stylus taps.
-      enabled: plugin.reshapeStep === 2
+      // v32: strokes only exist in freehand mode — Tap mode fully
+      // disables this handler.
+      enabled: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'free'
       acceptedDevices: plugin.reshapeSettingsItem !== null &&
                        plugin.reshapeSettingsItem.mouseAsTouchScreen
           ? PointerDevice.Stylus
@@ -7933,6 +7986,89 @@ Item {
       width: parent.width - 24
       spacing: 8
 
+      // Digitisation style toggles (v32) — Tap / Freehand, plus the
+      // reshape's own per-style Spline toggle. Same monochrome
+      // active-state language as the bottom pills: inverted while on.
+      Row {
+        visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
+        spacing: 8
+
+        Rectangle {
+          id: reshapeStyleTapPill
+          width: reshapeStyleTapText.contentWidth + 24
+          height: reshapeStyleTapText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeStyle === 'tap' ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeStyle === 'tap'
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeStyleTapText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeStyle === 'tap' ? 'black' : 'white'
+            text: qsTr('Tap')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.setReshapeStyle('tap')
+          }
+        }
+
+        Rectangle {
+          id: reshapeStyleFreePill
+          width: reshapeStyleFreeText.contentWidth + 24
+          height: reshapeStyleFreeText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeStyle === 'free' ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeStyle === 'free'
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeStyleFreeText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeStyle === 'free' ? 'black' : 'white'
+            // Real emoji on purpose — exotic symbols are tofu on Android.
+            text: qsTr('Freehand ✏')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.setReshapeStyle('free')
+          }
+        }
+
+        Rectangle {
+          id: reshapeSplinePill
+          visible: plugin.featureSpline
+          width: reshapeSplineText.contentWidth + 24
+          height: reshapeSplineText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeSplineArmed ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeSplineArmed
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeSplineText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeSplineArmed ? 'black' : 'white'
+            // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
+            text: qsTr('~ Spline')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.toggleReshapeSpline()
+          }
+        }
+      }
+
       Text {
         width: parent.width
         font.pixelSize: 15
@@ -7952,7 +8088,9 @@ Item {
         text: plugin.reshapeStep === 1
             ? qsTr('Tap polygons to limit the reshape, or draw straight away — with no picks every polygon the line crosses is reshaped')
             : plugin.reshapeStep === 2
-              ? qsTr('Tap along the new edge, or draw it with the stylus (finger pans) — the line must enter and exit each polygon it reshapes')
+              ? (plugin.reshapeStyle === 'free'
+                  ? qsTr('Draw the new edge with the stylus — finger pans, a stylus tap adds a single point; the line must enter and exit each polygon it reshapes')
+                  : qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes'))
               : plugin.reshapeResultText
       }
 
@@ -7969,8 +8107,10 @@ Item {
             return line + ' · ' + plugin.reshapeLayerLabel()
           }
           let line = qsTr('%1 point(s)').arg(plugin.reshapeControls.length)
-          line += ' · ' + (plugin.splineArmed ? qsTr('smoothed')
-                                              : qsTr('straight'))
+          line += ' · ' + (plugin.reshapeStyle === 'free'
+              ? qsTr('freehand') : qsTr('tap'))
+          line += ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
+                                                     : qsTr('straight'))
           if (plugin.reshapePicks.length > 0)
             line += ' · ' + qsTr('%1 picked').arg(plugin.reshapePicks.length)
           return line + ' · ' + plugin.reshapeLayerLabel()
@@ -8216,7 +8356,7 @@ Item {
           if (plugin.reshapePicks.length > 0)
             lines += '\n' + qsTr('Limited to your %1 picked polygon(s).')
                 .arg(plugin.reshapePicks.length)
-          lines += '\n' + (plugin.splineArmed
+          lines += '\n' + (plugin.reshapeSplineArmed
               ? qsTr('Line: smoothed (Spline armed)')
               : qsTr('Line: straight segments'))
           lines += '\n' + qsTr('Layer: %1').arg(plugin.reshapeLayerLabel())
