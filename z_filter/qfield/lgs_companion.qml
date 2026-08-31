@@ -7042,6 +7042,8 @@ Item {
       next.push({ x: Number(pt.x), y: Number(pt.y), z: Number(pt.z) })
       reshapeControls = next
       reshapeUndoStack = reshapeUndoStack.concat([1])
+      // Latch on draw actions, never on zoom — same rule as digitizing (v32).
+      splineRefreshDensity()
       reshapeRebuildPreview()
     } catch (error) {}
   }
@@ -7058,6 +7060,9 @@ Item {
       return
     }
     reshapeStrokeStart = reshapeControls.length
+    // Latch once per stroke, never per move — the 40 ms rebuilds must
+    // all agree on one density or the segment cache thrashes (v32).
+    splineRefreshDensity()
     reshapeStrokeMove(pos)
   }
 
@@ -7106,10 +7111,22 @@ Item {
   // ----------------------------------------------------------------
   // Line building (spline-armed = smoothed, otherwise straight)
   // ----------------------------------------------------------------
+  // The reshape line's density bundle (v32). Before this existed the
+  // splineConfirmSequence call below silently dropped the density
+  // argument, so a spline-armed reshape line was built on the legacy
+  // path: 200 raw Hermite samples per control segment pruned only at
+  // the absolute tolerance. GEOS's reshape needs a clean line entering
+  // and exiting the ring; that dense, jittery polyline defeated it and
+  // every feature came back NothingHappened.
+  function reshapeDensity() {
+    return splineDensity()
+  }
+
   function reshapeSequence() {
     if (splineArmed) {
       const seq = splineConfirmSequence(reshapeControls, false,
-          splineTightness, splineTolerance, splineMaxSegments, reshapeCache)
+          splineTightness, splineTolerance, splineMaxSegments, reshapeCache,
+          reshapeDensity())
       if (seq !== null)
         return seq
     }
@@ -7623,6 +7640,7 @@ Item {
           }
           onClicked: {
             plugin.reshapeStep = 2
+            plugin.splineRefreshDensity()
             plugin.toast(qsTr('Tap along the new edge — at least 2 points'))
           }
         }
