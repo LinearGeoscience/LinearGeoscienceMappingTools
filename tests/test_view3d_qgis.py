@@ -389,6 +389,22 @@ check(qe.eyeDomeLightingEnabled() is False,
       'QGIS still ships with eye dome lighting off')
 view.apply_lighting(qe, True)
 check(qe.eyeDomeLightingEnabled() is True, 'apply_lighting turns EDL on')
+
+# QGIS copies the 2D canvas colour, so a white-background project gets a
+# white sky — and our pale cartography on it is invisible.
+from qgis.PyQt.QtGui import QColor  # noqa: E402
+
+qb = Qgs3DMapSettings()
+qb.setBackgroundColor(QColor('#ffffff'))
+view.apply_lighting(qb, True)
+check(qb.backgroundColor().lightness() < 240,
+      'a white background is replaced with something terrain shows against')
+view.apply_lighting(qb, True, background='#101010')
+check(qb.backgroundColor().name() == '#101010',
+      'an explicit background is honoured')
+view.apply_lighting(qb, True, background=None)
+check(qb.backgroundColor().name() == '#101010',
+      'background=None leaves the colour alone')
 view.apply_lighting(qe, False)
 check(qe.eyeDomeLightingEnabled() is False, 'apply_lighting turns EDL off')
 

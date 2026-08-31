@@ -166,11 +166,18 @@ def terrain_resolution_reachable(settings):
         return False
 
 
-def apply_lighting(settings, eye_dome=True):
-    """Eye dome lighting: darkens creases and slope breaks.
+# QGIS gives a new 3D view the 2D canvas colour as its background, which
+# for our white cartography means a white surface against a white sky —
+# indistinguishable from an empty view. A neutral mid grey keeps the
+# monochrome look while giving the terrain an edge to be seen against.
+BACKGROUND = "#8c949c"
 
-    Off in QGIS by default, and without it a pale minimal basemap draped
-    on terrain reads as a flat white sheet — the relief is rendered but
+
+def apply_lighting(settings, eye_dome=True, background=BACKGROUND):
+    """Eye dome lighting and a background the terrain can be seen against.
+
+    EDL is off in QGIS by default, and without it a pale minimal basemap
+    draped on terrain reads as a flat sheet — the relief is rendered but
     invisible, because nothing shades it. QField enables the same effect
     on its own 3D view for exactly this reason.
     """
@@ -178,6 +185,16 @@ def apply_lighting(settings, eye_dome=True):
         settings.setEyeDomeLightingEnabled(bool(eye_dome))
     except Exception as exc:
         _log(f"3D view: eye dome lighting unavailable: {exc}",
+             Qgis.MessageLevel.Warning)
+    if not background:
+        return
+    try:
+        from qgis.PyQt.QtGui import QColor
+        colour = QColor(background)
+        if colour.isValid():
+            settings.setBackgroundColor(colour)
+    except Exception as exc:
+        _log(f"3D view: could not set the background: {exc}",
              Qgis.MessageLevel.Warning)
 
 
@@ -503,6 +520,14 @@ def describe(iface, dem_layer=None):
     except Exception:
         pass
     add("3D layers draped", len(settings.layers()))
+    try:
+        bg = settings.backgroundColor()
+        add("background colour", "{0}{1}".format(
+            bg.name(),
+            "  <-- white: a pale map on it is invisible"
+            if bg.lightness() > 240 else ""))
+    except Exception:
+        pass
     add("terrain rendering", settings.terrainRenderingEnabled())
     add("vertical scale", current_z_factor(settings))
     add("eye dome lighting", settings.eyeDomeLightingEnabled())
