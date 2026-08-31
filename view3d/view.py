@@ -380,6 +380,22 @@ def frame_extent(canvas, extent, ground_z=0.0):
     distance = max(extent.width(), extent.height())
     if not distance or distance <= 0:
         return False
+
+    # Best route: hand the scene the 2D extent and let it work out the
+    # camera. It knows the terrain's elevation range, which our own
+    # arithmetic has to guess at.
+    try:
+        scene = canvas.scene()
+    except Exception:
+        scene = None
+    if scene is not None and hasattr(scene, 'setViewFrom2DExtent'):
+        try:
+            scene.setViewFrom2DExtent(extent)
+            return True
+        except Exception as exc:
+            _log(f"3D view: setViewFrom2DExtent failed ({exc}); aiming "
+                 "the camera directly", Qgis.MessageLevel.Warning)
+
     try:
         from qgis.core import QgsVector3D
         # 4.x: takes MAP coordinates, so no origin arithmetic to get
@@ -398,6 +414,23 @@ def frame_extent(canvas, extent, ground_z=0.0):
     except Exception as exc:
         _log(f"3D view: could not aim the camera: {exc}",
              Qgis.MessageLevel.Warning)
+        return False
+
+
+def zoom_full(canvas):
+    """QGIS's own fit-the-whole-scene call — the escape hatch when the
+    camera has ended up somewhere useless."""
+    try:
+        scene = canvas.scene()
+    except Exception:
+        scene = None
+    if scene is None or not hasattr(scene, 'viewZoomFull'):
+        return False
+    try:
+        scene.viewZoomFull()
+        return True
+    except Exception as exc:
+        _log(f"3D view: zoom full failed: {exc}", Qgis.MessageLevel.Warning)
         return False
 
 
@@ -501,6 +534,42 @@ def describe(iface, dem_layer=None):
     except Exception:
         pass
     add("scene", "present" if scene is not None else "NONE")
+    if scene is not None:
+        # These say whether anything is actually THERE, as opposed to
+        # merely configured: an elevation range of real numbers means the
+        # terrain loaded and has data.
+        for label, call in (("scene extent", 'sceneExtent'),
+                            ("scene state", 'sceneState'),
+                            ("pending jobs", 'totalPendingJobsCount')):
+            if hasattr(scene, call):
+                try:
+                    value = getattr(scene, call)()
+                    add(label, value.toString(1)
+                        if hasattr(value, 'toString') else value)
+                except Exception as exc:
+                    add(label, "failed: {0}".format(exc))
+        if hasattr(scene, 'elevationRange'):
+            try:
+                rng = scene.elevationRange()
+                add("scene elevation range",
+                    "{0} .. {1}{2}".format(
+                        rng.lower(), rng.upper(),
+                        "  <-- EMPTY: terrain has no data here"
+                        if rng.isInfinite() or rng.lower() != rng.lower()
+                        else ""))
+            except Exception as exc:
+                add("scene elevation range", "failed: {0}".format(exc))
+        if hasattr(scene, 'viewFrustum2DExtent'):
+            try:
+                pts = scene.viewFrustum2DExtent()
+                if pts:
+                    xs = [p.x() for p in pts]
+                    ys = [p.y() for p in pts]
+                    add("camera sees on ground",
+                        "{0:.1f},{1:.1f} : {2:.1f},{3:.1f}".format(
+                            min(xs), min(ys), max(xs), max(ys)))
+            except Exception as exc:
+                add("camera sees on ground", "failed: {0}".format(exc))
     return "\n".join(out)
 
 

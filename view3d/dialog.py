@@ -153,6 +153,12 @@ class View3DPanel(QDialog):
         self.close_view_button = QPushButton("Close 3D View")
         self.close_view_button.clicked.connect(self._close_view)
         button_row.addWidget(self.close_view_button)
+        self.zoom_button = QPushButton("Zoom to Terrain")
+        self.zoom_button.setToolTip(
+            "Fit the whole 3D scene in view — use it if the camera has "
+            "ended up somewhere that shows nothing.")
+        self.zoom_button.clicked.connect(self._zoom_full)
+        button_row.addWidget(self.zoom_button)
         self.diagnose_button = QPushButton("Diagnose")
         self.diagnose_button.setToolTip(
             "Write what the 3D view actually contains — camera, terrain, "
@@ -417,6 +423,16 @@ class View3DPanel(QDialog):
             ("3D view open. " + mode_note).strip() if mode_note
             else "3D view open — mapping is draped on the terrain.")
         self._save_settings()
+
+    def _zoom_full(self):
+        canvas = view.find_lgs_canvas(self.iface)
+        if canvas is None:
+            self.status_label.setText("No 3D view open.")
+            return
+        if view.zoom_full(canvas):
+            self.status_label.setText("Zoomed to the whole 3D scene.")
+        else:
+            self.status_label.setText("Could not zoom the 3D scene.")
 
     def _diagnose(self):
         try:
