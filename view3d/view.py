@@ -21,6 +21,15 @@ Nothing here may call Qgs3DMapSettings.writeXml(): it SEGFAULTS on
 
 from qgis.core import Qgis, QgsMessageLog, QgsProject
 
+# Import the 3D module up front so SIP has the Qgs3DMapCanvas wrapper
+# registered before anything hands us one back. Guarded: a QGIS built
+# without 3D has no module, and that must not break importing this file.
+try:
+    import qgis._3d  # noqa: F401
+    HAVE_3D = True
+except ImportError:
+    HAVE_3D = False
+
 try:
     from . import terrain
 except ImportError:
@@ -276,6 +285,10 @@ def _create_canvas(iface):
     4.x takes (name, sceneMode); globe mode without an ellipsoid renders
     black (qgis#66931), so pass Local explicitly. 3.40 takes (name) only.
     """
+    if not HAVE_3D:
+        raise RuntimeError(
+            "This QGIS was built without 3D support, so no 3D view can "
+            "be opened.")
     try:
         return iface.createNewMapCanvas3D("", Qgis.SceneMode.Local)
     except (TypeError, AttributeError):

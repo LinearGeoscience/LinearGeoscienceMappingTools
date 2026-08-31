@@ -7,6 +7,7 @@ the native 3D view immediately and shows this panel for overrides. Only
 an ambiguous DEM choice makes the user pick first (fuzzy-never-decides).
 """
 
+from qgis.PyQt.QtCore import QTimer
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -355,7 +356,12 @@ class View3DPanel(QDialog):
             self._underground.exit(_NullSettings())
 
     def _open_clicked(self):
-        self._open_view()
+        # Never build the 3D view inside the button's own click handler:
+        # it adds a dock to the main window while Qt is still dispatching
+        # the mouse release on this dialog. Hand it to the next turn of
+        # the event loop instead.
+        self.status_label.setText("Opening 3D view...")
+        QTimer.singleShot(0, self._open_view)
 
     def _open_view(self):
         layer = self._selected_dem_layer()
@@ -434,5 +440,8 @@ def run(iface, owner=None):
         return panel
 
     if panel._selected_dem_layer() is not None:
-        panel._open_view()
+        # Same reason as _open_clicked: this whole call is still inside
+        # the main dialog button's click dispatch.
+        panel.status_label.setText("Opening 3D view...")
+        QTimer.singleShot(0, panel._open_view)
     return panel
