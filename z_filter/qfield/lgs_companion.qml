@@ -5502,6 +5502,154 @@ Item {
     return true
   }
 
+  // ----------------------------------------------------------------
+  // Reshape line conditioning (v32). GEOS's reshape is intolerant of
+  // what a touch screen produces: coincident vertices, zero-length
+  // segments, micro self-loops, and mixed 2D/3D points all make it
+  // return NothingHappened with no explanation. These are pure JS —
+  // no QML identifiers — extracted verbatim into
+  // tests/reshape_condition_harness.js.
+  // ----------------------------------------------------------------
+
+  // Drop consecutive points closer than eps. The FIRST and LAST points
+  // always survive — they are the line's entry and exit, and losing
+  // either is precisely the silent failure this exists to prevent: when
+  // the last point crowds the previous kept one, the interior point is
+  // dropped, never the endpoint. eps <= 0 still removes exact
+  // coincident duplicates.
+  function reshapeDedupe(points, eps) {
+    if (points.length < 2)
+      return points.slice()
+    const eps2 = (eps > 0) ? eps * eps : 0
+    const out = [points[0]]
+    for (let i = 1; i < points.length - 1; i++) {
+      const kept = out[out.length - 1]
+      const dx = points[i].x - kept.x
+      const dy = points[i].y - kept.y
+      if (dx * dx + dy * dy > eps2)
+        out.push(points[i])
+    }
+    const last = points[points.length - 1]
+    let tail = out[out.length - 1]
+    const dx = last.x - tail.x
+    const dy = last.y - tail.y
+    if (dx * dx + dy * dy <= eps2 && out.length > 1)
+      out.pop()
+    tail = out[out.length - 1]
+    if (last.x !== tail.x || last.y !== tail.y)
+      out.push(last)
+    return out
+  }
+
+  // The splineSeqToWkt hasZ rule, applied to the points themselves: a
+  // line is 3D only when EVERY z is finite; one unreadable z makes the
+  // whole line 2D (z = NaN throughout) rather than a mixed sequence
+  // the geometry engine reads as neither.
+  function reshapeForce2DPolicy(points) {
+    let allFinite = points.length > 0
+    for (const p of points) {
+      if (!isFinite(Number(p.z))) {
+        allFinite = false
+        break
+      }
+    }
+    if (allFinite)
+      return points.slice()
+    const out = []
+    for (const p of points) {
+      const q = Object.assign({}, p)
+      q.z = NaN
+      out.push(q)
+    }
+    return out
+  }
+
+  // Proper interior crossing of segments a-b and c-d, or null. Touches
+  // at segment endpoints (t or u exactly 0/1) and collinear overlaps
+  // are NOT crossings — a vertex sitting on another segment is normal
+  // in a tightly drawn line. z interpolates along a-b when both ends
+  // carry one.
+  function reshapeSegIntersection(a, b, c, d) {
+    const rx = b.x - a.x
+    const ry = b.y - a.y
+    const sx = d.x - c.x
+    const sy = d.y - c.y
+    const denom = rx * sy - ry * sx
+    if (denom === 0)
+      return null
+    const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denom
+    const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / denom
+    if (t <= 0 || t >= 1 || u <= 0 || u >= 1)
+      return null
+    const az = Number(a.z)
+    const bz = Number(b.z)
+    const z = (isFinite(az) && isFinite(bz)) ? az + t * (bz - az) : NaN
+    return { x: a.x + t * rx, y: a.y + t * ry, z: z }
+  }
+
+  // Cut self-loops out of an open polyline: when segment i crosses
+  // segment j (j > i+1), everything between is replaced by the
+  // crossing point itself, keeping the line's overall run. Restarts
+  // from the cut, so nested loops unwind too; the guard bounds the
+  // pathological case.
+  function reshapeRemoveLoops(points) {
+    let pts = points.slice()
+    let guard = 0
+    for (let i = 0; i + 3 < pts.length && guard < 1000; i++) {
+      for (let j = i + 2; j + 1 < pts.length; j++) {
+        const hit = reshapeSegIntersection(pts[i], pts[i + 1],
+                                           pts[j], pts[j + 1])
+        if (hit === null)
+          continue
+        pts = pts.slice(0, i + 1).concat([hit], pts.slice(j + 1))
+        j = i + 1
+        guard++
+      }
+    }
+    return pts
+  }
+
+  // Prolong the line past its ends along the end tangents — a straight
+  // external extension cannot change the visible curve, it lives
+  // outside the polygon. Appends new endpoints; the drawn ones stay.
+  function reshapeExtendEnds(points, extendFirst, extendLast, dist) {
+    if (points.length < 2 || !(dist > 0))
+      return points.slice()
+    const out = points.slice()
+    if (extendFirst) {
+      const a = out[0]
+      const b = out[1]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len > 0)
+        out.unshift({ x: a.x + dx / len * dist, y: a.y + dy / len * dist,
+                      z: Number(a.z) })
+    }
+    if (extendLast) {
+      const a = out[out.length - 1]
+      const b = out[out.length - 2]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len > 0)
+        out.push({ x: a.x + dx / len * dist, y: a.y + dy / len * dist,
+                   z: Number(a.z) })
+    }
+    return out
+  }
+
+  // The pipeline: dedupe, then the 2D policy, then loop removal —
+  // skipped above loopCap points (the scan is O(n²); a capped skip
+  // never costs correctness, only a retry later). loopCap <= 0 means
+  // no cap.
+  function reshapeConditionSequence(points, eps, loopCap) {
+    let out = reshapeForce2DPolicy(reshapeDedupe(points, eps))
+    if (!(loopCap > 0) || out.length <= loopCap)
+      out = reshapeRemoveLoops(out)
+    return out
+  }
+
   // Exact point equality for cache keys: NaN/undefined z equals
   // NaN/undefined z (same rules as splineCommonPrefixLength), and the
   // open-end boundary marker null only equals null.
@@ -6763,6 +6911,24 @@ Item {
   property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
   property int reshapeStrokeStart: -1  // -1 idle, -2 ignoring this stroke
   property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
+  // Conditioning constants (v32). Dedupe epsilon in POINTS so it scales
+  // with the view like every other drawing tolerance — 0.5 pt is well
+  // under the 8 pt stroke gate, so conditioning can only ever remove
+  // capture noise, never drawn shape. The loop cap bounds the O(n²)
+  // self-intersection scan on the final splined sequence.
+  readonly property real reshapeDedupePoints: 0.5
+  readonly property int reshapeLoopCap: 2000
+
+  // Dedupe epsilon in map units; 0 (unreadable map settings) degrades
+  // to exact-coincident removal only.
+  function reshapeConditionEps() {
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        return perPoint * reshapeDedupePoints
+    } catch (error) {}
+    return 0
+  }
 
   RubberbandModel {
     id: reshapeModel
@@ -7123,25 +7289,49 @@ Item {
   }
 
   function reshapeSequence() {
+    // Condition the CONTROLS, not just the output: capture jitter must
+    // never become a spline control point (v32). Loop removal here is
+    // cheap — controls are already gated at 8 pt spacing.
+    const controls = reshapeConditionSequence(reshapeControls,
+        reshapeConditionEps(), 0)
     if (splineArmed) {
-      const seq = splineConfirmSequence(reshapeControls, false,
+      const seq = splineConfirmSequence(controls, false,
           splineTightness, splineTolerance, splineMaxSegments, reshapeCache,
           reshapeDensity())
       if (seq !== null)
         return seq
     }
-    return reshapeControls.slice()
+    return controls
+  }
+
+  // The one writer of reshapeModel's geometry (v32). The model keeps a
+  // floating tail vertex after every add, hence the final removeVertex —
+  // but addVertex SKIPS an add when two consecutive points are exactly
+  // equal, and an unconditional remove then eats the last REAL point:
+  // the line silently stops just short of exiting the polygon. Remove
+  // the tail only when the count says it is really there (falling back
+  // to the old behaviour when the count is unreadable).
+  function reshapeWriteModel(seq) {
+    reshapeModel.reset(true)
+    for (let i = 0; i < seq.length; i++) {
+      const z = Number(seq[i].z)
+      reshapeModel.addVertexFromPoint(isFinite(z)
+          ? GeometryUtils.point(seq[i].x, seq[i].y, z)
+          : GeometryUtils.point(seq[i].x, seq[i].y))
+    }
+    if (seq.length > 0) {
+      let count = NaN
+      try {
+        count = Number(reshapeModel.vertexCount)
+      } catch (error) {}
+      if (!isFinite(count) || count > seq.length)
+        reshapeModel.removeVertex()
+    }
   }
 
   function reshapeRebuildPreview() {
     try {
-      const seq = reshapeSequence()
-      reshapeModel.reset(true)
-      for (let i = 0; i < seq.length; i++)
-        reshapeModel.addVertexFromPoint(GeometryUtils.point(
-            seq[i].x, seq[i].y, seq[i].z))
-      if (seq.length > 0)
-        reshapeModel.removeVertex()
+      reshapeWriteModel(reshapeSequence())
     } catch (error) {}
     updateReshapeMarkers()
   }
