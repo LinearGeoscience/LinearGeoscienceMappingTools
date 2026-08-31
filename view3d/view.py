@@ -186,9 +186,12 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
               eye_dome=True):
     """Open (or refocus) the LGS 3D view over dem_layer.
 
-    Sets the project terrain provider, creates the native 3D view, drapes
-    the 2D canvas layers, frames `extent` (default: current 2D extent)
-    and applies the vertical scale. Returns the Qgs3DMapCanvas.
+    Sets the project terrain provider, then lets QGIS build the view and
+    drape/frame it exactly as its own menu action would, and only then
+    applies our quality, lighting and vertical scale on top.
+
+    `extent` frames the view (default: whatever the 2D canvas shows).
+    Returns the Qgs3DMapCanvas.
     """
     global _open_canvas
     project = QgsProject.instance()
@@ -197,7 +200,31 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     canvas = find_lgs_canvas(iface)
     created = canvas is None
     if created:
-        canvas = _create_canvas(iface)
+        # QGIS frames a new 3D view on the 2D canvas extent as it builds
+        # it, and that is the ONLY safe moment to choose the framing:
+        # Qgs3DMapSettings.setExtent() afterwards recomputes the scene
+        # origin and slides the world out from under the placed camera,
+        # leaving an empty view. So aim the 2D canvas first, then put it
+        # back — the 3D view has already taken its copy.
+        restore_2d = None
+        if extent is not None and not extent.isEmpty():
+            try:
+                map_canvas = iface.mapCanvas()
+                restore_2d = map_canvas.extent()
+                map_canvas.setExtent(extent)
+            except Exception as exc:
+                _log(f"3D view: could not aim the 2D canvas: {exc}",
+                     Qgis.MessageLevel.Warning)
+                restore_2d = None
+        try:
+            canvas = _create_canvas(iface)
+        finally:
+            if restore_2d is not None:
+                try:
+                    iface.mapCanvas().setExtent(restore_2d)
+                    iface.mapCanvas().refresh()
+                except Exception:
+                    pass
         if canvas is None:
             # QGIS refuses and shows its own warning when the project
             # extent is empty or non-finite.
@@ -210,19 +237,16 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     if settings is None:
         raise RuntimeError("The 3D view opened without map settings.")
 
-    if extent is None:
-        extent = iface.mapCanvas().extent()
-    try:
-        settings.setLayers(iface.mapCanvas().layers())
-    except Exception as exc:
-        _log(f"3D view: could not set draped layers: {exc}",
-             Qgis.MessageLevel.Warning)
-    if created:
+    if not created:
+        # Refresh the drape for an already-open view; on a new one QGIS
+        # has just set the layers itself (including the annotation layer).
         try:
-            settings.setExtent(extent)
+            settings.setLayers(iface.mapCanvas().layers())
         except Exception as exc:
-            _log(f"3D view: could not set extent: {exc}",
+            _log(f"3D view: could not set draped layers: {exc}",
                  Qgis.MessageLevel.Warning)
+        if extent is not None:
+            frame_extent(canvas, extent)
 
     # Order matters on 4.x: _ensure_dem_terrain may install a fresh
     # terrain-settings object, which would discard quality set before it.
@@ -235,6 +259,42 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     if not created:
         _focus(canvas)
     return canvas
+
+
+def frame_extent(canvas, extent):
+    """Point an already-open view's camera at `extent`, top-down.
+
+    Moves the CAMERA, never the scene extent — see open_view for why
+    setExtent() after creation empties the view. QGIS itself frames with
+    distance = the larger extent dimension.
+    """
+    if extent is None or extent.isEmpty():
+        return False
+    try:
+        controller = canvas.cameraController()
+    except Exception:
+        controller = None
+    if controller is None:
+        return False
+    centre = extent.center()
+    distance = max(extent.width(), extent.height())
+    try:
+        from qgis.core import QgsVector3D
+        # 4.x: takes MAP coordinates, so no origin arithmetic to get wrong.
+        if hasattr(controller, 'setLookingAtMapPoint'):
+            controller.setLookingAtMapPoint(
+                QgsVector3D(centre.x(), centre.y(), 0.0), distance, 0.0,
+                0.0)
+            return True
+        # 3.40: world coordinates, i.e. map coordinates less the origin.
+        origin = canvas.mapSettings().origin()
+        controller.setViewFromTop(centre.x() - origin.x(),
+                                  centre.y() - origin.y(), distance)
+        return True
+    except Exception as exc:
+        _log(f"3D view: could not aim the camera: {exc}",
+             Qgis.MessageLevel.Warning)
+        return False
 
 
 def close_view(iface):

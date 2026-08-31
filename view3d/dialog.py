@@ -336,12 +336,15 @@ class View3DPanel(QDialog):
             self._exit_underground_if_active()
             if mode == 'pit':
                 layer = self._selected_dem_layer()
-                if layer is not None:
-                    try:
-                        settings.setExtent(layer.extent())
-                    except Exception:
-                        pass
-                self.status_label.setText("Framed to the pit surface DEM.")
+                # Move the camera, never the scene extent: setExtent on a
+                # live view shifts the origin and empties it.
+                if layer is not None and view.frame_extent(canvas,
+                                                           layer.extent()):
+                    self.status_label.setText(
+                        "Framed to the pit surface DEM.")
+                else:
+                    self.status_label.setText(
+                        "Pit mode — reopen the view to reframe it.")
             else:
                 self.status_label.setText("")
 

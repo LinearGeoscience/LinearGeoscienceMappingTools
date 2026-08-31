@@ -234,6 +234,42 @@ else:
     print('  note terrain mesh resolution is not settable from Python on '
           'this QGIS (expected on 3.40); the panel says so')
 
+section('framing must not touch the scene extent')
+# Qgs3DMapSettings.setExtent() on a LIVE view recomputes the scene origin
+# and slides the world out from under the camera -> empty view. open_view
+# must therefore never call it; framing goes through the camera instead.
+import inspect  # noqa: E402
+src = inspect.getsource(view.open_view)
+check('settings.setExtent' not in src,
+      'open_view never calls setExtent on the 3D map settings')
+# Aiming the 2D canvas before creation IS the supported way to frame a
+# new view, so map_canvas.setExtent is expected and must stay.
+check('map_canvas.setExtent' in src,
+      'open_view frames a new view by aiming the 2D canvas first')
+check(hasattr(view, 'frame_extent'), 'frame_extent exists')
+
+frame_src = inspect.getsource(view.frame_extent)
+check('cameraController' in frame_src,
+      'frame_extent drives the camera controller')
+check('setLookingAtMapPoint' in frame_src and 'setViewFromTop' in frame_src,
+      'frame_extent covers both the 4.x and 3.40 camera APIs')
+
+# Degenerate inputs must be refused, not passed to Qt.
+from qgis.core import QgsRectangle  # noqa: E402
+
+
+class _NoController:
+    def cameraController(self):
+        return None
+
+
+check(view.frame_extent(_NoController(), QgsRectangle(0, 0, 10, 10))
+      is False, 'no camera controller -> refuses')
+check(view.frame_extent(_NoController(), None) is False,
+      'no extent -> refuses')
+check(view.frame_extent(_NoController(), QgsRectangle()) is False,
+      'empty extent -> refuses')
+
 section('lighting')
 qe = Qgs3DMapSettings()
 check(qe.eyeDomeLightingEnabled() is False,
