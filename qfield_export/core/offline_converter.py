@@ -65,7 +65,10 @@ class OfflineConverter(QObject):
                  include_reshape_plugin: bool = True,
                  include_reverse_plugin: bool = True,
                  include_copyattrs_plugin: bool = True,
-                 include_merge_plugin: bool = True):
+                 include_merge_plugin: bool = True,
+                 bake_terrain: bool = False,
+                 terrain_layer_id: str = None,
+                 terrain_scale: float = 1.0):
         """
         Initialize the offline converter.
 
@@ -94,6 +97,12 @@ class OfflineConverter(QObject):
                 feature's attributes onto others, cross-layer aware)
             include_merge_plugin: If True, enable the polygon merge tool
                 feature of the companion sidecar
+            bake_terrain: If True, write a raster terrain provider for
+                terrain_layer_id into the exported project so QField
+                4.1+'s 3D view uses the bundled DEM offline
+            terrain_layer_id: Layer id of the DEM to bake as terrain
+            terrain_scale: Vertical exaggeration baked into the exported
+                terrain provider (1.0 = true scale)
         """
         super().__init__()
         self.project = project
@@ -109,6 +118,9 @@ class OfflineConverter(QObject):
         self.include_reverse_plugin = include_reverse_plugin
         self.include_copyattrs_plugin = include_copyattrs_plugin
         self.include_merge_plugin = include_merge_plugin
+        self.bake_terrain = bake_terrain
+        self.terrain_layer_id = terrain_layer_id
+        self.terrain_scale = terrain_scale
         self._raster_layer_names = []  # names the opacity panel acts on
         self._vector_layer_names = []  # spatial vectors for the same panel
         self.exported_layers = {}
@@ -233,6 +245,15 @@ class OfflineConverter(QObject):
                     "Export directory is not empty. Files may be overwritten."
                 )
 
+            # The terrain DEM must travel with the project or the baked
+            # provider would dangle; include it even when unticked.
+            if (self.bake_terrain and self.terrain_layer_id
+                    and self.terrain_layer_id not in self.selected_layers):
+                self.selected_layers = (list(self.selected_layers)
+                                        + [self.terrain_layer_id])
+                self.log_message.emit(
+                    "  → Terrain DEM auto-included in the export")
+
             # Get layers to export
             layers_to_export = self._get_layers_to_export()
             if not layers_to_export:
@@ -276,6 +297,11 @@ class OfflineConverter(QObject):
                 "Normalizing paths for mobile devices..."
             )
             normalize_project_file_paths(project_file)
+
+            # Bake the 3D terrain provider (after path normalization so
+            # our relative layerSource is not rewritten underneath us).
+            if self.bake_terrain and self.terrain_layer_id:
+                self._inject_terrain(project_file)
 
             # Ship the LGS companion QField plugin (<projectname>.qml) with
             # the features chosen in the export dialog.
@@ -777,6 +803,41 @@ class OfflineConverter(QObject):
         except Exception as e:
             log_message(f"Failed to copy vector layer {layer.name()}: {e}", Qgis.MessageLevel.Critical)
             return None
+
+    def _inject_terrain(self, project_file: Path):
+        """Write the raster terrain provider into the exported .qgs so
+        QField 4.1+'s 3D view uses the bundled DEM (with the chosen
+        vertical exaggeration) instead of online tiles."""
+        try:
+            import xml.etree.ElementTree as ET
+            try:
+                from .terrain_xml import inject_terrain
+            except ImportError:  # standalone use outside the plugin package
+                from qfield_export.core.terrain_xml import inject_terrain
+
+            info = self.exported_layers.get(self.terrain_layer_id)
+            if info is None:
+                self.warning.emit(
+                    "3D terrain: the DEM layer was not exported; terrain "
+                    "not baked.")
+                return
+            source = Path(info['new_source']).name
+            layer = self.project.mapLayer(self.terrain_layer_id)
+            layer_name = layer.name() if layer is not None else ""
+
+            tree = ET.parse(str(project_file))
+            inject_terrain(
+                tree.getroot(), self.terrain_layer_id, "./" + source,
+                dem_layer_name=layer_name, scale=self.terrain_scale)
+            tree.write(str(project_file), encoding='UTF-8',
+                       xml_declaration=True)
+            suffix = ("" if float(self.terrain_scale) == 1.0
+                      else f", {self.terrain_scale:g}x exaggeration")
+            self.log_message.emit(
+                f"  ✓ 3D terrain baked: {layer_name or source}{suffix} "
+                "(requires QField 4.1+ on devices)")
+        except Exception as e:
+            self.warning.emit(f"3D terrain baking failed: {e}")
 
     def _save_project(self) -> Optional[Path]:
         """

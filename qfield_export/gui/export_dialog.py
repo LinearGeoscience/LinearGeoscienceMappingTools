@@ -30,7 +30,8 @@ from qgis.PyQt.QtWidgets import (
     QSpacerItem,
     QSizePolicy,
     QTextEdit,
-    QCheckBox
+    QCheckBox,
+    QDoubleSpinBox
 )
 
 from ..core.offline_converter import OfflineConverter
@@ -531,6 +532,33 @@ class ExportDialog(QDialog):
         self._update_plugin_badge()
         layout.addWidget(self._plugin_section)
 
+        # 3D terrain baking. Data configuration rather than a plugin
+        # tool, so it sits outside the collapsed section above.
+        self._terrain_layer_id = None
+        terrain_row = QHBoxLayout()
+        self.bake_terrain_check = QCheckBox("Bake 3D terrain (QField 4.1+)")
+        self.bake_terrain_check.setStyleSheet(_CHECKBOX_QSS)
+        self.bake_terrain_check.setToolTip(
+            "Write the DEM as the exported project's terrain so QField's "
+            "3D map view works offline with your mapping draped on it. "
+            "Needs QField 4.1 or newer on the device.")
+        terrain_row.addWidget(self.bake_terrain_check)
+        self.terrain_z_label = QLabel("Exaggeration:")
+        terrain_row.addWidget(self.terrain_z_label)
+        self.terrain_z_spin = QDoubleSpinBox()
+        self.terrain_z_spin.setRange(1.0, 10.0)
+        self.terrain_z_spin.setDecimals(1)
+        self.terrain_z_spin.setSingleStep(0.5)
+        self.terrain_z_spin.setValue(1.0)
+        self.terrain_z_spin.setSuffix("x")
+        self.terrain_z_spin.setToolTip(
+            "Vertical exaggeration baked into the exported terrain "
+            "(1.0x = true scale). Fixed on the device once exported.")
+        terrain_row.addWidget(self.terrain_z_spin)
+        terrain_row.addStretch()
+        layout.addLayout(terrain_row)
+        self._setup_terrain_row()
+
         # Layer tree with groups
         self.layer_tree = QTreeWidget()
         self.layer_tree.setHeaderLabels(["Layer", "Type", "Geometry", "CRS"])
@@ -586,6 +614,47 @@ class ExportDialog(QDialog):
         # fight this dialog's slate palette.
         self._plugin_section.set_status(
             "required", "{} of {} included".format(on, total))
+
+    def _setup_terrain_row(self):
+        """Auto-detect the terrain DEM (same convention as View in 3D)
+        and pre-check baking when one is found; exaggeration defaults to
+        the desktop 3D panel's persisted setting."""
+        try:
+            try:
+                from ...view3d import terrain as view3d_terrain
+            except ImportError:  # standalone use outside the plugin package
+                from view3d import terrain as view3d_terrain
+
+            layer = view3d_terrain.current_terrain_layer(self.project)
+            reason = 'terrain'
+            if layer is None:
+                layer, reason = view3d_terrain.choose_dem_layer(self.project)
+            if layer is None:
+                self.bake_terrain_check.setText(
+                    "Bake 3D terrain (QField 4.1+) — no DEM found")
+                self.bake_terrain_check.setChecked(False)
+                self.bake_terrain_check.setEnabled(False)
+                self.terrain_z_spin.setEnabled(False)
+                self.terrain_z_label.setEnabled(False)
+                return
+            self._terrain_layer_id = layer.id()
+            self.bake_terrain_check.setText(
+                "Bake 3D terrain: {0} (QField 4.1+)".format(layer.name()))
+            self.bake_terrain_check.setChecked(True)
+
+            settings = QgsSettings()
+            prefix = "LinearGeosciencePlugin/View3D/"
+            if settings.value(prefix + "zEnabled", False, bool):
+                self.terrain_z_spin.setValue(
+                    settings.value(prefix + "zFactor", 1.0, float))
+        except Exception as e:
+            # A detection hiccup must never block the export dialog.
+            self.bake_terrain_check.setChecked(False)
+            self.bake_terrain_check.setEnabled(False)
+            from qgis.core import QgsMessageLog
+            QgsMessageLog.logMessage(
+                "3D terrain detection failed: {0}".format(e),
+                "Linear Geoscience", Qgis.MessageLevel.Warning)
 
     def _on_cancel_clicked(self):
         """Handle cancel button click - cancel export if running, otherwise close."""
@@ -957,7 +1026,11 @@ class ExportDialog(QDialog):
             include_reshape_plugin=self.include_reshape_check.isChecked(),
             include_reverse_plugin=self.include_reverse_check.isChecked(),
             include_copyattrs_plugin=self.include_copyattrs_check.isChecked(),
-            include_merge_plugin=self.include_merge_check.isChecked()
+            include_merge_plugin=self.include_merge_check.isChecked(),
+            bake_terrain=(self.bake_terrain_check.isChecked()
+                          and self._terrain_layer_id is not None),
+            terrain_layer_id=self._terrain_layer_id,
+            terrain_scale=self.terrain_z_spin.value()
         )
 
         try:

@@ -458,7 +458,8 @@ class LinearGeosciencePluginMain:
                 ('reproject_dialog', '_reproject_dialog', False),
                 ('recode_wizard', '_recode_wizard', False),
                 ('reconcile_dialog', '_reconcile_dialog', False),
-                ('mining_import_dialog', '_mining_import_dialog', False)):
+                ('mining_import_dialog', '_mining_import_dialog', False),
+                ('view3d_panel', '_view3d_panel', False)):
             for holder, attr in ((self, own_attr),
                                  (self.iface, iface_attr)):
                 widget = getattr(holder, attr, None)
@@ -914,6 +915,12 @@ class LinearGeosciencePluginMain:
         grp2.addFeature("Generate Contours", None,
                         feature_info.INFO_GENERATE_CONTOURS,
                         self.run_generate_contours)
+        grp2.addFeature("View in 3D", None,
+                        feature_info.INFO_VIEW_3D,
+                        self.run_view_3d)
+        grp2.addFeature("Pit Surface to DEM", None,
+                        feature_info.INFO_PIT_SURFACE_DEM,
+                        self.run_pit_surface_dem)
         lay.addWidget(grp2)
         lay.addStretch()
         return page
@@ -1120,6 +1127,38 @@ class LinearGeosciencePluginMain:
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",
                 f"Could not open Generate Contours: {e}"
+            )
+
+    def run_view_3d(self):
+        try:
+            from .view3d.dialog import run
+            run(self.iface, owner=self)
+        except Exception as e:
+            import traceback
+            from qgis.core import QgsMessageLog, Qgis
+            QgsMessageLog.logMessage(
+                f"run_view_3d failed: {e}\n{traceback.format_exc()}",
+                'Linear Geoscience', Qgis.MessageLevel.Critical
+            )
+            self.iface.messageBar().pushCritical(
+                "Linear Geoscience",
+                f"Could not open View in 3D: {e}"
+            )
+
+    def run_pit_surface_dem(self):
+        try:
+            from .view3d.surface_dem_dialog import run
+            run(self.iface)
+        except Exception as e:
+            import traceback
+            from qgis.core import QgsMessageLog, Qgis
+            QgsMessageLog.logMessage(
+                f"run_pit_surface_dem failed: {e}\n{traceback.format_exc()}",
+                'Linear Geoscience', Qgis.MessageLevel.Critical
+            )
+            self.iface.messageBar().pushCritical(
+                "Linear Geoscience",
+                f"Could not open Pit Surface to DEM: {e}"
             )
 
     def run_loadtemplate(self):
