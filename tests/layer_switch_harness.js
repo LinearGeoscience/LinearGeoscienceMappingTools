@@ -1,7 +1,8 @@
-// Harness: extract the pure-JS glyph lookup of the layer switch (v29)
-// from lgs_companion.qml verbatim and check it. The marks themselves are
-// drawn from QML Rectangles -- what is testable here is which KIND of
-// mark each layer resolves to.
+// Harness: extract the pure-JS half of the layer switch (v31) from
+// lgs_companion.qml verbatim and check it. The pills are drawn from QML
+// primitives -- what is testable here is the label each layer resolves
+// to, and the per-character opacity ramp that fades a pill off to the
+// right.
 // Run: node layer_switch_harness.js <path-to-qml>
 'use strict'
 const fs = require('fs')
@@ -22,31 +23,13 @@ function extractFunction(name) {
          qml.slice(bodyStart, i + 1)
 }
 
-// The glyph table is a property, not a function -- lift it out of the QML
-// the same verbatim way, so a rename or a retyped kind fails this test.
-function extractGlyphTable() {
-  const start = qml.indexOf('readonly property var layerSwitchGlyphs: ({')
-  if (start === -1) throw new Error('layerSwitchGlyphs not found')
-  const open = qml.indexOf('{', start)
-  const close = qml.indexOf('})', open)
-  if (close === -1) throw new Error('layerSwitchGlyphs not closed')
-  return 'var layerSwitchGlyphs = ' + qml.slice(open, close + 1)
-}
-
-const code = [extractGlyphTable(),
-              extractFunction('baseName'),
-              extractFunction('layerSwitchGlyphForBase')].join('\n');
+const code = [extractFunction('baseName'),
+              extractFunction('layerSwitchCharAlpha')].join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // declarations become globals.
 (0, eval)(code)
 const baseName = globalThis.baseName
-const layerSwitchGlyphForBase = globalThis.layerSwitchGlyphForBase
-
-// What the QML delegate does with a name, minus the geometry fallback
-// (which needs a live layer and so cannot run here).
-function glyphFor(name) {
-  return layerSwitchGlyphForBase(baseName(name))
-}
+const alpha = globalThis.layerSwitchCharAlpha
 
 let failures = 0
 function check(label, ok, detail) {
@@ -58,58 +41,126 @@ function same(label, got, want) {
         'got ' + JSON.stringify(got) + ' want ' + JSON.stringify(want))
 }
 
-// --- the canonical four ----------------------------------------------
+// --- the label on each pill ------------------------------------------
+// The pill shows the ordinal-free name, the same string the toasts use.
 const CANONICAL = ['1 - FieldNotebook', '2 - Linework', '3 - Overlay',
                    '4 - Basemap']
-same('canonical four give point/line/wash/fill',
-     CANONICAL.map(glyphFor), ['point', 'line', 'wash', 'fill'])
+same('canonical four give their bare names', CANONICAL.map(baseName),
+     ['FieldNotebook', 'Linework', 'Overlay', 'Basemap'])
 
-// --- pre-swap ordinals read the same ---------------------------------
 // A GeoPackage made before the Aug 2026 Linework/Overlay swap keeps the
-// old table names; the marks must not move with the ordinal.
-same('legacy ordinals give the same marks',
+// old table names; the label must not move with the ordinal.
+same('legacy ordinals give the same names',
      ['1 - FieldNotebook', '3 - Linework', '2 - Overlay',
-      '4 - Basemap'].map(glyphFor),
-     ['point', 'line', 'wash', 'fill'])
+      '4 - Basemap'].map(baseName),
+     ['FieldNotebook', 'Linework', 'Overlay', 'Basemap'])
 
-// --- the two polygon layers must NOT collide -------------------------
-// Both are polygons, so geometry alone cannot separate them; the whole
-// point of the table is that they read differently.
-check('Overlay and Basemap get different marks',
-      glyphFor('3 - Overlay') !== glyphFor('4 - Basemap'),
-      glyphFor('3 - Overlay') + ' vs ' + glyphFor('4 - Basemap'))
-
-// --- only the layers present in the package --------------------------
-same('a package without Overlay keeps the rest',
-     ['1 - FieldNotebook', '2 - Linework', '4 - Basemap'].map(glyphFor),
-     ['point', 'line', 'fill'])
-same('a single layer still gets its mark',
-     ['2 - Linework'].map(glyphFor), ['line'])
-
-// --- a name with no ordinal prefix -----------------------------------
-same('unprefixed names work', ['Linework', 'Overlay'].map(glyphFor),
-     ['line', 'wash'])
-
-// --- an unknown layer abstains, so the caller asks the geometry -------
-check('an unknown base returns empty, not a guess',
-      glyphFor('7 - Geochemistry') === '', glyphFor('7 - Geochemistry'))
-check('a near-miss name does not fuzzy-match',
-      glyphFor('2 - Linework Draft') === '', glyphFor('2 - Linework Draft'))
-
-// --- every kind the table emits must be one the delegate can draw ----
-// The delegate gates four inline marks on these exact strings; a kind it
-// does not know would render an empty button.
-const DRAWN = ['point', 'line', 'wash', 'fill']
-for (const base in globalThis.layerSwitchGlyphs) {
-  const kind = globalThis.layerSwitchGlyphs[base]
-  check('the delegate can draw ' + base + ' -> ' + kind,
-        DRAWN.indexOf(kind) !== -1, kind)
-}
-
-// --- baseName itself, the shared mirror of lgs_layers.base_name ------
 check('baseName strips the ordinal',
       baseName('3 - Overlay') === 'Overlay', baseName('3 - Overlay'))
 check('baseName leaves an unprefixed name alone',
       baseName('Overlay') === 'Overlay', baseName('Overlay'))
+
+// --- the fade ramp ----------------------------------------------------
+// reveal 0 is the resting state, 0.28 is where the ACTIVE pill rests,
+// 1 is just after a tap.
+const REVEALS = [0, 0.28, 1]
+const COUNTS = []
+for (let n = 1; n <= 20; n++) COUNTS.push(n)
+
+// Nothing may ever leave the 0..1 an opacity accepts -- out of range
+// either clips to a hard edge or throws away the fade entirely.
+let ranged = true, rangeDetail = ''
+for (const reveal of REVEALS) {
+  for (const n of COUNTS) {
+    for (let i = 0; i < n; i++) {
+      const a = alpha(i, n, reveal)
+      if (!(a >= 0 && a <= 1)) {
+        ranged = false
+        rangeDetail = 'alpha(' + i + ',' + n + ',' + reveal + ') = ' + a
+      }
+    }
+  }
+}
+check('every alpha stays within 0..1', ranged, rangeDetail)
+
+// count 1 divides by (count - 1) unless the guard holds.
+let finite = true, finiteDetail = ''
+for (const reveal of REVEALS) {
+  const a = alpha(0, 1, reveal)
+  if (!isFinite(a)) { finite = false; finiteDetail = 'reveal ' + reveal + ' -> ' + a }
+}
+check('a one-character name is finite, not NaN', finite, finiteDetail)
+
+// The fade runs one way only: left is never dimmer than right.
+let monoIndex = true, monoIndexDetail = ''
+for (const reveal of REVEALS) {
+  for (const n of COUNTS) {
+    for (let i = 1; i < n; i++) {
+      if (alpha(i, n, reveal) > alpha(i - 1, n, reveal) + 1e-12) {
+        monoIndex = false
+        monoIndexDetail = 'n=' + n + ' reveal=' + reveal + ' at i=' + i
+      }
+    }
+  }
+}
+check('alpha never rises left to right', monoIndex, monoIndexDetail)
+
+// Revealing must never dim a character that was already showing.
+let monoReveal = true, monoRevealDetail = ''
+for (const n of COUNTS) {
+  for (let i = 0; i < n; i++) {
+    for (let r = 0; r < 1; r += 0.05) {
+      if (alpha(i, n, r + 0.05) < alpha(i, n, r) - 1e-12) {
+        monoReveal = false
+        monoRevealDetail = 'n=' + n + ' i=' + i + ' r=' + r
+      }
+    }
+  }
+}
+check('alpha never falls as reveal rises', monoReveal, monoRevealDetail)
+
+// Fully revealed means fully readable -- the whole point of the tap.
+let allSolid = true, solidDetail = ''
+for (const n of COUNTS) {
+  for (let i = 0; i < n; i++) {
+    if (alpha(i, n, 1) !== 1) {
+      allSolid = false
+      solidDetail = 'n=' + n + ' i=' + i + ' -> ' + alpha(i, n, 1)
+    }
+  }
+}
+check('at reveal 1 every character is solid', allSolid, solidDetail)
+
+// At rest the head survives and the tail is gone: findable, but not four
+// name plates sitting on the map. This is the ask, pinned.
+let restOk = true, restDetail = ''
+for (const n of COUNTS) {
+  if (n < 2) continue
+  if (!(alpha(0, n, 0) > 0)) {
+    restOk = false
+    restDetail = 'head n=' + n + ' -> ' + alpha(0, n, 0)
+  }
+  if (alpha(n - 1, n, 0) !== 0) {
+    restOk = false
+    restDetail = 'tail n=' + n + ' -> ' + alpha(n - 1, n, 0)
+  }
+}
+check('at rest the head shows and the tail is gone', restOk, restDetail)
+
+// The active pill rests part-revealed, so its name is still identifiable
+// at a glance while the others are ghosts.
+const ACTIVE_N = 'FieldNotebook'.length
+check('the active pill rests with a readable head',
+      alpha(0, ACTIVE_N, 0.28) === 1 && alpha(3, ACTIVE_N, 0.28) > 0.3,
+      'first ' + alpha(0, ACTIVE_N, 0.28) + ' fourth ' + alpha(3, ACTIVE_N, 0.28))
+check('the active pill still fades out by its tail',
+      alpha(ACTIVE_N - 1, ACTIVE_N, 0.28) === 0,
+      String(alpha(ACTIVE_N - 1, ACTIVE_N, 0.28)))
+
+// An idle non-active pill must be fainter than the active one, or the
+// highlight says nothing.
+check('a resting pill is fainter than the active one',
+      alpha(0, ACTIVE_N, 0) < alpha(0, ACTIVE_N, 0.28),
+      alpha(0, ACTIVE_N, 0) + ' vs ' + alpha(0, ACTIVE_N, 0.28))
 
 process.exit(failures === 0 ? 0 : 1)

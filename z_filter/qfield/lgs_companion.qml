@@ -2337,64 +2337,36 @@ Item {
   }
 
   // ================================================================
-  // Layer switch (v28)
+  // Layer switch (v28, name pills v31)
   //
-  // Four letters down the left edge that set QField's ACTIVE layer
-  // without opening the dashboard drawer. The active layer decides
+  // A stack of layer NAMES down the left edge that set QField's ACTIVE
+  // layer without opening the dashboard drawer. The active layer decides
   // which layer the digitise button writes to, and every sidecar tool
   // here (Reshape / Reverse / Copy / Merge) locks onto it at entry —
   // yet reaching it costs a drawer, a scroll and a tap, with the map
   // covered throughout.
   // ================================================================
 
-  property var layerSwitchEntries: []        // [{name, glyph}], present only
+  property var layerSwitchEntries: []        // [{name, label}], present only
   property string layerSwitchActiveName: ''  // '' = something else is active
   property bool layerSwitchAwake: true       // false once it has dimmed
   property bool layerSwitchSupported: true   // false once a write no-ops
   property bool layerSwitchAttached: false   // parked on the canvas
 
-  // A mark per layer, DRAWN rather than lettered. The sidecar reaches
-  // tablets carrying whatever fonts the vendor shipped, and this file
-  // already documents seven glyphs that had to be swapped out because
-  // Android's fonts lack them ('✕', '∿', '⤳', '⇄', '⧉', '∪', '⌖' — see
-  // the pills above). A Rectangle cannot be missing from a font.
+  // Opacity of one character of a name, so a pill fades off to the right
+  // instead of sitting on the map as a solid plate. index 0 is the
+  // leftmost character; reveal is 0 at rest and 1 just after a tap.
   //
-  // Keyed by the ordinal-free name, so the pre-swap spellings in
-  // legacyLayerNames land on the same mark with no extra case. Each kind
-  // copies how the layer actually reads on the map.
-  readonly property var layerSwitchGlyphs: ({
-    'FieldNotebook': 'point',  // a filled dot
-    'Linework': 'line',        // a bar laid over at a map-like angle
-    'Overlay': 'wash',         // hatched box — the see-through layer
-    'Basemap': 'fill'          // solid box — the lithology underneath
-  })
-
-  // The pure half of the lookup — the test harness runs this verbatim.
-  // '' means "no opinion", and the caller falls back to the geometry.
-  function layerSwitchGlyphForBase(base) {
-    const glyph = layerSwitchGlyphs[base]
-    return glyph === undefined ? '' : glyph
-  }
-
-  function layerSwitchGlyphFor(name) {
-    const known = layerSwitchGlyphForBase(baseName(name))
-    if (known !== '')
-      return known
-    // A layer we do not recognise still gets an honest mark: ask its own
-    // geometry (0 point, 1 line, 2 polygon). Read defensively — a build
-    // that will not answer falls through to the solid box, so a button is
-    // never blank.
-    try {
-      const layer = layerByName(name)
-      if (layer !== null) {
-        const type = layer.geometryType()
-        if (type === 0)
-          return 'point'
-        if (type === 1)
-          return 'line'
-      }
-    } catch (error) {}
-    return 'fill'
+  // At rest only the head of the name survives — enough to show the
+  // control is there — and by reveal 1 every character is solid. The
+  // clamp is what makes both of those exact rather than merely close.
+  // Kept pure JS — the test harness runs this verbatim.
+  function layerSwitchCharAlpha(index, count, reveal) {
+    // A one-character name has nowhere to fade to; t stays at the head.
+    const t = count <= 1 ? 0 : index / (count - 1)
+    const edge = 0.10 + 1.30 * reveal
+    const alpha = (edge - t) / 0.35
+    return alpha < 0 ? 0 : (alpha > 1 ? 1 : alpha)
   }
 
   function initLayerSwitch() {
@@ -2407,7 +2379,7 @@ Item {
     }
     let entries = []
     for (const name of names)
-      entries.push({ name: name, glyph: layerSwitchGlyphFor(name) })
+      entries.push({ name: name, label: baseName(name) })
     layerSwitchEntries = entries
     syncLayerSwitchActive()
     // Start awake so the column is seen at least once, then let it settle
@@ -2512,7 +2484,9 @@ Item {
 
   Timer {
     id: layerSwitchWakeTimer
-    interval: 4000
+    // Long enough to read the name just picked, short enough that the
+    // stack is not clutter. Each pill's own reveal does the fading.
+    interval: 1600
     repeat: false
     onTriggered: plugin.layerSwitchAwake = false
   }
@@ -2542,13 +2516,8 @@ Item {
              plugin.mergeStep === 0
     spacing: 6
     z: 1
-    // Full strength for a few seconds after a tap or an active-layer
-    // change, then out of the way — still legible at 0.35.
-    opacity: plugin.layerSwitchAwake ? 1.0 : 0.35
-
-    Behavior on opacity {
-      NumberAnimation { duration: 250 }
-    }
+    // No opacity here on purpose: each pill fades itself, horizontally,
+    // through its own reveal. Dimming the column too would dim twice.
 
     Repeater {
       model: plugin.layerSwitchEntries
@@ -2556,97 +2525,86 @@ Item {
       delegate: Rectangle {
         id: layerSwitchButton
         required property var modelData
-        width: 30
-        height: 30
-        radius: 8
+
+        readonly property bool isActive:
+            plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+
+        // 0 at rest, 1 just after a tap or an active-layer change. The
+        // ACTIVE pill rests part-revealed, so a glance still names the
+        // current layer without lighting the whole stack.
+        property real reveal: plugin.layerSwitchAwake
+            ? 1.0 : (layerSwitchButton.isActive ? 0.28 : 0.0)
+
+        Behavior on reveal {
+          NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        }
+
         // Inverted while active — the same state language as the level
         // lock, spline, hold and mode pills.
-        color: plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
-            ? '#E6FFFFFF' : '#99000000'
-
-        // One expression for the mark's colour, inverted with the chip.
-        // A string, not a color: every Rectangle here coerces it, and it
-        // keeps the declaration to types this file already leans on.
-        readonly property string ink:
-            plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+        readonly property color pad: layerSwitchButton.isActive
+            ? Qt.rgba(1, 1, 1, 0.90) : Qt.rgba(0, 0, 0, 0.60)
+        readonly property string ink: layerSwitchButton.isActive
             ? 'black' : 'white'
 
-        // All four marks are declared INLINE and gated by the glyph kind,
-        // rather than loaded from plugin-scope Components: a Component
-        // resolves its ids in the context it was declared in, so it could
-        // not see layerSwitchButton at all. Three spare Items per button
-        // costs nothing.
-        Item {
-          anchors.centerIn: parent
-          width: 16
-          height: 16
+        // Sized off the character Row, not a Text.contentWidth: laying a
+        // name out per character loses the kerning pairs and comes out a
+        // touch wider, and the pill has to fit what is actually drawn.
+        width: nameRow.width + 26
+        height: nameRow.height + 18
+        radius: height / 2
 
-          // Points — the same filled-dot recipe as the spline and reshape
-          // vertex markers further down.
-          Rectangle {
-            visible: layerSwitchButton.modelData.glyph === 'point'
-            anchors.centerIn: parent
-            width: 9
-            height: 9
-            radius: 4.5
-            color: layerSwitchButton.ink
+        // The pill does not end so much as stop being there. Solid at
+        // the left so the control stays findable, gone by the right
+        // edge, with the solid head growing rightward as reveal rises.
+        // Only the ALPHA moves across the stops — holding r/g/b still is
+        // what keeps the fade from drifting through some other colour.
+        // First use of Gradient in this file; core QtQuick, no import.
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+
+          GradientStop {
+            position: 0.0
+            color: layerSwitchButton.pad
           }
 
-          // Lines — one bar, laid over the way a contact runs.
-          Rectangle {
-            visible: layerSwitchButton.modelData.glyph === 'line'
-            anchors.centerIn: parent
-            width: 20
-            height: 2.5
-            radius: 1.25
-            rotation: -35
-            color: layerSwitchButton.ink
+          GradientStop {
+            position: 0.18 + 0.62 * layerSwitchButton.reveal
+            color: layerSwitchButton.pad
           }
 
-          // Overlay — a see-through box under hatching. Hollow-versus-solid
-          // would have read as a second on/off signal against the chip's
-          // own inversion, so the wash is hatched instead. The two bars are
-          // deliberately longer than the box and cropped by clip, which is
-          // what lets them meet the edges instead of floating inside it.
-          // (clip is axis-aligned, so it squares off the 2px corner radius
-          // — invisible at this size.)
-          Rectangle {
-            visible: layerSwitchButton.modelData.glyph === 'wash'
-            anchors.fill: parent
-            radius: 2
-            color: 'transparent'
-            border.color: layerSwitchButton.ink
-            border.width: 2
-            clip: true
+          GradientStop {
+            position: 1.0
+            color: Qt.rgba(layerSwitchButton.pad.r, layerSwitchButton.pad.g,
+                           layerSwitchButton.pad.b, 0)
+          }
+        }
 
-            Item {
-              anchors.centerIn: parent
-              width: parent.width * 1.5
-              height: parent.height * 1.5
-              rotation: -45
+        // One Text per character. This is the only import-free way to
+        // fade a string across its own width: Qt5Compat.GraphicalEffects
+        // and QtQuick.Effects are not imported here (and may not ship
+        // with QField at all), and a ShaderEffect would want a
+        // precompiled .qsb, which cannot ride inside a single sidecar
+        // .qml. Thirteen Text items at worst, built once at startup.
+        Row {
+          id: nameRow
+          anchors.left: parent.left
+          anchors.leftMargin: 13
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 0
 
-              Rectangle {
-                y: parent.height * 0.34
-                width: parent.width
-                height: 2
-                color: layerSwitchButton.ink
-              }
+          Repeater {
+            model: layerSwitchButton.modelData.label.length
 
-              Rectangle {
-                y: parent.height * 0.62
-                width: parent.width
-                height: 2
-                color: layerSwitchButton.ink
-              }
+            delegate: Text {
+              required property int index
+              text: layerSwitchButton.modelData.label.charAt(index)
+              font.pixelSize: 14
+              font.bold: true
+              color: layerSwitchButton.ink
+              opacity: plugin.layerSwitchCharAlpha(
+                  index, layerSwitchButton.modelData.label.length,
+                  layerSwitchButton.reveal)
             }
-          }
-
-          // Basemap — the solid fill everything else sits on.
-          Rectangle {
-            visible: layerSwitchButton.modelData.glyph === 'fill'
-            anchors.fill: parent
-            radius: 2
-            color: layerSwitchButton.ink
           }
         }
 
@@ -2654,6 +2612,8 @@ Item {
           // ReleaseWithinBounds like every other overlay control: the
           // default policy takes only a passive grab, so the tap would
           // ALSO reach QField's canvas handlers underneath and digitise.
+          // The whole pill takes the tap, faded tail included — the
+          // target size is the point of this revision.
           gesturePolicy: TapHandler.ReleaseWithinBounds
           onTapped: plugin.setActiveLayerByName(layerSwitchButton.modelData.name)
         }
