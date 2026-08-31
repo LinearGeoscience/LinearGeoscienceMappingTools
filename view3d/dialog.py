@@ -35,6 +35,10 @@ SETTING_Z_ENABLED = SETTINGS_PREFIX + "zEnabled"
 SETTING_Z_FACTOR = SETTINGS_PREFIX + "zFactor"
 SETTING_QUALITY = SETTINGS_PREFIX + "quality"
 SETTING_EDL = SETTINGS_PREFIX + "eyeDomeLighting"
+# Set immediately before asking QGIS for a 3D view and cleared once it
+# comes back. Still set at startup => the last attempt took QGIS down
+# with it, so do not auto-open into the same crash.
+SETTING_OPENING = SETTINGS_PREFIX + "openAttemptInProgress"
 SETTING_GEOMETRY = SETTINGS_PREFIX + "dialogGeometry"
 
 QUALITY_CHOICES = [
@@ -360,6 +364,11 @@ class View3DPanel(QDialog):
             return
         mode = self.mode_combo.currentData()
         extent = layer.extent() if mode == 'pit' else None
+        # A crash inside QGIS's 3D creation cannot be caught from Python,
+        # so leave a breadcrumb instead: if we never get to clear it, the
+        # next session knows not to walk into the same wall unasked.
+        settings_store = QgsSettings()
+        settings_store.setValue(SETTING_OPENING, True)
         try:
             canvas = view.open_view(
                 self.iface, layer, z_factor=self._z_factor(),
@@ -374,6 +383,8 @@ class View3DPanel(QDialog):
                 'Linear Geoscience', Qgis.MessageLevel.Critical)
             self.status_label.setText(f"Could not open 3D view: {exc}")
             return
+        finally:
+            settings_store.setValue(SETTING_OPENING, False)
         self._apply_mode(canvas)
         self._update_terrain_note(canvas.mapSettings())
         if not self.status_label.text():
@@ -409,6 +420,19 @@ def run(iface, owner=None):
     if owner is not None:
         owner.view3d_panel = panel
     panel.show()
+
+    settings = QgsSettings()
+    if settings.value(SETTING_OPENING, False, bool):
+        # Last attempt never returned — almost certainly it crashed QGIS.
+        # Show the panel and let the user decide, rather than repeating it.
+        settings.setValue(SETTING_OPENING, False)
+        panel.status_label.setText(
+            "The last attempt to open a 3D view did not complete — QGIS "
+            "may have closed. Nothing was opened automatically this time. "
+            "Try Standard detail, or QGIS's own View ▸ 3D Map Views to "
+            "check whether 3D works at all here.")
+        return panel
+
     if panel._selected_dem_layer() is not None:
         panel._open_view()
     return panel
