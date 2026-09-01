@@ -6909,6 +6909,7 @@ Item {
   property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
   property int reshapeStrokeStart: -1  // -1 idle, -2 ignoring this stroke
   property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
+  property var reshapeFeatureFormItem: null // QField feature form, cached
   // Conditioning constants (v32). Dedupe epsilon in POINTS so it scales
   // with the view like every other drawing tolerance — 0.5 pt is well
   // under the 8 pt stroke gate, so conditioning can only ever remove
@@ -6930,7 +6931,13 @@ Item {
   // styles a mapper flips between). Reshape stopped sharing the
   // digitizing tool's lgs_spline_armed switch at v32 — that key now
   // only seeds the first read.
-  property string reshapeStyle: 'tap'
+  // v33: 'free' is the default. The tool exists to redraw an edge by
+  // hand, and opening in Tap put the freehand DragHandler behind two
+  // deliberate actions (Draw line, then the Freehand pill) - a user who
+  // tapped the pill and drew got a disabled handler and a panning map,
+  // which is exactly the "freehand doesn't work" report. A saved
+  // lgs_reshape_style still wins, so Tap is one pill away and sticks.
+  property string reshapeStyle: 'free'
   property bool reshapeSplineArmed: false
 
   function reshapeSplineKey() {
@@ -6939,8 +6946,8 @@ Item {
   }
 
   function reshapeLoadStyle() {
-    reshapeStyle = projVar('lgs_reshape_style', 'tap') === 'free'
-        ? 'free' : 'tap'
+    reshapeStyle = projVar('lgs_reshape_style', 'free') === 'tap'
+        ? 'tap' : 'free'
     reshapeSplineArmed = featureSpline &&
         projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
   }
@@ -7216,7 +7223,35 @@ Item {
           return true
       }
     } catch (error) {}
+    // QField's feature form (v33). QField's own canvas handler ignores
+    // stylus points landing on it, and disables freehand entirely while
+    // it is visible; now that a stroke can begin in the pick step, a pen
+    // press over an open form would otherwise draw straight through it.
+    try {
+      const form = reshapeFeatureForm()
+      if (form !== null && form.visible) {
+        const f = form.mapFromItem(reshapeCatcher, pos.x, pos.y)
+        if (f.x >= 0 && f.y >= 0 &&
+            f.x <= form.width && f.y <= form.height)
+          return true
+      }
+    } catch (error) {}
     return false
+  }
+
+  // QField's feature form item, probed and remembered - the same idiom
+  // as reshapeActiveLayer's dashboard lookup. The objectName is a
+  // QField Main.qml convention; a build that does not answer leaves
+  // every caller inert rather than failing.
+  function reshapeFeatureForm() {
+    if (reshapeFeatureFormItem === null) {
+      try {
+        reshapeFeatureFormItem = iface.findItemByObjectName('featureForm')
+      } catch (error) {}
+    }
+    if (reshapeFeatureFormItem === undefined)
+      return null
+    return reshapeFeatureFormItem
   }
 
   function updateReshapeSelection() {
@@ -7273,11 +7308,38 @@ Item {
   // never activates it (dragThreshold 0 needs movement), so it falls
   // through to the TapHandler and tap placement keeps working.
   // ----------------------------------------------------------------
+  // One line per stroke, so a device round trip can tell the three
+  // candidate causes of "freehand does not draw" apart without
+  // guessing: a handler that is not even enabled (wrong style or step),
+  // a pointer QField never routes here (a pen reporting as a touch
+  // screen), or a grab the canvas took away mid-stroke (which shows up
+  // as a stroke that ends with a handful of points).
+  function reshapeLogStroke(handler) {
+    let device = '?'
+    try {
+      const d = handler.centroid.device
+      if (d !== null && d !== undefined)
+        device = String(d.type !== undefined ? d.type : d)
+    } catch (error) {}
+    console.log('LGS reshape stroke: begin, style ' + reshapeStyle +
+                ', step ' + reshapeStep +
+                ', enabled ' + handler.enabled +
+                ', active ' + handler.active +
+                ', device ' + device)
+  }
+
   function reshapeStrokeBegin(pos) {
-    if (reshapeStep !== 2 || reshapeTapOnUi(pos)) {
+    // v33: a stroke may START in the pick step and promotes itself to
+    // the draw step. Picking targets is optional, so requiring the
+    // Draw line button first meant the pen did nothing at all on the
+    // screen the tool opens on. A tap still picks in step 1; a drag
+    // draws.
+    if ((reshapeStep !== 1 && reshapeStep !== 2) || reshapeTapOnUi(pos)) {
       reshapeStrokeStart = -2
       return
     }
+    if (reshapeStep === 1)
+      reshapeStep = 2
     reshapeStrokeStart = reshapeControls.length
     // Latch once per stroke, never per move — the 40 ms rebuilds must
     // all agree on one density or the segment cache thrashes (v32).
@@ -7956,23 +8018,54 @@ Item {
       // so banner Buttons keep their stylus taps.
       // v32: strokes only exist in freehand mode — Tap mode fully
       // disables this handler.
-      enabled: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'free'
+      // v33: live in the pick step too - reshapeStrokeBegin promotes -
+      // so the pen draws on the screen the tool opens on. dragThreshold
+      // 0 is also what wins the grab race: this catcher is a CHILD of
+      // the canvas, which Qt offers the press to first, and the canvas
+      // pan needs its whole drag threshold before it can even ask.
+      id: reshapeFreehandDrag
+      enabled: (plugin.reshapeStep === 1 || plugin.reshapeStep === 2) &&
+               plugin.reshapeStyle === 'free'
       acceptedDevices: plugin.reshapeSettingsItem !== null &&
                        plugin.reshapeSettingsItem.mouseAsTouchScreen
           ? PointerDevice.Stylus
           : PointerDevice.Stylus | PointerDevice.Mouse
-      grabPermissions: PointerHandler.CanTakeOverFromHandlersOfSameType |
-                       PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                       PointerHandler.ApprovesTakeOverByAnything
+      // While a stroke is actually being recorded, refuse to hand the
+      // grab on: the canvas must not be able to turn the second half of
+      // a drawn line into a pan. ApprovesCancellation is kept and is NOT
+      // optional - it lives inside the ApprovesTakeOverByAnything (0xF0)
+      // mask, and without it Qt cannot cancel our exclusive grab (window
+      // deactivate, a popup opening, a touch cancel), so
+      // onActiveChanged(false) would never fire and reshapeStrokeEnd
+      // would never run: the stroke would hang forever.
+      // Outside a live stroke the permissive mask is restored, so a
+      // press the tool has already decided to ignore (reshapeStrokeStart
+      // === -2, e.g. one landing on the banner) still falls through to
+      // the canvas pan. CanTakeOverFromItems stays off either way, so
+      // banner Buttons keep their stylus taps.
+      grabPermissions: plugin.reshapeStrokeStart >= 0
+          ? (PointerHandler.CanTakeOverFromHandlersOfSameType |
+             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+             PointerHandler.ApprovesCancellation)
+          : (PointerHandler.CanTakeOverFromHandlersOfSameType |
+             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+             PointerHandler.ApprovesTakeOverByAnything)
       dragThreshold: 0
       onActiveChanged: {
-        if (active)
+        if (active) {
           plugin.reshapeStrokeBegin(centroid.position)
-        else
+          plugin.reshapeLogStroke(reshapeFreehandDrag)
+        } else {
           plugin.reshapeStrokeEnd()
+        }
       }
       onCentroidChanged: {
-        if (active)
+        // QField guards the same signal. A centroid update can report
+        // (0,0) as a second point arrives or leaves, or on the
+        // activation edge; without the guard that sample lands as a
+        // control point at the map's top-left corner and drags the whole
+        // line across the canvas.
+        if (active && (centroid.position.x !== 0 || centroid.position.y !== 0))
           plugin.reshapeStrokeMove(centroid.position)
       }
     }
