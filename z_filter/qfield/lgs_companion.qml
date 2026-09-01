@@ -6908,6 +6908,23 @@ Item {
   // Freehand stroke state (v24) — stylus draws, finger pans.
   property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
   property int reshapeStrokeStart: -1  // -1 idle, -2 ignoring this stroke
+  // Raw stroke buffer (v33). Map coordinates, one entry per pointer
+  // move, MUTATED IN PLACE and never reassigned while the pen is down:
+  // assigning a var property emits its change signal, which re-evaluates
+  // the banner text and both button enabled bindings, and .slice()ing it
+  // per move made the stroke quadratic on its own. It is thinned to
+  // control points exactly once, on release.
+  property var reshapeStrokeRaw: []
+  // The control spacing, latched at stroke begin. Reading
+  // splineMinNodeMapUnits() per move breaks the tool's own rule (the
+  // density is latched once per stroke) and cost a C++ property read
+  // every sample.
+  property real reshapeStrokeGate: 0
+  // The sequence reshapeModel currently holds, so the next write can
+  // diff against it instead of resetting. null means "do not trust the
+  // model's contents" — which is exactly what a live stroke appending
+  // straight onto the model leaves behind.
+  property var reshapeLastSeq: null
   property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
   property var reshapeFeatureFormItem: null // QField feature form, cached
   // Conditioning constants (v32). Dedupe epsilon in POINTS so it scales
@@ -7341,52 +7358,124 @@ Item {
     if (reshapeStep === 1)
       reshapeStep = 2
     reshapeStrokeStart = reshapeControls.length
-    // Latch once per stroke, never per move — the 40 ms rebuilds must
-    // all agree on one density or the segment cache thrashes (v32).
+    // Latch once per stroke, never per move — every rebuild must agree
+    // on one density or the segment cache thrashes (v32), and the same
+    // rule now covers the capture spacing (v33).
     splineRefreshDensity()
+    reshapeStrokeGate = splineMinNodeMapUnits()
+    reshapeStrokeRaw.length = 0
+    // The stroke appends straight onto the model, behind the prefix
+    // diff's back, so the diff must not trust its record afterwards.
+    reshapeLastSeq = null
+    // Re-lay the committed line with its floating tail intact, so the
+    // first stroke sample overwrites the duplicate and not a real point.
+    try {
+      reshapeWriteModel(reshapeSequence(), true)
+    } catch (error) {}
     reshapeStrokeMove(pos)
   }
 
+  // O(1) per pointer move, and deliberately so: one screen-to-map
+  // conversion, one push onto a buffer mutated IN PLACE, and one append
+  // to the rubberband so the ink follows the pen. That is exactly what
+  // QField's own freehand digitizing does. Everything that used to
+  // happen here — a whole-array copy, a var property assignment that
+  // re-evaluated the banner and both button bindings, and a 40 ms timer
+  // that re-conditioned, re-splined at FULL density and rewrote every
+  // vertex of the model — now happens once, on release.
+  //
+  // Capture is UNGATED. The spacing is applied on release by
+  // splineDecimate, which picks the same control points the live gate
+  // picked (tests/reshape_freehand_harness.js pins that prefix for
+  // prefix on 800/1600/3200-move strokes), so the saved curve is
+  // unchanged and only the ink is new.
   function reshapeStrokeMove(pos) {
     if (reshapeStrokeStart < 0 || reshapeStep !== 2)
       return
     try {
       const pt = canvas.mapSettings.screenToCoordinate(
           Qt.point(pos.x, pos.y))
-      // fh marks stroke interiors: no white marker dot each (a stroke
-      // would spawn hundreds) — the endpoints are untagged on release
-      // so they keep theirs. The spline math never reads the tag.
-      const node = { x: Number(pt.x), y: Number(pt.y), z: Number(pt.z),
-                     fh: true }
-      let next = reshapeControls.slice()
-      if (!reshapeStrokeAppend(next, node, splineMinNodeMapUnits()))
+      const x = Number(pt.x)
+      const y = Number(pt.y)
+      const n = reshapeStrokeRaw.length
+      // Coincident samples only — a pen resting still reports moves.
+      if (n > 0 && reshapeStrokeRaw[n - 1].x === x &&
+          reshapeStrokeRaw[n - 1].y === y)
         return
-      reshapeControls = next
-      // Throttle, not debounce — restarting on every move would starve
-      // the preview for the whole stroke (see splineScheduleRebuild).
-      if (!reshapeStrokeTimer.running)
-        reshapeStrokeTimer.start()
+      const z = Number(pt.z)
+      reshapeStrokeRaw.push({ x: x, y: y, z: z })
+      reshapeModel.addVertexFromPoint(isFinite(z)
+          ? GeometryUtils.point(x, y, z)
+          : GeometryUtils.point(x, y))
     } catch (error) {}
   }
 
   function reshapeStrokeEnd() {
     const start = reshapeStrokeStart
     reshapeStrokeStart = -1
-    if (start < 0 || reshapeStep !== 2)
+    if (start < 0 || reshapeStep !== 2) {
+      reshapeStrokeRaw.length = 0
       return
-    const added = reshapeControls.length - start
-    if (added <= 0)
+    }
+    // Thin the raw stroke to control points, once. splineDecimate always
+    // keeps the last sample, so the true end of the stroke — the point
+    // where the line has to leave the polygon — can no longer be gated
+    // away, which the live gate could do.
+    const thinned = splineDecimate(reshapeStrokeRaw, reshapeStrokeGate)
+    reshapeStrokeRaw.length = 0
+    if (thinned.length === 0) {
+      reshapeRebuildPreview()
       return
+    }
+    // fh marks stroke interiors: no white marker dot each (a stroke
+    // would spawn hundreds). The two ends stay untagged so they keep
+    // theirs. The spline math never reads the tag.
     let next = reshapeControls.slice()
-    for (const i of [start, next.length - 1]) {
-      const node = Object.assign({}, next[i])
-      delete node.fh
-      next[i] = node
+    for (let i = 0; i < thinned.length; i++) {
+      const p = thinned[i]
+      const node = { x: p.x, y: p.y, z: p.z }
+      if (i > 0 && i < thinned.length - 1)
+        node.fh = true
+      next.push(node)
     }
     reshapeControls = next
     // The whole stroke undoes as ONE action.
-    reshapeUndoStack = reshapeUndoStack.concat([added])
+    reshapeUndoStack = reshapeUndoStack.concat([thinned.length])
     reshapeRebuildPreview()
+    reshapeRecenterAfterStroke()
+  }
+
+  // Recentre when a stroke ends near the edge of the screen, so a long
+  // edge can be drawn in strokes without stopping to pan — QField does
+  // the same on its own freehand lift, off the same setting key. It is
+  // gated on the recenter-hold feature as well as its pill: an export
+  // that withheld that flag has no way to turn this off, so it does not
+  // get it. Screen coordinates come from the catcher, which fills the
+  // canvas, and the canvas carries right/bottom margins for the feature
+  // form — so the thresholds are measured in window space.
+  function reshapeRecenterAfterStroke() {
+    if (!featureRecenterHold || recenterHoldActive)
+      return
+    try {
+      const n = reshapeControls.length
+      if (n === 0)
+        return
+      const last = reshapeControls[n - 1]
+      const p = scaleSettings.coordinateToScreen(
+          GeometryUtils.point(last.x, last.y))
+      const w = mainWindow.contentItem.mapFromItem(reshapeCatcher, p.x, p.y)
+      let fraction = 5
+      try {
+        if (typeof settings !== 'undefined' && settings !== null)
+          fraction = Number(settings.value(recenterHoldKey, 5))
+      } catch (error) {}
+      if (!(fraction > 0))
+        fraction = 5
+      const threshold = Math.min(mainWindow.width, mainWindow.height) / fraction
+      if (w.x < threshold || w.x > mainWindow.width - threshold ||
+          w.y < threshold || w.y > mainWindow.height - threshold)
+        scaleSettings.setCenter(GeometryUtils.point(last.x, last.y))
+    } catch (error) {}
   }
 
   // ----------------------------------------------------------------
@@ -7426,7 +7515,14 @@ Item {
   // the line silently stops just short of exiting the polygon. Remove
   // the tail only when the count says it is really there (falling back
   // to the old behaviour when the count is unreadable).
-  function reshapeWriteModel(seq) {
+  // keepFloating (v33) leaves the trailing floating vertex in place. The
+  // model always keeps one, and addVertexFromPoint OVERWRITES it before
+  // appending a fresh one - so a live stroke that appends straight onto
+  // a trimmed model would eat the last real control point (the junction
+  // with the previous stroke or tap, exactly where a kink shows).
+  // Leaving the duplicate means the first stroke sample overwrites the
+  // duplicate instead.
+  function reshapeWriteModel(seq, keepFloating) {
     reshapeModel.reset(true)
     for (let i = 0; i < seq.length; i++) {
       const z = Number(seq[i].z)
@@ -7434,7 +7530,7 @@ Item {
           ? GeometryUtils.point(seq[i].x, seq[i].y, z)
           : GeometryUtils.point(seq[i].x, seq[i].y))
     }
-    if (seq.length > 0) {
+    if (seq.length > 0 && keepFloating !== true) {
       let count = NaN
       try {
         count = Number(reshapeModel.vertexCount)
@@ -7874,6 +7970,13 @@ Item {
   // Control-point markers (desktop parity: dots at the tapped points)
   // ----------------------------------------------------------------
   function updateReshapeMarkers() {
+    // Nothing a marker shows can change while the pen is down, and the
+    // guard has to live HERE rather than at the call site: the pan
+    // throttle on onExtentChanged schedules this too, and the recentre
+    // at the end of a stroke fires exactly that signal. Rebuilding the
+    // Repeater's model destroys and recreates every delegate.
+    if (reshapeStrokeStart >= 0)
+      return
     if (reshapeStep !== 2 || reshapeControls.length === 0 ||
         !canvas || !scaleSettings) {
       reshapeMarkerPositions = []
@@ -7903,15 +8006,6 @@ Item {
     interval: 40
     repeat: false
     onTriggered: plugin.updateReshapeMarkers()
-  }
-
-  Timer {
-    // Live freehand-stroke preview, same 40 ms cadence — the stroke's
-    // final rebuild comes unthrottled from reshapeStrokeEnd.
-    id: reshapeStrokeTimer
-    interval: 40
-    repeat: false
-    onTriggered: plugin.reshapeRebuildPreview()
   }
 
   Connections {
