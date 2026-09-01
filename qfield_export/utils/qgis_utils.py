@@ -15,6 +15,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtXml import QDomDocument
 
+import os
 import shutil
 
 
@@ -465,7 +466,49 @@ def get_raster_format_warning(layer: QgsRasterLayer) -> Optional[str]:
     source_path = Path(source)
     ext = source_path.suffix.lower()
 
-    return UNSUPPORTED_RASTER_EXTENSIONS.get(ext)
+    unsupported = UNSUPPORTED_RASTER_EXTENSIONS.get(ext)
+    if unsupported:
+        return unsupported
+
+    return get_raster_performance_warning(layer)
+
+
+# A raster this size without overview pyramids forces a full-resolution
+# decode at every zoom, which is what makes a tablet stutter. The format
+# check above cannot see it: the file is a perfectly "supported" GeoTIFF.
+PERFORMANCE_WARN_BYTES = 80 * 1024 * 1024
+
+
+def get_raster_performance_warning(layer: QgsRasterLayer) -> Optional[str]:
+    """Warn about a raster that is supported but will be painful in the
+    field, and name the tool that fixes it."""
+    if not isinstance(layer, QgsRasterLayer):
+        return None
+    source = layer.source().split('|')[0]
+    try:
+        if not os.path.isfile(source):
+            return None
+        size = os.path.getsize(source)
+    except OSError:
+        return None
+
+    has_overviews = True
+    try:
+        provider = layer.dataProvider()
+        if provider is not None and hasattr(provider, 'hasPyramids'):
+            has_overviews = bool(provider.hasPyramids())
+    except Exception:
+        has_overviews = True  # never block an export on a failed probe
+
+    if size < PERFORMANCE_WARN_BYTES and has_overviews:
+        return None
+    size_mb = size / (1024 * 1024)
+    if not has_overviews:
+        return (f"{size_mb:.0f} MB with no overview pyramids - will be slow "
+                f"in QField. Use Field / Pit / UG > Optimise Imagery for "
+                f"Field.")
+    return (f"{size_mb:.0f} MB - consider Field / Pit / UG > Optimise "
+            f"Imagery for Field before exporting.")
 
 
 def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Optional[Path]:

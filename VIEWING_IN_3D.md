@@ -4,12 +4,16 @@ One DEM becomes the project's **terrain**, and from then on both QGIS and QField
 mapping over it. Everything below is about getting that one setting right; the rest is
 buttons.
 
-Two tools, both in **Mapsheets & Layouts → Terrain**:
+Everything for a pit or an underground level now lives on one page, **Field / Pit / UG**:
 
-| Tool | What it does |
-|---|---|
-| **View in 3D** | Opens the 3D view, picks the DEM, live vertical exaggeration, Surface / Pit / Underground modes |
-| **Pit Surface to DEM** | Turns a Surpac `.str`+`.dtm` or DXF pit shell into a DEM GeoTIFF |
+| Tool | Group | What it does |
+|---|---|---|
+| **View in 3D** | Terrain | Opens the 3D view, picks the DEM, live vertical exaggeration, Surface / Pit / Underground modes |
+| **Pit Surface to DEM** | Terrain | Turns a Surpac `.str`+`.dtm` or DXF pit shell into a DEM GeoTIFF |
+| **Generate Contours** | Terrain | Smooth, styled contours from a DEM |
+| **Optimise Imagery for Field** | Imagery | Repacks a big ortho so it performs on a tablet — see below |
+| **Import Mining Survey Data** | Mine Survey Data | Surpac / DXF / CSV survey strings and stations |
+| **Z Filter**, **Add Elevation Field** | Level Filtering | Show one bench or level at a time |
 
 ---
 
@@ -93,26 +97,42 @@ gdal_translate -ot Float32 -co COMPRESS=LZW -co TILED=YES -co PREDICTOR=3 \
   260606_ff_pit_ss_dem.tif 260606_ff_pit_ss_dem_f32.tif
 ```
 
-### The ortho is the real problem
+### The ortho is the real problem — use Optimise Imagery for Field
 
-The drone mosaic is 211 MB with **no overviews**, meaning every pan and zoom re-reads
-full-resolution tiles. On a tablet that is the difference between usable and unusable — and
-it hurts far more than the DEM ever will. Build overviews (adds ~30 %, pays for itself
-immediately):
+The drone mosaic is 211 MB with **no overviews**, so every pan and zoom re-decodes the
+full-resolution image. On a tablet that is the difference between usable and unusable, and it
+hurts far more than the DEM ever will.
 
-```
-gdaladdo -r average --config COMPRESS_OVERVIEW JPEG 260606_FF_Pit_transparent_mosaic_group1.tif 2 4 8 16 32
-```
-
-Better still, make it a Cloud-Optimised GeoTIFF, which is overviews plus tiling in one file:
+**Field / Pit / UG → Imagery → Optimise Imagery for Field** fixes it. Pick the raster, accept
+the default profile, press Optimise. Measured on this exact ortho:
 
 ```
-gdal_translate -of COG -co COMPRESS=JPEG -co QUALITY=85 \
-  260606_FF_Pit_transparent_mosaic_group1.tif FF_Pit_ortho_cog.tif
+212 MB, 9177 × 10224, 4 bands, 0 overviews
+   ->  37 MB, full resolution, 6 overview levels        (5.8x smaller, ~6 seconds)
 ```
 
-JPEG compression on a 4-band RGBA ortho may drop the alpha band; if transparency around the
-survey edge matters, use `-co COMPRESS=DEFLATE` instead and accept a larger file.
+Resolution is never reduced — the saving is compression plus pyramids.
+
+| Profile | When |
+|---|---|
+| **COG + JPEG, keep transparency** *(default)* | Almost always. The clear margin around the survey stays clear. |
+| COG + JPEG, drop transparency | Smallest, but the margin turns black. |
+| COG + WEBP | Smaller again at the same visual quality. |
+| COG + DEFLATE | Lossless, for imagery that must stay evidential. |
+| Plain GeoTIFF + overviews | When it has to remain an ordinary TIFF. Still gets pyramids. |
+
+**On transparency:** JPEG cannot carry a fourth band, so the default profile writes three
+colour bands plus an internal mask. The output reports "3 bands" and that is correct — the
+transparency is intact, verified against the source alpha.
+
+**On tiling:** very large images are split into a grid of same-resolution tiles, because
+QField pans more smoothly across several moderate tiles than one enormous file. Tiles are
+named `_r01c02` with zero padding so they always sort in grid order, and they load into a
+single layer group so the QField export treats them as one imagery layer. Aim for about
+100 MB per tile; below that a single file is produced. This ortho needs no tiling at 37 MB.
+
+The original is never modified — output is written alongside it. JPEG and WEBP are lossy, so
+keep the original as the archive copy.
 
 ---
 
@@ -176,7 +196,7 @@ If it is still soft after all three, the limit is the DEM or the ortho, not the 
 ## Workflow A — regional mapping in 3D
 
 1. Open your mapping project and load the DEM (`1_Second_DEM_Smoothed.tif`).
-2. **Mapsheets & Layouts → Terrain → View in 3D.**
+2. **Field / Pit / UG → Terrain → View in 3D.**
    The DEM is auto-detected, becomes the project terrain, and the 3D view opens over your
    current 2D extent with all visible layers draped.
 3. Tick **Vertical exaggeration** and set 2× — subtle regional relief becomes readable.
@@ -198,7 +218,7 @@ If it is still soft after all three, the limit is the DEM or the ortho, not the 
 
 1. **If you already have a pit DEM** (`260606_ff_pit_ss_dem.tif`), just load it. Skip to 3.
 2. **If you only have the shell** (the stage-3 case):
-   **Terrain → Pit Surface to DEM** → browse to `260607_ff_stage3.str`
+   **Field / Pit / UG → Terrain → Pit Surface to DEM** → browse to `260607_ff_stage3.str`
    (the `.dtm` beside it is picked up automatically) → set **Cell size 1.0 m** → **Create DEM**.
    Writes `260607_ff_stage3_dem.tif` beside the source, adds it to the project, and tags it as
    a pit surface so the 3D view prefers it from then on.

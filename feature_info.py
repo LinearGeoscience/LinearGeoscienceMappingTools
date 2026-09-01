@@ -681,6 +681,37 @@ view's <b>3D Configuration &rarr; Terrain</b> and raise <b>Tile resolution</b> f
 you when this applies.</p>
 """
 
+INFO_OPTIMISE_IMAGERY = """
+<h1>Optimise Imagery for Field</h1>
+<p>Repack a high-resolution orthophoto (or any large raster) so it performs on a tablet,
+<b>without losing resolution</b>. A drone ortho straight out of the processing software is
+typically hundreds of megabytes with no overview pyramids, which forces QField to decode the
+full-resolution image at every zoom &mdash; the single biggest cause of a sluggish map.</p>
+<h2>Features:</h2>
+<ul>
+   <li><b>Overviews, always:</b> pyramids are built into every output. This alone is usually
+       the difference between a map that pans smoothly and one that stutters.</li>
+   <li><b>Compression choices:</b> <i>COG + JPEG (keep transparency)</i> is the default and
+       gives the largest saving while preserving the transparent margin around a survey.
+       Lossless <i>DEFLATE</i> is there for imagery that must not be altered, and each option
+       carries a one-line note about its trade-off.</li>
+   <li><b>Tiling for smoothness:</b> very large images are split into a grid of tiles at the
+       <b>same resolution</b> &mdash; QField handles several moderate tiles far better than one
+       enormous image. Tiles are named <code>_r01c02</code> with zero padding so they always
+       sort in grid order, and they are added to the project inside a single group.</li>
+   <li><b>Honest preview:</b> the dialog reports the source size, dimensions, band count and
+       overview count, and estimates the output before you commit to it.</li>
+</ul>
+<h2>Workflow:</h2>
+<ol>
+   <li>Pick the raster (loaded project rasters are listed; or Browse).</li>
+   <li>Accept the default profile, or choose another and read its note.</li>
+   <li><b>Optimise</b>, then export to QField as usual.</li>
+</ol>
+<p><b>Note:</b> the original file is never modified &mdash; output is written alongside it. JPEG
+and WEBP are lossy: keep the original as the archive copy.</p>
+"""
+
 INFO_PIT_SURFACE_DEM = """
 <h1>Pit Surface to DEM</h1>
 <p>Rasterize a triangulated pit surface &mdash; a Surpac <code>.str</code>/<code>.dtm</code>

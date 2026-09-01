@@ -54,7 +54,8 @@ PAGE_DEFS = [
     ("Structural Domains", None, "Create and classify structural domains", "Structural Domains"),
     ("Mapsheets & Layouts", None, "Create mapsheet grids and print layouts", "Mapsheets & Layouts"),
     ("Modify Symbology", None, "Re-classify coding and apply symbology", "Symbology"),
-    ("Pit / Underground", None, "Filter mapping layers by bench or level elevation", "Z Filtering"),
+    ("Field / Pit / UG", None,
+     "Terrain, imagery, mine survey data and level filtering", "Field / Pit / UG"),
 ]
 
 
@@ -273,6 +274,7 @@ class LinearGeosciencePluginMain:
         self.recode_wizard = None
         self.reconcile_dialog = None
         self.mining_import_dialog = None
+        self.view3d_panel = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -814,7 +816,7 @@ class LinearGeosciencePluginMain:
         stacked.addWidget(self._build_page_domains())
         stacked.addWidget(self._build_page_layouts())
         stacked.addWidget(self._build_page_symbology())
-        stacked.addWidget(self._build_page_zfilter())
+        stacked.addWidget(self._build_page_field())
 
         return content_area, stacked, page_header
 
@@ -869,9 +871,6 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Import Mapping Data", None,
                         feature_info.INFO_IMPORT_DATA, self.run_importdata)
         grp.addSeparator()
-        grp.addFeature("Import Mining Survey Data", None,
-                        feature_info.INFO_MINING_IMPORT, self.run_mining_import)
-        grp.addSeparator()
         grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
         lay.addWidget(grp)
@@ -911,17 +910,6 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Create Layouts", None,
                         feature_info.INFO_CREATE_LAYOUTS, self.run_createlayouts)
         lay.addWidget(grp)
-        grp2 = FeatureGroup("Terrain", self.plugin_dir, page)
-        grp2.addFeature("Generate Contours", None,
-                        feature_info.INFO_GENERATE_CONTOURS,
-                        self.run_generate_contours)
-        grp2.addFeature("View in 3D", None,
-                        feature_info.INFO_VIEW_3D,
-                        self.run_view_3d)
-        grp2.addFeature("Pit Surface to DEM", None,
-                        feature_info.INFO_PIT_SURFACE_DEM,
-                        self.run_pit_surface_dem)
-        lay.addWidget(grp2)
         lay.addStretch()
         return page
 
@@ -934,15 +922,46 @@ class LinearGeosciencePluginMain:
         lay.addStretch()
         return page
 
-    def _build_page_zfilter(self):
+    def _build_page_field(self):
+        """Everything that belongs to a pit or an underground level: the
+        ground it sits on, the imagery over it, the survey data that
+        describes it, and the level filter that picks a bench out of it."""
         page, lay = self._make_page()
-        grp = FeatureGroup("Pit / Underground Level Filtering", self.plugin_dir, page)
-        grp.addFeature("Open Z Filter Panel", None,
-                        feature_info.INFO_Z_FILTER, self.toggle_z_filter_panel)
+
+        grp = FeatureGroup("Terrain", self.plugin_dir, page)
+        grp.addFeature("View in 3D", None,
+                        feature_info.INFO_VIEW_3D, self.run_view_3d)
         grp.addSeparator()
-        grp.addFeature("Add Elevation Field", None,
-                        feature_info.INFO_ADD_ELEVATION, self.run_add_elevation_field)
+        grp.addFeature("Pit Surface to DEM", None,
+                        feature_info.INFO_PIT_SURFACE_DEM,
+                        self.run_pit_surface_dem)
+        grp.addSeparator()
+        grp.addFeature("Generate Contours", None,
+                        feature_info.INFO_GENERATE_CONTOURS,
+                        self.run_generate_contours)
         lay.addWidget(grp)
+
+        grp2 = FeatureGroup("Imagery", self.plugin_dir, page)
+        grp2.addFeature("Optimise Imagery for Field", None,
+                        feature_info.INFO_OPTIMISE_IMAGERY,
+                        self.run_optimise_imagery)
+        lay.addWidget(grp2)
+
+        grp3 = FeatureGroup("Mine Survey Data", self.plugin_dir, page)
+        grp3.addFeature("Import Mining Survey Data", None,
+                        feature_info.INFO_MINING_IMPORT,
+                        self.run_mining_import)
+        lay.addWidget(grp3)
+
+        grp4 = FeatureGroup("Level Filtering", self.plugin_dir, page)
+        grp4.addFeature("Open Z Filter Panel", None,
+                        feature_info.INFO_Z_FILTER, self.toggle_z_filter_panel)
+        grp4.addSeparator()
+        grp4.addFeature("Add Elevation Field", None,
+                        feature_info.INFO_ADD_ELEVATION,
+                        self.run_add_elevation_field)
+        lay.addWidget(grp4)
+
         lay.addStretch()
         return page
 
@@ -1143,6 +1162,22 @@ class LinearGeosciencePluginMain:
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",
                 f"Could not open View in 3D: {e}"
+            )
+
+    def run_optimise_imagery(self):
+        try:
+            from .raster_optimise.dialog import run
+            run(self.iface)
+        except Exception as e:
+            import traceback
+            from qgis.core import QgsMessageLog, Qgis
+            QgsMessageLog.logMessage(
+                f"run_optimise_imagery failed: {e}\n{traceback.format_exc()}",
+                'Linear Geoscience', Qgis.MessageLevel.Critical
+            )
+            self.iface.messageBar().pushCritical(
+                "Linear Geoscience",
+                f"Could not open Optimise Imagery: {e}"
             )
 
     def run_pit_surface_dem(self):
