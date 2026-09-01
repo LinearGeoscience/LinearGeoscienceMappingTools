@@ -6950,6 +6950,14 @@ Item {
   property var reshapeLastSeq: null
   property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
   property var reshapeFeatureFormItem: null // QField feature form, cached
+  property var reshapeSelectionItem: null   // its FeatureListModelSelection
+  property var reshapeSelectionModel: null  // its MultiFeatureListModel
+  // Last non-empty QField selection seen, {layer, picks}. QField's
+  // identify refills that model on every tap and clears it when the form
+  // hides, so by the time the user has closed the form and reached the
+  // pill a live read can already be empty. The live read still wins; the
+  // latch only stands in for it.
+  property var reshapeSelectionLatch: null
   // Conditioning constants (v32). Dedupe epsilon in POINTS so it scales
   // with the view like every other drawing tolerance — 0.5 pt is well
   // under the 8 pt stroke gate, so conditioning can only ever remove
@@ -7102,7 +7110,80 @@ Item {
       if (reshapeSettingsItem === null)
         reshapeSettingsItem = iface.findItemByObjectName('qfieldSettings')
     } catch (error) {}
+    try {
+      const form = reshapeFeatureForm()
+      if (form !== null) {
+        if (reshapeSelectionItem === null)
+          reshapeSelectionItem = form.selection
+        if (reshapeSelectionModel === null) {
+          reshapeSelectionModel = reshapeSelectionItem !== null &&
+                                  reshapeSelectionItem !== undefined
+              ? reshapeSelectionItem.model : form.model
+        }
+      }
+    } catch (error) {}
     updateReshapeEditingActive()
+  }
+
+  // ----------------------------------------------------------------
+  // QField's selection (v33)
+  //
+  // It is NOT a QgsVectorLayer selection — nothing in QField ever calls
+  // selectByIds or removeSelection on a layer — so layer.selectedFeature
+  // Ids(), which is how the desktop tool does this, can never see it. It
+  // lives in the feature form's MultiFeatureListModel and is painted by
+  // QField's own highlight.
+  //
+  // And there are TWO things a user means by "selected":
+  //   * selectedFeatures/selectedCount — the multi-select set, filled
+  //     only by explicitly toggling items into it;
+  //   * focusedFeature/focusedLayer — the everyday "I tapped that
+  //     polygon and it went pink", where selectedCount is still 0.
+  // Reading only the first would have tested as "it still reshapes
+  // everything", which is the complaint.
+  // ----------------------------------------------------------------
+  function reshapeSelectionPicks() {
+    const out = { layer: null, picks: [] }
+    try {
+      const model = reshapeSelectionModel
+      if (model !== null && model !== undefined &&
+          Number(model.selectedCount) > 0) {
+        const features = model.selectedFeatures
+        const layer = model.selectedLayer
+        if (features !== undefined && features !== null &&
+            layer !== undefined && layer !== null) {
+          for (let i = 0; i < features.length; i++)
+            out.picks.push({ id: features[i].id, feature: features[i] })
+          if (out.picks.length > 0) {
+            out.layer = layer
+            return out
+          }
+        }
+      }
+    } catch (error) {}
+    try {
+      const sel = reshapeSelectionItem
+      if (sel !== null && sel !== undefined &&
+          Number(sel.focusedItem) >= 0) {
+        const feature = sel.focusedFeature
+        const layer = sel.focusedLayer
+        if (feature !== undefined && feature !== null &&
+            layer !== undefined && layer !== null &&
+            Number(feature.id) >= 0) {
+          out.layer = layer
+          out.picks.push({ id: feature.id, feature: feature })
+        }
+      }
+    } catch (error) {}
+    return out
+  }
+
+  function latchReshapeSelection() {
+    if (reshapeStep !== 0)
+      return
+    const found = reshapeSelectionPicks()
+    if (found.layer !== null && found.picks.length > 0)
+      reshapeSelectionLatch = found
   }
 
   function updateReshapeEditingActive() {
@@ -7195,7 +7276,21 @@ Item {
         toast(qsTr('Turn digitizing off first'))
         return
       }
-      const layer = reshapeActiveLayer()
+      // A selection points at a layer as surely as the legend does, and
+      // more recently — so it wins. Live read first; the latch stands in
+      // only when QField has already cleared the model.
+      let seeded = reshapeSelectionPicks()
+      if (seeded.layer === null && reshapeSelectionLatch !== null)
+        seeded = reshapeSelectionLatch
+      let layer = seeded.layer
+      if (layer !== null &&
+          evalExpr(layer, null, "layer_property(@layer, 'geometry_type')") !==
+              'Polygon') {
+        seeded = { layer: null, picks: [] }
+        layer = null
+      }
+      if (layer === null)
+        layer = reshapeActiveLayer()
       if (layer === null) {
         toast(qsTr('Reshape unavailable — no active layer (tap one in the legend)'))
         return
@@ -7244,8 +7339,21 @@ Item {
       reshapeBusy = false
       reshapeModel.reset(true)
       reshapeLoadStyle()
-      reshapeStep = 1
-      toast(qsTr('Tap polygons to limit reshape (optional), then draw the line'))
+      if (seeded.layer !== null && seeded.picks.length > 0) {
+        // Straight to drawing: the targets are already chosen, and the
+        // pick step would only be a screen to tap past.
+        reshapePicks = seeded.picks
+        reshapeLockedSelection = true
+        reshapeSelectionLatch = null
+        reshapeStep = 2
+        updateReshapeSelection()
+        splineRefreshDensity()
+        toast(qsTr('Limited to the %1 polygon(s) you selected — long-press to change')
+              .arg(reshapePicks.length))
+      } else {
+        reshapeStep = 1
+        toast(qsTr('Tap polygons to limit reshape (optional), or just draw'))
+      }
     } catch (error) {
       toast(qsTr('Reshape unavailable'))
     }
@@ -7355,6 +7463,31 @@ Item {
         reshapeLayer.selectByIds(fids)
       } catch (error2) {}
     }
+  }
+
+  function handleReshapePickToggle(pos) {
+    try {
+      if (reshapeStep !== 1 && reshapeStep !== 2)
+        return
+      if (reshapeTapOnUi(pos))
+        return
+      const hit = findHitInLayers([reshapeLayer], pos)
+      if (hit === null) {
+        toast(qsTr('No polygon here'))
+        return
+      }
+      const before = reshapePicks.length
+      reshapePicks = toggleClipPick(reshapePicks, hit.feature.id,
+                                    hit.feature)
+      // Once the user has edited the set by hand it is theirs, not
+      // QField's, and the banner should stop calling it a selection.
+      if (reshapePicks.length === 0)
+        reshapeLockedSelection = false
+      updateReshapeSelection()
+      toast(reshapePicks.length > before
+          ? qsTr('%1 target(s)').arg(reshapePicks.length)
+          : qsTr('%1 target(s) left').arg(reshapePicks.length))
+    } catch (error) {}
   }
 
   function handleReshapeTap(pos) {
@@ -8235,6 +8368,26 @@ Item {
   }
 
   Connections {
+    // Latch QField's selection while the tool is closed. Its identify
+    // refills the model on every tap and clears it when the form hides,
+    // so the last non-empty state is what the user means by "the polygon
+    // I selected" by the time they reach the pill.
+    target: plugin.reshapeSelectionModel
+    ignoreUnknownSignals: true
+    function onSelectedCountChanged() {
+      plugin.latchReshapeSelection()
+    }
+  }
+
+  Connections {
+    target: plugin.reshapeSelectionItem
+    ignoreUnknownSignals: true
+    function onFocusedItemChanged() {
+      plugin.latchReshapeSelection()
+    }
+  }
+
+  Connections {
     // Track the app state machine: currentRubberband flips non-null
     // when a digitizing/measure session starts. Hide the pill then, and
     // abandon an in-progress reshape — the two modes fight over taps.
@@ -8315,6 +8468,12 @@ Item {
       onSingleTapped: function(eventPoint, button) {
         plugin.handleReshapeTap(eventPoint.position)
       }
+      // Long-press adds or removes a target while you are drawing, so a
+      // locked selection stays editable without leaving the line. It is
+      // free in both styles: dragThreshold 0 means a press that never
+      // moves cannot activate the freehand handler.
+      longPressThreshold: 0.6
+      onLongPressed: plugin.handleReshapePickToggle(point.position)
     }
 
     DragHandler {
@@ -8529,8 +8688,13 @@ Item {
               ? qsTr('freehand') : qsTr('tap'))
           line += ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
                                                      : qsTr('straight'))
-          if (plugin.reshapePicks.length > 0)
-            line += ' · ' + qsTr('%1 picked').arg(plugin.reshapePicks.length)
+          if (plugin.reshapePicks.length > 0) {
+            line += ' · ' + (plugin.reshapeLockedSelection
+                ? qsTr('%1 selected — long-press a polygon to add/remove')
+                    .arg(plugin.reshapePicks.length)
+                : qsTr('%1 picked — long-press a polygon to add/remove')
+                    .arg(plugin.reshapePicks.length))
+          }
           return line + ' · ' + plugin.reshapeLayerLabel()
         }
       }
