@@ -4148,23 +4148,67 @@ Item {
   }
 
   function applyClipEdits(layer, newFeatures, deleteIds) {
-    // One edit session, adds strictly before deletes (data-safe order).
+    // One edit session, adds strictly before deletes (data-safe order),
+    // and BOTH halves verified. Two ways this used to lose data:
+    //
+    //  - LayerUtils.addFeature returns a bool for exactly this reason (an
+    //    addition-locked layer, a constraint, a wkb-type mismatch) and it
+    //    was discarded. The deletes then ran and committed anyway, turning
+    //    "replace this polygon" into "delete this polygon". Nothing is
+    //    deleted now unless every add landed.
+    //  - The delete fallback called layer.selectByIds([fid]) and then
+    //    deleteSelectedFeatures(). QML cannot convert a JS number to a
+    //    QgsFeatureId -- the documented reason
+    //    LayerUtils.selectFeaturesInLayer exists -- so selectByIds was a
+    //    silent no-op inside its own try and deleteSelectedFeatures then
+    //    deleted WHATEVER WAS SELECTED: during a clip the user's own
+    //    KEEP/CUT picks, during a merge the merge picks. The second route
+    //    now goes through LayerUtils and only fires once the selection has
+    //    really been narrowed to this one feature.
+    //
+    // A delete that still fails rolls the whole session back rather than
+    // leaving the original and its replacements both on the map. Callers
+    // own the selection afterwards (each one removes it or rebuilds its
+    // own picks), so narrowing it here is safe.
     let ok = false
     try {
       layer.startEditing()
-      for (const feature of newFeatures)
-        LayerUtils.addFeature(layer, feature)
+      for (const feature of newFeatures) {
+        let landed = false
+        try {
+          landed = LayerUtils.addFeature(layer, feature) !== false
+        } catch (error) {
+          landed = false
+        }
+        if (!landed) {
+          try {
+            layer.rollBack()
+          } catch (error2) {}
+          return false
+        }
+      }
       for (const fid of deleteIds) {
         let deleted = false
         try {
-          deleted = layer.deleteFeature(fid)
+          deleted = layer.deleteFeature(fid) !== false
         } catch (error) {}
         if (!deleted) {
-          // Fallback: selection-based deletion (both invokable).
+          let narrowed = false
           try {
-            layer.selectByIds([fid])
-            layer.deleteSelectedFeatures()
+            LayerUtils.selectFeaturesInLayer(layer, [fid])
+            narrowed = true
+          } catch (error) {}
+          if (narrowed) {
+            try {
+              deleted = layer.deleteSelectedFeatures() !== false
+            } catch (error) {}
+          }
+        }
+        if (!deleted) {
+          try {
+            layer.rollBack()
           } catch (error2) {}
+          return false
         }
       }
       ok = layer.commitChanges()
