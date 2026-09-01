@@ -149,6 +149,7 @@ class TestMirrors(unittest.TestCase):
             "layer_select.py",                   # documents the 95 match tier
             "test_layer_canon.py",               # this file
             "copy_fieldmap_harness.js",          # asserts legacy tolerance
+            "layer_switch_harness.js",           # asserts legacy tolerance
             "match_layers.py",                   # explains why ordinals lose
             "test_import_match.py",              # imports a pre-swap project
         }

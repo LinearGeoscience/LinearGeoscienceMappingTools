@@ -112,6 +112,22 @@
  *    tail. Spline parameters are baked at export
  *    via LGS-EXPORT-DATA:splineparams (tolerance is in map units — LGS
  *    projects are projected mine grids, same assumption as desktop).
+ *    Output density is scale-adaptive (v27): the curve is sampled and
+ *    pruned to a deviation of roughly a quarter millimetre AT THE
+ *    MAPPING SCALE, read off mapSettings.mapUnitsPerPoint and latched
+ *    (quantized to octaves) while the user draws, so a boundary drawn
+ *    zoomed out no longer saves the thousands of sub-millimetre
+ *    vertices that made ✓ slow. Never coarser than the map can show and
+ *    never finer than the baked tolerance, so zoomed-in fidelity is
+ *    exactly what it always was. The control points themselves always
+ *    survive, so they are the floor on the saved vertex count. The
+ *    density is anchored to the finer of the mapping scale and the live
+ *    zoom (v30), so a boundary drawn zoomed out is still saved dense
+ *    enough for the map it belongs to; and the visible KINK at each
+ *    node is bounded, so curves keep their nodes where they bend
+ *    instead of faceting. Douglas-Peucker alone bounds a vertex's
+ *    distance from the curve and says nothing about the corner left
+ *    between chords, which is what the eye actually reads.
  *
  * 6. NATIVE CONFIRM FIXUP — always on (no export flag): QField's own
  *    line/polygon digitizing also harvests the floating crosshair vertex
@@ -259,6 +275,7 @@ Item {
   readonly property bool featureMerge: true // LGS-EXPORT-FLAG:merge
   readonly property bool featureRecenterHold: true // LGS-EXPORT-FLAG:recenterhold
   readonly property bool featureModeToggle: true // LGS-EXPORT-FLAG:modetoggle
+  readonly property bool featureLayerSwitch: true // LGS-EXPORT-FLAG:layerswitch
   // Filled with the exported raster / spatial-vector layer names by the
   // exporter (the opacity panel's two columns).
   readonly property var opacityLayers: [] // LGS-EXPORT-DATA:opacitylayers
@@ -1311,7 +1328,7 @@ Item {
     initScaleSettings()
     if (featureScale || featureZFilter || featureOpacity || featureClipping ||
         featureSpline || featureReshape || featureReverse ||
-        featureRecenterHold || featureModeToggle)
+        featureRecenterHold || featureModeToggle || featureLayerSwitch)
       attachOverlay()
     startupTimer.start()
   }
@@ -1345,6 +1362,8 @@ Item {
         plugin.initRecenterHold()
       if (plugin.featureModeToggle)
         plugin.initModeToggle()
+      if (plugin.featureLayerSwitch)
+        plugin.initLayerSwitch()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -1814,6 +1833,7 @@ Item {
         overlayBar.anchors.bottom = canvas.bottom
         overlayBar.anchors.bottomMargin = 64
         overlayBar.visible = true
+        attachLayerSwitch()
         return
       }
     } catch (error) {}
@@ -1821,6 +1841,24 @@ Item {
       // Fallback: live in the plugins toolbar instead.
       overlayBar.visible = true
       iface.addItemToPluginsToolbar(overlayBar)
+    } catch (error) {}
+  }
+
+  function attachLayerSwitch() {
+    // Lower left, a hair off the edge: 8px in leaves QField's dashboard
+    // edge-swipe its drag margin, and the bottom margin clears the pill
+    // bar (its own bottom 64, plus a pill's height). No plugins-toolbar
+    // fallback — a vertical column has no business in a toolbar, so with
+    // no canvas the column simply never shows.
+    if (!featureLayerSwitch)
+      return
+    try {
+      layerSwitchBar.parent = canvas
+      layerSwitchBar.anchors.left = canvas.left
+      layerSwitchBar.anchors.leftMargin = 8
+      layerSwitchBar.anchors.bottom = canvas.bottom
+      layerSwitchBar.anchors.bottomMargin = 96
+      layerSwitchAttached = true
     } catch (error) {}
   }
 
@@ -2090,12 +2128,9 @@ Item {
 
     Rectangle {
       id: splinePill
-      // Also shown during reshape drawing (browse mode, so no digitizing
-      // model and splinePillVisible is false) — arming there decides
-      // whether the reshape line is smoothed or straight.
-      visible: plugin.featureSpline &&
-               (plugin.splinePillVisible || plugin.reshapeStep === 1 ||
-                plugin.reshapeStep === 2)
+      // Digitizing only (v32): reshape has its own per-style spline
+      // toggle in the reshape banner and no longer shares this switch.
+      visible: plugin.featureSpline && plugin.splinePillVisible
       anchors.verticalCenter: parent.verticalCenter
       width: splinePillText.contentWidth + 24
       height: splinePillText.contentHeight + 12
@@ -2301,6 +2336,291 @@ Item {
       TapHandler {
         gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: plugin.toggleMapMode()
+      }
+    }
+  }
+
+  // ================================================================
+  // Layer switch (v28, name pills v31)
+  //
+  // A stack of layer NAMES down the left edge that set QField's ACTIVE
+  // layer without opening the dashboard drawer. The active layer decides
+  // which layer the digitise button writes to, and every sidecar tool
+  // here (Reshape / Reverse / Copy / Merge) locks onto it at entry —
+  // yet reaching it costs a drawer, a scroll and a tap, with the map
+  // covered throughout.
+  // ================================================================
+
+  property var layerSwitchEntries: []        // [{name, label}], present only
+  property string layerSwitchActiveName: ''  // '' = something else is active
+  property bool layerSwitchAwake: true       // false once it has dimmed
+  property bool layerSwitchSupported: true   // false once a write no-ops
+  property bool layerSwitchAttached: false   // parked on the canvas
+
+  // Opacity of one character of a name, so a pill fades off to the right
+  // instead of sitting on the map as a solid plate. index 0 is the
+  // leftmost character; reveal is 0 at rest and 1 just after a tap.
+  //
+  // At rest only the head of the name survives — enough to show the
+  // control is there — and by reveal 1 every character is solid. The
+  // clamp is what makes both of those exact rather than merely close.
+  // Kept pure JS — the test harness runs this verbatim.
+  function layerSwitchCharAlpha(index, count, reveal) {
+    // A one-character name has nowhere to fade to; t stays at the head.
+    const t = count <= 1 ? 0 : index / (count - 1)
+    const edge = 0.10 + 1.30 * reveal
+    const alpha = (edge - t) / 0.35
+    return alpha < 0 ? 0 : (alpha > 1 ? 1 : alpha)
+  }
+
+  function initLayerSwitch() {
+    // Only layers that actually came down in the package get a button —
+    // layerByName already falls back through the pre-swap ordinals.
+    let names = []
+    for (const name of layerNames) {
+      if (layerByName(name) !== null)
+        names.push(name)
+    }
+    let entries = []
+    for (const name of names)
+      entries.push({ name: name, label: baseName(name) })
+    layerSwitchEntries = entries
+    syncLayerSwitchActive()
+    // Start awake so the column is seen at least once, then let it settle
+    // to the dimmed resting state on its own.
+    wakeLayerSwitch()
+  }
+
+  // Match by layer IDENTITY, never by name string: a pre-swap package
+  // answers to a legacy ordinal and layerByName knows both spellings.
+  function layerSwitchActiveFor(layer) {
+    if (layer === null || layer === undefined)
+      return ''
+    for (const entry of layerSwitchEntries) {
+      if (layerByName(entry.name) === layer)
+        return entry.name
+    }
+    return ''
+  }
+
+  function syncLayerSwitchActive() {
+    layerSwitchActiveName = layerSwitchActiveFor(reshapeActiveLayer())
+  }
+
+  function wakeLayerSwitch() {
+    layerSwitchAwake = true
+    layerSwitchWakeTimer.restart()
+  }
+
+  function layerSwitchChangeAllowed() {
+    // dashBoard.allowActiveLayerChange (a QField property alias) goes
+    // false mid-feature. Unreadable on another build counts as allowed —
+    // the write verifies itself anyway.
+    try {
+      if (reshapeDashboard !== null && reshapeDashboard !== undefined &&
+          reshapeDashboard.allowActiveLayerChange === false)
+        return false
+    } catch (error) {}
+    return true
+  }
+
+  // dashBoard.activeLayer is a writable property alias in QField, but no
+  // QField code ever assigns it — it is only ever read. So write it, read
+  // it back and identity-compare, the same attempt-and-verify the layer
+  // opacity rows use.
+  function writeActiveLayer(layer) {
+    let items = []
+    if (reshapeDashboard !== null && reshapeDashboard !== undefined)
+      items.push(reshapeDashboard)
+    for (const name of ['dashBoard', 'projectInfo', 'locatorBridge']) {
+      try {
+        const item = iface.findItemByObjectName(name)
+        if (item !== null && item !== undefined)
+          items.push(item)
+      } catch (error) {}
+    }
+    for (const item of items) {
+      try {
+        item.activeLayer = layer
+        if (item.activeLayer === layer) {
+          reshapeDashboard = item
+          return true
+        }
+      } catch (error) {}
+    }
+    return false
+  }
+
+  function setActiveLayerByName(name) {
+    wakeLayerSwitch()
+    const layer = layerByName(name)
+    if (layer === null) {
+      // Gone since startup — drop the button rather than keep a dud.
+      let entries = []
+      for (const entry of layerSwitchEntries) {
+        if (entry.name !== name)
+          entries.push(entry)
+      }
+      layerSwitchEntries = entries
+      toast(qsTr('%1 is not in this project').arg(baseName(name)))
+      return
+    }
+    if (reshapeActiveLayer() === layer) {
+      layerSwitchActiveName = name
+      toast(qsTr('Active layer: %1').arg(baseName(name)))
+      return
+    }
+    if (!layerSwitchChangeAllowed()) {
+      toast(qsTr('Finish the current feature first'))
+      return
+    }
+    if (!writeActiveLayer(layer)) {
+      // Silently no-oped on every item we can reach: this build will not
+      // let a plugin set the active layer. Retire the column for the
+      // session rather than leave dead buttons on the map.
+      layerSwitchSupported = false
+      toast(qsTr('Layer switching is not supported by this QField build'))
+      return
+    }
+    layerSwitchActiveName = name
+    toast(qsTr('Active layer: %1').arg(baseName(name)))
+  }
+
+  Timer {
+    id: layerSwitchWakeTimer
+    // Long enough to read the name just picked, short enough that the
+    // stack is not clutter. Each pill's own reveal does the fading.
+    interval: 1600
+    repeat: false
+    onTriggered: plugin.layerSwitchAwake = false
+  }
+
+  Connections {
+    // The legend can change the active layer behind our back; follow it
+    // so the highlight never lies. reshapeDashboard is a plain var, so
+    // this target rebinds when the lazy probe finally finds the item.
+    target: plugin.reshapeDashboard
+    ignoreUnknownSignals: true
+    function onActiveLayerChanged() {
+      plugin.syncLayerSwitchActive()
+      plugin.wakeLayerSwitch()
+    }
+  }
+
+  Column {
+    id: layerSwitchBar
+    // Hidden while a sidecar tool is mid-flow — those own the screen and
+    // have locked their layer already. Fewer than two present layers is
+    // nothing to switch between, so the column stays away entirely.
+    visible: plugin.featureLayerSwitch && plugin.layerSwitchAttached &&
+             plugin.layerSwitchSupported &&
+             plugin.layerSwitchEntries.length > 1 &&
+             plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+             plugin.reverseStep === 0 && plugin.copyStep === 0 &&
+             plugin.mergeStep === 0
+    spacing: 6
+    z: 1
+    // No opacity here on purpose: each pill fades itself, horizontally,
+    // through its own reveal. Dimming the column too would dim twice.
+
+    Repeater {
+      model: plugin.layerSwitchEntries
+
+      delegate: Rectangle {
+        id: layerSwitchButton
+        required property var modelData
+
+        readonly property bool isActive:
+            plugin.layerSwitchActiveName === layerSwitchButton.modelData.name
+
+        // 0 at rest, 1 just after a tap or an active-layer change. The
+        // ACTIVE pill rests part-revealed, so a glance still names the
+        // current layer without lighting the whole stack.
+        property real reveal: plugin.layerSwitchAwake
+            ? 1.0 : (layerSwitchButton.isActive ? 0.28 : 0.0)
+
+        Behavior on reveal {
+          NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        }
+
+        // Inverted while active — the same state language as the level
+        // lock, spline, hold and mode pills.
+        readonly property color pad: layerSwitchButton.isActive
+            ? Qt.rgba(1, 1, 1, 0.90) : Qt.rgba(0, 0, 0, 0.60)
+        readonly property string ink: layerSwitchButton.isActive
+            ? 'black' : 'white'
+
+        // Sized off the character Row, not a Text.contentWidth: laying a
+        // name out per character loses the kerning pairs and comes out a
+        // touch wider, and the pill has to fit what is actually drawn.
+        width: nameRow.width + 26
+        height: nameRow.height + 18
+        radius: height / 2
+
+        // The pill does not end so much as stop being there. Solid at
+        // the left so the control stays findable, gone by the right
+        // edge, with the solid head growing rightward as reveal rises.
+        // Only the ALPHA moves across the stops — holding r/g/b still is
+        // what keeps the fade from drifting through some other colour.
+        // First use of Gradient in this file; core QtQuick, no import.
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+
+          GradientStop {
+            position: 0.0
+            color: layerSwitchButton.pad
+          }
+
+          GradientStop {
+            position: 0.18 + 0.62 * layerSwitchButton.reveal
+            color: layerSwitchButton.pad
+          }
+
+          GradientStop {
+            position: 1.0
+            color: Qt.rgba(layerSwitchButton.pad.r, layerSwitchButton.pad.g,
+                           layerSwitchButton.pad.b, 0)
+          }
+        }
+
+        // One Text per character. This is the only import-free way to
+        // fade a string across its own width: Qt5Compat.GraphicalEffects
+        // and QtQuick.Effects are not imported here (and may not ship
+        // with QField at all), and a ShaderEffect would want a
+        // precompiled .qsb, which cannot ride inside a single sidecar
+        // .qml. Thirteen Text items at worst, built once at startup.
+        Row {
+          id: nameRow
+          anchors.left: parent.left
+          anchors.leftMargin: 13
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 0
+
+          Repeater {
+            model: layerSwitchButton.modelData.label.length
+
+            delegate: Text {
+              required property int index
+              text: layerSwitchButton.modelData.label.charAt(index)
+              font.pixelSize: 14
+              font.bold: true
+              color: layerSwitchButton.ink
+              opacity: plugin.layerSwitchCharAlpha(
+                  index, layerSwitchButton.modelData.label.length,
+                  layerSwitchButton.reveal)
+            }
+          }
+        }
+
+        TapHandler {
+          // ReleaseWithinBounds like every other overlay control: the
+          // default policy takes only a passive grab, so the tap would
+          // ALSO reach QField's canvas handlers underneath and digitise.
+          // The whole pill takes the tap, faded tail included — the
+          // target size is the point of this revision.
+          gesturePolicy: TapHandler.ReleaseWithinBounds
+          onTapped: plugin.setActiveLayerByName(layerSwitchButton.modelData.name)
+        }
       }
     }
   }
@@ -4821,6 +5141,62 @@ Item {
   readonly property real splineMinNodePx: 8
   readonly property int splineLiveMaxSegments: 16
 
+  // Scale-adaptive output density. splineTolerance/splineMaxSegments above
+  // are an absolute map-unit tolerance and a fixed sample count, so a
+  // contact drawn at 1:10000 used to be approximated to 0.1 m — a
+  // hundredth of a millimetre on the map — and every one of those
+  // invisible vertices was paid for twice: once in QField's per-vertex
+  // rubberband signalling, once when the feature saved. These express the
+  // same thing the way cartography does, as a deviation AT THE MAPPING
+  // SCALE: one point is 1/72 inch, so mapUnitsPerPoint IS the scale
+  // denominator in map units, and no reference scale has to reach the
+  // device for this to work (it is also correctly degrees-per-point in a
+  // geographic CRS).
+  //   splineTolPoints           prune deviation, ~0.25 mm on the map
+  //   splineSampleSpacingPoints raw sample pitch before pruning
+  //   splineMinSamples          floor per segment, so a short segment still
+  //                             bends
+  // splineTolerance/splineMaxSegments survive as the fallback (no map
+  // settings), as the sample-count cap, and as a FLOOR on fidelity — the
+  // derived tolerance is never finer than the baked one (see
+  // splineEffectiveTolerance), so zoomed-in drawing behaves exactly as it
+  // always has and the savings land at the small scales where the big
+  // polygons get drawn.
+  //
+  // v29: 0.7 pt was ~0.25 mm, which is not "well under" the Linework ink —
+  // the thinnest common stroke is Contact at 0.8 pt = 0.28 mm, so the
+  // tolerance was about equal to the finest line on the map. 0.35 pt is
+  // ~0.12 mm: under half that stroke and under a quarter of the most
+  // common one (1.46 pt).
+  readonly property real splineTolPoints: 0.35
+  readonly property real splineSampleSpacingPoints: 1.0
+  readonly property int splineMinSamples: 4
+
+  // Douglas-Peucker bounds how far a vertex sits from the true curve and
+  // says nothing about the CORNER left between consecutive chords — and a
+  // corner is what the eye reads as faceting. v27 pruned a gentle cover
+  // boundary drawn zoomed out into chords that cornered by a whole
+  // millimetre on the map while every vertex was still legitimately
+  // within tolerance.
+  //
+  // The measure used here is the kink: min(chord)/2 * tan(turn/2), i.e.
+  // how far the line visibly corners at a vertex. Unlike a turn angle it
+  // is meaningful on its own — five degrees across a 20 mm chord is a
+  // glaring facet, five degrees across a half-millimetre chord is
+  // invisible — and it self-limits, because halving a chord quarters the
+  // kink. 0.25 pt is ~0.09 mm: a third of the thinnest Linework stroke.
+  //
+  // Expressed as a FRACTION OF THE PRUNE TOLERANCE rather than an
+  // absolute size, for two reasons. Both are distances on the map, so the
+  // ratio is the honest statement of the rule: corners must stay well
+  // inside the positional error already being accepted. And it inherits
+  // splineEffectiveTolerance's never-finer-than-baked floor for free, so
+  // zooming right in cannot drive the refinement past the detail the
+  // legacy path kept -- without that, a deep zoom would demand a kink
+  // limit far below the tolerance and hand back more vertices than the
+  // fixed algorithm ever produced.
+  readonly property real splineMaxKinkRatio: 0.4
+
   property bool splineArmed: false
   property var splineLocator: null    // the coordinateLocator QQuickItem
   property var splineModel: null      // locator.rubberbandModel (active one)
@@ -4828,6 +5204,7 @@ Item {
   property var splineControls: []     // [{x,y,z}] control points, in order
   property int splineExpected: -1     // model vertexCount we last produced
   property bool splineMutating: false // re-entrancy guard around rebuilds
+  property real splineDensityUnits: 0 // latched map units per point (0 = off)
   property var splineLastCross: null  // crosshair coords used in last rebuild
   property var splineLastSeq: null    // sequence last written to the model
   property bool splineLastSeqFull: false // splineLastSeq is at full density
@@ -4873,9 +5250,16 @@ Item {
   // Stand-in for the desktop QgsGeometry.simplify call (Douglas-Peucker).
   // Iterative so deep sample lists cannot hit recursion limits; endpoints
   // are always kept; tolerance <= 0 returns the input unchanged.
-  function splineSimplify(points, tolerance) {
-    if (!(tolerance > 0) || points.length < 3)
-      return points.slice()
+  // Index form of the Douglas-Peucker pass. Split out (v29) so the angle
+  // refinement can re-insert points from the ORIGINAL dense block by
+  // index; splineSimplify below is the unchanged point-returning wrapper.
+  function splineSimplifyIndices(points, tolerance) {
+    if (!(tolerance > 0) || points.length < 3) {
+      const all = []
+      for (let i = 0; i < points.length; i++)
+        all.push(i)
+      return all
+    }
     const keep = new Array(points.length).fill(false)
     keep[0] = true
     keep[points.length - 1] = true
@@ -4902,9 +5286,139 @@ Item {
     const out = []
     for (let i = 0; i < points.length; i++) {
       if (keep[i])
-        out.push(points[i])
+        out.push(i)
     }
     return out
+  }
+
+  function splineSimplify(points, tolerance) {
+    const idx = splineSimplifyIndices(points, tolerance)
+    const out = []
+    for (let i = 0; i < idx.length; i++)
+      out.push(points[idx[i]])
+    return out
+  }
+
+  // Put nodes back wherever the pruned polyline corners visibly. Points
+  // come from the dense block the sampler already built, so nothing new
+  // is evaluated; only vertices that actually bend attract insertions, so
+  // straight runs are left exactly as the prune left them.
+  //
+  // Two stages. First an even-spacing floor: a coarse prune can keep
+  // NOTHING but the block's two endpoints, and with no interior vertices
+  // there is nothing for the walk below to test — all of the segment's
+  // turning then piles up at the control-point junction, unrefined and
+  // unseen. Splitting a block of length L and total turning T into k
+  // intervals leaves a kink of about L*T/(4k^2), so k = sqrt(L*T/(4*max))
+  // is the count that brings it under the limit. Then a bisection walk
+  // catches whatever is still cornered where curvature is uneven.
+  //
+  // maxKink <= 0 disables the whole thing (the legacy path).
+  function splineRefineAngles(points, kept, maxKink) {
+    if (!(maxKink > 0) || points.length < 3)
+      return kept
+
+    let totalTurn = 0
+    let totalLen = 0
+    for (let i = 0; i < points.length - 1; i++) {
+      const dx = points[i + 1].x - points[i].x
+      const dy = points[i + 1].y - points[i].y
+      totalLen += Math.sqrt(dx * dx + dy * dy)
+    }
+    for (let i = 1; i < points.length - 1; i++) {
+      const ax = points[i].x - points[i - 1].x
+      const ay = points[i].y - points[i - 1].y
+      const bx = points[i + 1].x - points[i].x
+      const by = points[i + 1].y - points[i].y
+      const la = Math.sqrt(ax * ax + ay * ay)
+      const lb = Math.sqrt(bx * bx + by * by)
+      if (!(la > 0) || !(lb > 0))
+        continue
+      let c = (ax * bx + ay * by) / (la * lb)
+      c = c > 1 ? 1 : (c < -1 ? -1 : c)
+      totalTurn += Math.acos(c)
+    }
+
+    let current = kept
+    let want = Math.ceil(Math.sqrt(totalLen * totalTurn / (4 * maxKink)))
+    if (want > points.length - 1)
+      want = points.length - 1
+    if (want > current.length - 1) {
+      // Pure even spacing, NOT a union with the pruned indices: mixing a
+      // uniform grid into an uneven one leaves a long chord beside a
+      // short one, and that pairing corners harder than either would
+      // alone. Uniform chords give the smallest corner for a node count.
+      const even = []
+      for (let k = 0; k <= want; k++)
+        even.push(Math.round(k * (points.length - 1) / want))
+      const dedup = [even[0]]
+      for (let k = 1; k < even.length; k++)
+        if (even[k] !== even[k - 1])
+          dedup.push(even[k])
+      current = dedup
+    }
+    if (current.length < 3)
+      return current
+
+    for (let pass = 0; pass < 12; pass++) {
+      const insert = {}
+      let added = 0
+      for (let j = 1; j < current.length - 1; j++) {
+        const prev = points[current[j - 1]]
+        const here = points[current[j]]
+        const next = points[current[j + 1]]
+        const ax = here.x - prev.x
+        const ay = here.y - prev.y
+        const bx = next.x - here.x
+        const by = next.y - here.y
+        const la = Math.sqrt(ax * ax + ay * ay)
+        const lb = Math.sqrt(bx * bx + by * by)
+        if (!(la > 0) || !(lb > 0))
+          continue  // a zero-length chord has no direction to turn through
+        let c = (ax * bx + ay * by) / (la * lb)
+        c = c > 1 ? 1 : (c < -1 ? -1 : c)
+        const turn = Math.acos(c)
+        const kink = (la < lb ? la : lb) / 2 * Math.tan(turn / 2)
+        if (!(kink > maxKink))
+          continue
+        // Split the longer neighbouring gap; that is the chord carrying
+        // the corner, and shortening it is what reduces the kink.
+        const gapA = current[j] - current[j - 1]
+        const gapB = current[j + 1] - current[j]
+        const wide = gapA >= gapB ? [current[j - 1], current[j]]
+                                  : [current[j], current[j + 1]]
+        const narrow = gapA >= gapB ? [current[j], current[j + 1]]
+                                    : [current[j - 1], current[j]]
+        const pairs = [wide, narrow]
+        for (let k = 0; k < pairs.length; k++) {
+          if (pairs[k][1] - pairs[k][0] >= 2) {
+            const mid = Math.floor((pairs[k][0] + pairs[k][1]) / 2)
+            if (insert[mid] !== true) {
+              insert[mid] = true
+              added++
+            }
+            break
+          }
+        }
+      }
+      if (added === 0)
+        return current
+      const extra = Object.keys(insert).map(Number).sort(function (x, y) {
+        return x - y
+      })
+      const merged = []
+      let at = 0
+      for (let k = 0; k < extra.length; k++) {
+        while (at < current.length && current[at] < extra[k])
+          merged.push(current[at++])
+        if (at >= current.length || current[at] !== extra[k])
+          merged.push(extra[k])
+      }
+      while (at < current.length)
+        merged.push(current[at++])
+      current = merged
+    }
+    return current
   }
 
   // Thin a dense point run (freehand strokes): keep a point only when it
@@ -4945,6 +5459,154 @@ Item {
     return true
   }
 
+  // ----------------------------------------------------------------
+  // Reshape line conditioning (v32). GEOS's reshape is intolerant of
+  // what a touch screen produces: coincident vertices, zero-length
+  // segments, micro self-loops, and mixed 2D/3D points all make it
+  // return NothingHappened with no explanation. These are pure JS —
+  // no QML identifiers — extracted verbatim into
+  // tests/reshape_condition_harness.js.
+  // ----------------------------------------------------------------
+
+  // Drop consecutive points closer than eps. The FIRST and LAST points
+  // always survive — they are the line's entry and exit, and losing
+  // either is precisely the silent failure this exists to prevent: when
+  // the last point crowds the previous kept one, the interior point is
+  // dropped, never the endpoint. eps <= 0 still removes exact
+  // coincident duplicates.
+  function reshapeDedupe(points, eps) {
+    if (points.length < 2)
+      return points.slice()
+    const eps2 = (eps > 0) ? eps * eps : 0
+    const out = [points[0]]
+    for (let i = 1; i < points.length - 1; i++) {
+      const kept = out[out.length - 1]
+      const dx = points[i].x - kept.x
+      const dy = points[i].y - kept.y
+      if (dx * dx + dy * dy > eps2)
+        out.push(points[i])
+    }
+    const last = points[points.length - 1]
+    let tail = out[out.length - 1]
+    const dx = last.x - tail.x
+    const dy = last.y - tail.y
+    if (dx * dx + dy * dy <= eps2 && out.length > 1)
+      out.pop()
+    tail = out[out.length - 1]
+    if (last.x !== tail.x || last.y !== tail.y)
+      out.push(last)
+    return out
+  }
+
+  // The splineSeqToWkt hasZ rule, applied to the points themselves: a
+  // line is 3D only when EVERY z is finite; one unreadable z makes the
+  // whole line 2D (z = NaN throughout) rather than a mixed sequence
+  // the geometry engine reads as neither.
+  function reshapeForce2DPolicy(points) {
+    let allFinite = points.length > 0
+    for (const p of points) {
+      if (!isFinite(Number(p.z))) {
+        allFinite = false
+        break
+      }
+    }
+    if (allFinite)
+      return points.slice()
+    const out = []
+    for (const p of points) {
+      const q = Object.assign({}, p)
+      q.z = NaN
+      out.push(q)
+    }
+    return out
+  }
+
+  // Proper interior crossing of segments a-b and c-d, or null. Touches
+  // at segment endpoints (t or u exactly 0/1) and collinear overlaps
+  // are NOT crossings — a vertex sitting on another segment is normal
+  // in a tightly drawn line. z interpolates along a-b when both ends
+  // carry one.
+  function reshapeSegIntersection(a, b, c, d) {
+    const rx = b.x - a.x
+    const ry = b.y - a.y
+    const sx = d.x - c.x
+    const sy = d.y - c.y
+    const denom = rx * sy - ry * sx
+    if (denom === 0)
+      return null
+    const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denom
+    const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / denom
+    if (t <= 0 || t >= 1 || u <= 0 || u >= 1)
+      return null
+    const az = Number(a.z)
+    const bz = Number(b.z)
+    const z = (isFinite(az) && isFinite(bz)) ? az + t * (bz - az) : NaN
+    return { x: a.x + t * rx, y: a.y + t * ry, z: z }
+  }
+
+  // Cut self-loops out of an open polyline: when segment i crosses
+  // segment j (j > i+1), everything between is replaced by the
+  // crossing point itself, keeping the line's overall run. Restarts
+  // from the cut, so nested loops unwind too; the guard bounds the
+  // pathological case.
+  function reshapeRemoveLoops(points) {
+    let pts = points.slice()
+    let guard = 0
+    for (let i = 0; i + 3 < pts.length && guard < 1000; i++) {
+      for (let j = i + 2; j + 1 < pts.length; j++) {
+        const hit = reshapeSegIntersection(pts[i], pts[i + 1],
+                                           pts[j], pts[j + 1])
+        if (hit === null)
+          continue
+        pts = pts.slice(0, i + 1).concat([hit], pts.slice(j + 1))
+        j = i + 1
+        guard++
+      }
+    }
+    return pts
+  }
+
+  // Prolong the line past its ends along the end tangents — a straight
+  // external extension cannot change the visible curve, it lives
+  // outside the polygon. Appends new endpoints; the drawn ones stay.
+  function reshapeExtendEnds(points, extendFirst, extendLast, dist) {
+    if (points.length < 2 || !(dist > 0))
+      return points.slice()
+    const out = points.slice()
+    if (extendFirst) {
+      const a = out[0]
+      const b = out[1]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len > 0)
+        out.unshift({ x: a.x + dx / len * dist, y: a.y + dy / len * dist,
+                      z: Number(a.z) })
+    }
+    if (extendLast) {
+      const a = out[out.length - 1]
+      const b = out[out.length - 2]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len > 0)
+        out.push({ x: a.x + dx / len * dist, y: a.y + dy / len * dist,
+                   z: Number(a.z) })
+    }
+    return out
+  }
+
+  // The pipeline: dedupe, then the 2D policy, then loop removal —
+  // skipped above loopCap points (the scan is O(n²); a capped skip
+  // never costs correctness, only a retry later). loopCap <= 0 means
+  // no cap.
+  function reshapeConditionSequence(points, eps, loopCap) {
+    let out = reshapeForce2DPolicy(reshapeDedupe(points, eps))
+    if (!(loopCap > 0) || out.length <= loopCap)
+      out = reshapeRemoveLoops(out)
+    return out
+  }
+
   // Exact point equality for cache keys: NaN/undefined z equals
   // NaN/undefined z (same rules as splineCommonPrefixLength), and the
   // open-end boundary marker null only equals null.
@@ -4960,6 +5622,95 @@ Item {
          (bz === undefined || Number.isNaN(bz)))
   }
 
+  // Round a map-units-per-point reading to the nearest power of two.
+  // Latching an OCTAVE rather than the live value is what keeps this
+  // cheap: the segment cache is invalidated by a params mismatch, so an
+  // unquantized reading would wipe splineFullCache on every pinch. Pure
+  // doubling/halving (no logarithms) so the device and the node harness
+  // agree bit for bit. Returns 0 for anything unusable.
+  function splineQuantizeUnits(value) {
+    if (!(isFinite(value) && value > 1e-12 && value < 1e12))
+      return 0
+    let q = 1
+    while (q > value)
+      q = q / 2
+    while (q * 2 <= value)
+      q = q * 2
+    return (value >= q * Math.SQRT2) ? q * 2 : q
+  }
+
+  // Douglas-Peucker tolerance to prune a sample block with: the deviation
+  // that reads as smooth at this scale, or the baked desktop tolerance
+  // when there is no density (no map settings, or an un-started session).
+  //
+  // NEVER finer than the baked tolerance. Below about 1:400 the derived
+  // value drops under the baked 0.1, which would quietly make close-in
+  // drawing SLOWER than before this change — the opposite of the point.
+  // Clamping keeps zoomed-in fidelity exactly as it has always been and
+  // spends the savings where they were asked for, as the map zooms out.
+  // It also makes this change a strict improvement: no scale, anywhere,
+  // saves more vertices than it used to.
+  function splineEffectiveTolerance(tolerance, density) {
+    if (density && density.unitsPerPoint > 0 && density.tolPoints > 0)
+      return Math.max(tolerance, density.unitsPerPoint * density.tolPoints)
+    return tolerance
+  }
+
+  // How many raw samples one segment needs. Sampling 200 points per
+  // segment and then pruning 195 of them is the cold-confirm cost, so
+  // sample by the segment's own on-screen length instead. The cubic's
+  // equivalent Bezier control polygon (p0, p0+t0/3, p1-t1/3, p1) is an
+  // upper bound on its arc length and tight enough to pitch samples by.
+  // Sampling at ~1 point while pruning at ~0.7 leaves ample margin: a
+  // feature this sampler could miss needs a curvature radius under half a
+  // screen point. No density (or none usable) returns maxSegments — the
+  // legacy path, bit for bit.
+  function splineSampleCount(p0, p1, t0, t1, maxSegments, density) {
+    if (!density || !(density.unitsPerPoint > 0) ||
+        !(density.spacingPoints > 0))
+      return maxSegments
+    const b1x = p0.x + t0.x / 3
+    const b1y = p0.y + t0.y / 3
+    const b2x = p1.x - t1.x / 3
+    const b2y = p1.y - t1.y / 3
+    const arc = Math.sqrt((b1x - p0.x) ** 2 + (b1y - p0.y) ** 2) +
+                Math.sqrt((b2x - b1x) ** 2 + (b2y - b1y) ** 2) +
+                Math.sqrt((p1.x - b2x) ** 2 + (p1.y - b2y) ** 2)
+    const floor = density.minSamples > 0 ? density.minSamples : 1
+    let wanted = Math.ceil(arc / (density.unitsPerPoint *
+                                  density.spacingPoints))
+    // Curvature term (v29): the kink refinement can only re-insert points
+    // this block actually contains, so a segment that turns a long way has
+    // to be sampled finely enough to hold them. Twice the count the
+    // refinement will ask for leaves bisection somewhere to land.
+    if (density.maxKinkRatio > 0) {
+      const la = Math.sqrt(t0.x * t0.x + t0.y * t0.y)
+      const lb = Math.sqrt(t1.x * t1.x + t1.y * t1.y)
+      if (la > 0 && lb > 0) {
+        let cos = (t0.x * t1.x + t0.y * t1.y) / (la * lb)
+        cos = cos > 1 ? 1 : (cos < -1 ? -1 : cos)
+        const byTurn = 2 * Math.ceil(Math.sqrt(
+            arc * Math.acos(cos) / (4 * density.maxKinkRatio *
+                                    splineEffectiveTolerance(0, density))))
+        if (byTurn > wanted)
+          wanted = byTurn
+      }
+    }
+    if (!isFinite(wanted) || wanted < floor)
+      return Math.min(floor, maxSegments)
+    return Math.min(wanted, maxSegments)
+  }
+
+  // Cache-parameter identity for a density ('' = none), so a zoom that
+  // crosses an octave resets the cache and one that does not, does not.
+  function splineDensityKey(density) {
+    if (!density || !(density.unitsPerPoint > 0))
+      return ''
+    return density.unitsPerPoint + '|' + density.tolPoints + '|' +
+           density.spacingPoints + '|' + density.minSamples + '|' +
+           density.maxKinkRatio
+  }
+
   // Segment cache for the full-density curves. A segment's pruned sample
   // block is fully determined by four controls (tangent neighbours +
   // endpoints; null marks an open-curve end, where the tangent formula
@@ -4970,12 +5721,14 @@ Item {
   // bit-identical to the uncached path.
   // Returns the entry array for the requested curve kind ('o' open /
   // 'c' closed), resetting the whole cache when the params changed.
-  function splineCacheEntries(cache, kind, tightness, tolerance, maxSegments) {
+  function splineCacheEntries(cache, kind, tightness, tolerance, maxSegments,
+                             density) {
     if (!cache)
       return null
+    const key = splineDensityKey(density)
     if (!cache.p || cache.p[0] !== tightness || cache.p[1] !== tolerance ||
-        cache.p[2] !== maxSegments) {
-      cache.p = [tightness, tolerance, maxSegments]
+        cache.p[2] !== maxSegments || cache.p[3] !== key) {
+      cache.p = [tightness, tolerance, maxSegments, key]
       cache.o = []
       cache.c = []
     }
@@ -5000,13 +5753,15 @@ Item {
   // parity fixtures agree to float precision. The optional cache (see
   // splineCacheEntries) skips recomputing segments whose deps are
   // unchanged since a previous call — output is bit-identical.
-  function splineHermiteOpen(points, tightness, tolerance, maxSegments, cache) {
+  function splineHermiteOpen(points, tightness, tolerance, maxSegments, cache,
+                            density) {
     const n = points.length
     if (n < 3)
       return points.slice()
 
     const entries = splineCacheEntries(cache, 'o', tightness, tolerance,
-                                       maxSegments)
+                                       maxSegments, density)
+    const effTol = splineEffectiveTolerance(tolerance, density)
 
     const tangents = [splineTangent(points[0], points[1], tightness)]
     for (let i = 1; i < n - 1; i++)
@@ -5023,7 +5778,9 @@ Item {
                     i + 1 < n - 1 ? points[i + 2] : null]
       let interior = entries ? splineCacheLookup(entries, i, deps) : null
       if (interior === null) {
-        const t = 1.0 / maxSegments
+        const segs = splineSampleCount(p0, p1, tangents[i], tangents[i + 1],
+                                       maxSegments, density)
+        const t = 1.0 / segs
         let s = t
         const samples = []
         while (s < 1) {
@@ -5039,7 +5796,12 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, tolerance)
+        const kept = splineRefineAngles(
+            block, splineSimplifyIndices(block, effTol),
+            density ? density.maxKinkRatio * effTol : 0)
+        const pruned = []
+        for (let k = 0; k < kept.length; k++)
+          pruned.push(block[kept[k]])
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5055,13 +5817,15 @@ Item {
   // is the UNCLOSED unique ring (the rubberband carries no closing
   // duplicate) and the output stays unclosed too. Returns
   // {points, lastControlIndex} so the caller can rotate the ring.
-  function splineHermiteClosed(points, tightness, tolerance, maxSegments, cache) {
+  function splineHermiteClosed(points, tightness, tolerance, maxSegments, cache,
+                              density) {
     const n = points.length
     if (n < 3)
       return { points: points.slice(), lastControlIndex: points.length - 1 }
 
     const entries = splineCacheEntries(cache, 'c', tightness, tolerance,
-                                      maxSegments)
+                                      maxSegments, density)
+    const effTol = splineEffectiveTolerance(tolerance, density)
 
     const tangents = []
     for (let i = 0; i < n; i++) {
@@ -5081,7 +5845,10 @@ Item {
       const deps = [points[(i - 1 + n) % n], p0, p1, points[(i + 2) % n]]
       let interior = entries ? splineCacheLookup(entries, i, deps) : null
       if (interior === null) {
-        const t = 1.0 / maxSegments
+        const segs = splineSampleCount(p0, p1, tangents[i],
+                                       tangents[(i + 1) % n], maxSegments,
+                                       density)
+        const t = 1.0 / segs
         let s = t
         const samples = []
         while (s < 1) {
@@ -5097,7 +5864,12 @@ Item {
         }
 
         const block = [p0].concat(samples).concat([p1])
-        const pruned = splineSimplify(block, tolerance)
+        const kept = splineRefineAngles(
+            block, splineSimplifyIndices(block, effTol),
+            density ? density.maxKinkRatio * effTol : 0)
+        const pruned = []
+        for (let k = 0; k < kept.length; k++)
+          pruned.push(block[kept[k]])
         interior = pruned.slice(1, pruned.length - 1)
         if (entries)
           entries[i] = { deps: deps, block: interior }
@@ -5141,7 +5913,7 @@ Item {
   //    seam curved.
   // Fewer than 3 distinct points pass through unchanged (native straight
   // rubberband behaviour).
-  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments, cache) {
+  function splineBuildSequence(points, closed, tightness, tolerance, maxSegments, cache, density) {
     const pts = []
     for (let i = 0; i < points.length; i++) {
       const p = points[i]
@@ -5152,9 +5924,10 @@ Item {
     if (pts.length < 3)
       return pts
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache,
+                               density)
     const ring = splineHermiteClosed(pts, tightness, tolerance, maxSegments,
-                                     cache)
+                                     cache, density)
     const k = ring.lastControlIndex
     return ring.points.slice(k + 1).concat(ring.points.slice(0, k + 1))
   }
@@ -5166,7 +5939,7 @@ Item {
   // when there are too few distinct controls to form the geometry
   // without the crosshair (< 2 for lines, < 3 for rings) — native
   // behaviour (crosshair as final vertex) is the right fallback there.
-  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments, cache) {
+  function splineConfirmSequence(controls, closed, tightness, tolerance, maxSegments, cache, density) {
     const pts = []
     for (let i = 0; i < controls.length; i++) {
       const p = controls[i]
@@ -5177,9 +5950,10 @@ Item {
     if (pts.length < (closed ? 3 : 2))
       return null
     if (!closed)
-      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache)
+      return splineHermiteOpen(pts, tightness, tolerance, maxSegments, cache,
+                               density)
     return splineHermiteClosed(pts, tightness, tolerance, maxSegments,
-                               cache).points
+                               cache, density).points
   }
 
   // Ring idle-upgrade sequence (v26): the confirm ring (committed
@@ -5193,9 +5967,9 @@ Item {
   // instead of riding the curve — any crosshair move restores the
   // smooth live preview via the normal rebuild. Returns null below 3
   // distinct controls (same fallback as splineConfirmSequence).
-  function splineRingIdleSequence(controls, cross, tightness, tolerance, maxSegments, cache) {
+  function splineRingIdleSequence(controls, cross, tightness, tolerance, maxSegments, cache, density) {
     const confirm = splineConfirmSequence(controls, true, tightness,
-        tolerance, maxSegments, cache)
+        tolerance, maxSegments, cache, density)
     if (confirm === null)
       return null
     return confirm.concat([cross])
@@ -5284,6 +6058,7 @@ Item {
     splineLastSeq = null
     splineLastSeqFull = false
     splineFullCache = ({})
+    splineRefreshDensity()
     updateSplineMarkers()
   }
 
@@ -5326,9 +6101,6 @@ Item {
       splineRebuildTimer.restart()
       toast(qsTr('Splines digitise better with the freehand tool turned off'))
     }
-    // The reshape line follows the spline arming — re-render mid-draw.
-    if (reshapeStep === 2)
-      reshapeRebuildPreview()
   }
 
   // splineMinNodePx converted to map units at the current zoom (0 = gate
@@ -5340,6 +6112,64 @@ Item {
         return perPoint * splineMinNodePx
     } catch (error) {}
     return 0
+  }
+
+  // Re-latch the output density. Called when a session starts and
+  // whenever a control point is adopted — that is, while the user is
+  // DRAWING — never on zoom alone. Two reasons: panning and zooming to
+  // look around must not wipe the segment cache, and a curve drawn at
+  // 1:2000 must not be saved at 1:50000 density because the user zoomed
+  // out to check their work before tapping the green tick. Quantized, so
+  // re-latching is usually a no-op. projVar rebuilds the whole project
+  // variable map, which is another reason this is latched and not read
+  // per rebuild.
+  //
+  // ANCHORED TO THE MAPPING SCALE (v29). v27 keyed purely off the zoom
+  // the user happened to be drawing at, and big polygons — transported
+  // cover especially — are drawn zoomed OUT. The map is then viewed and
+  // printed at the project's reference scale, so those curves were
+  // permanently too coarse for the scale they actually live at. Density
+  // now targets whichever is finer, the reference scale or the live zoom,
+  // so drawing zoomed out no longer costs smoothness and deliberately
+  // zooming in for detail still buys it.
+  //
+  // The scale denominator is NOT converted to map units directly — that
+  // would assume metres and break in a geographic CRS. Taking it as the
+  // ratio referenceScale/liveScale against the live mapUnitsPerPoint
+  // cancels the map units out entirely.
+  function splineRefreshDensity() {
+    let perPoint = 0
+    let liveScale = 0
+    try {
+      perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      liveScale = Number(canvas.mapSettings.scale)
+    } catch (error) {
+      perPoint = 0
+      liveScale = 0
+    }
+    // '' (absent) and '0' (published as "unknown") both fall through to
+    // the live zoom, i.e. exactly the v27 behaviour.
+    const refScale = Number(projVar('lgs_reference_scale', ''))
+    if (isFinite(perPoint) && perPoint > 0 &&
+        isFinite(liveScale) && liveScale > 0 &&
+        isFinite(refScale) && refScale > 0 && refScale < liveScale)
+      perPoint = perPoint * (refScale / liveScale)
+    splineDensityUnits = splineQuantizeUnits(perPoint)
+  }
+
+  // The density bundle handed to the curve builders. Built once per
+  // rebuild and passed down — the builders must never read the map
+  // settings themselves, or the idle write and the confirm write could
+  // disagree and v26's prefix diff would silently fall back to a full
+  // reset. null = no density, i.e. the legacy fixed-tolerance path.
+  function splineDensity() {
+    if (!(splineDensityUnits > 0))
+      return null
+    return { unitsPerPoint: splineDensityUnits,
+             tolPoints: splineTolPoints,
+             spacingPoints: splineSampleSpacingPoints,
+             minSamples: splineMinSamples,
+             maxKinkRatio: splineMaxKinkRatio }
   }
 
   // Take the model's committed vertices (all but the floating crosshair
@@ -5356,6 +6186,7 @@ Item {
       for (let i = 0; i < count - 1; i++)
         splineControls.push({ x: verts[i].x, y: verts[i].y, z: verts[i].z })
       splineControls = splineDecimate(splineControls, splineMinNodeMapUnits())
+      splineRefreshDensity()
       splineExpected = count
     } catch (error) {
       splineControls = []
@@ -5407,6 +6238,7 @@ Item {
           }
         }
         if (keep) {
+          splineRefreshDensity()
           splineControls.push({ x: v.x, y: v.y, z: v.z })
           splineControls = splineControls.slice()
         }
@@ -5613,7 +6445,8 @@ Item {
     const seq = splineBuildSequence(
         splineControls.concat([cross]), closed,
         splineTightness, splineTolerance,
-        Math.min(splineMaxSegments, splineLiveMaxSegments))
+        Math.min(splineMaxSegments, splineLiveMaxSegments),
+        null, splineDensity())
     if (seq.length < 2)
       return
     splineMutating = true
@@ -5658,16 +6491,17 @@ Item {
     } catch (error) {
       return
     }
+    const density = splineDensity()
     let seq = null
     if (closed)
       seq = splineRingIdleSequence(splineControls, cross,
           splineTightness, splineTolerance, splineMaxSegments,
-          splineFullCache)
+          splineFullCache, density)
     if (seq === null)
       seq = splineBuildSequence(
           splineControls.concat([cross]), closed,
           splineTightness, splineTolerance, splineMaxSegments,
-          splineFullCache)
+          splineFullCache, density)
     if (seq.length < 2)
       return
     splineMutating = true
@@ -5700,7 +6534,7 @@ Item {
       return
     }
     splineConfirmSequence(splineControls, closed, splineTightness,
-        splineTolerance, splineMaxSegments, splineFullCache)
+        splineTolerance, splineMaxSegments, splineFullCache, splineDensity())
   }
 
   // Confirm fixup. QField's DigitizingToolbar.confirm() freezes the
@@ -5737,9 +6571,10 @@ Item {
     // one-call bulk path instead of the per-vertex loop.
     const started = Date.now()
     const wasWarm = splineLastSeqFull  // read BEFORE the write clears it
+    const density = splineDensity()
     const seq = splineConfirmSequence(splineControls, closed,
         splineTightness, splineTolerance, splineMaxSegments,
-        splineFullCache)
+        splineFullCache, density)
     if (seq === null || seq.length < 2)
       return
     splineMutating = true
@@ -5760,7 +6595,8 @@ Item {
     // means the idle upgrade never landed before ✓.
     const stats = splineWriteStats
     console.log('LGS spline confirm: ' + (Date.now() - started) + ' ms, ' +
-                seq.length + ' pts' +
+                seq.length + ' pts, ' + splineControls.length + ' controls' +
+                ', tol ' + splineEffectiveTolerance(splineTolerance, density) +
                 (stats !== null ? ', mode ' + stats.mode +
                                   ', prefix ' + stats.prefix : '') +
                 (wasWarm ? ', warm' : ', cold'))
@@ -6029,6 +6865,78 @@ Item {
   property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
   property int reshapeStrokeStart: -1  // -1 idle, -2 ignoring this stroke
   property var reshapeSettingsItem: null // QField settings (mouseAsTouchScreen)
+  // Conditioning constants (v32). Dedupe epsilon in POINTS so it scales
+  // with the view like every other drawing tolerance — 0.5 pt is well
+  // under the 8 pt stroke gate, so conditioning can only ever remove
+  // capture noise, never drawn shape. The loop cap bounds the O(n²)
+  // self-intersection scan on the final splined sequence.
+  readonly property real reshapeDedupePoints: 0.5
+  readonly property int reshapeLoopCap: 2000
+  // Auto-repair ladder constants (v32). The probe WKT cap guards the
+  // expression parser (a 10k-vertex LINESTRING can defeat it and the
+  // scan dies as 'no candidates'); repair decimates at 2 pt; end
+  // extension starts at 24 pt on screen and doubles per iteration.
+  readonly property int reshapeProbeWktCap: 64000
+  readonly property real reshapeRepairPoints: 2.0
+  readonly property real reshapeExtendStartPoints: 24
+  readonly property int reshapeExtendMaxIter: 6
+  // Digitisation style (v32): 'tap' = point by point, 'free' = stylus
+  // freehand. Persisted, and the spline arming is remembered PER STYLE
+  // ('freehand + spline' and 'tap + straight' are both coherent working
+  // styles a mapper flips between). Reshape stopped sharing the
+  // digitizing tool's lgs_spline_armed switch at v32 — that key now
+  // only seeds the first read.
+  property string reshapeStyle: 'tap'
+  property bool reshapeSplineArmed: false
+
+  function reshapeSplineKey() {
+    return reshapeStyle === 'free' ? 'lgs_reshape_spline_free'
+                                   : 'lgs_reshape_spline_tap'
+  }
+
+  function reshapeLoadStyle() {
+    reshapeStyle = projVar('lgs_reshape_style', 'tap') === 'free'
+        ? 'free' : 'tap'
+    reshapeSplineArmed = featureSpline &&
+        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+  }
+
+  function setReshapeStyle(style) {
+    if (style !== 'tap' && style !== 'free')
+      return
+    if (reshapeStyle === style)
+      return
+    reshapeStyle = style
+    saveVar('lgs_reshape_style', style)
+    reshapeSplineArmed = featureSpline &&
+        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+    if (style === 'free')
+      toast(qsTr('Freehand — stylus draws, finger pans'))
+    // Drawn points are kept across a style switch: controls are
+    // style-agnostic and the undo stack is per action either way.
+    if (reshapeStep === 2)
+      reshapeRebuildPreview()
+  }
+
+  function toggleReshapeSpline() {
+    if (!featureSpline)
+      return
+    reshapeSplineArmed = !reshapeSplineArmed
+    saveVar(reshapeSplineKey(), reshapeSplineArmed ? '1' : '0')
+    if (reshapeStep === 2)
+      reshapeRebuildPreview()
+  }
+
+  // Dedupe epsilon in map units; 0 (unreadable map settings) degrades
+  // to exact-coincident removal only.
+  function reshapeConditionEps() {
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        return perPoint * reshapeDedupePoints
+    } catch (error) {}
+    return 0
+  }
 
   RubberbandModel {
     id: reshapeModel
@@ -6207,6 +7115,7 @@ Item {
       reshapeUndoStack = []
       reshapeStrokeStart = -1
       reshapeModel.reset(true)
+      reshapeLoadStyle()
       reshapeStep = 1
       toast(qsTr('Tap polygons to limit reshape (optional), then draw the line'))
     } catch (error) {
@@ -6308,6 +7217,8 @@ Item {
       next.push({ x: Number(pt.x), y: Number(pt.y), z: Number(pt.z) })
       reshapeControls = next
       reshapeUndoStack = reshapeUndoStack.concat([1])
+      // Latch on draw actions, never on zoom — same rule as digitizing (v32).
+      splineRefreshDensity()
       reshapeRebuildPreview()
     } catch (error) {}
   }
@@ -6324,6 +7235,9 @@ Item {
       return
     }
     reshapeStrokeStart = reshapeControls.length
+    // Latch once per stroke, never per move — the 40 ms rebuilds must
+    // all agree on one density or the segment cache thrashes (v32).
+    splineRefreshDensity()
     reshapeStrokeMove(pos)
   }
 
@@ -6372,25 +7286,61 @@ Item {
   // ----------------------------------------------------------------
   // Line building (spline-armed = smoothed, otherwise straight)
   // ----------------------------------------------------------------
+  // The reshape line's density bundle (v32). Before this existed the
+  // splineConfirmSequence call below silently dropped the density
+  // argument, so a spline-armed reshape line was built on the legacy
+  // path: 200 raw Hermite samples per control segment pruned only at
+  // the absolute tolerance. GEOS's reshape needs a clean line entering
+  // and exiting the ring; that dense, jittery polyline defeated it and
+  // every feature came back NothingHappened.
+  function reshapeDensity() {
+    return splineDensity()
+  }
+
   function reshapeSequence() {
-    if (splineArmed) {
-      const seq = splineConfirmSequence(reshapeControls, false,
-          splineTightness, splineTolerance, splineMaxSegments, reshapeCache)
+    // Condition the CONTROLS, not just the output: capture jitter must
+    // never become a spline control point (v32). Loop removal here is
+    // cheap — controls are already gated at 8 pt spacing.
+    const controls = reshapeConditionSequence(reshapeControls,
+        reshapeConditionEps(), 0)
+    if (reshapeSplineArmed) {
+      const seq = splineConfirmSequence(controls, false,
+          splineTightness, splineTolerance, splineMaxSegments, reshapeCache,
+          reshapeDensity())
       if (seq !== null)
         return seq
     }
-    return reshapeControls.slice()
+    return controls
+  }
+
+  // The one writer of reshapeModel's geometry (v32). The model keeps a
+  // floating tail vertex after every add, hence the final removeVertex —
+  // but addVertex SKIPS an add when two consecutive points are exactly
+  // equal, and an unconditional remove then eats the last REAL point:
+  // the line silently stops just short of exiting the polygon. Remove
+  // the tail only when the count says it is really there (falling back
+  // to the old behaviour when the count is unreadable).
+  function reshapeWriteModel(seq) {
+    reshapeModel.reset(true)
+    for (let i = 0; i < seq.length; i++) {
+      const z = Number(seq[i].z)
+      reshapeModel.addVertexFromPoint(isFinite(z)
+          ? GeometryUtils.point(seq[i].x, seq[i].y, z)
+          : GeometryUtils.point(seq[i].x, seq[i].y))
+    }
+    if (seq.length > 0) {
+      let count = NaN
+      try {
+        count = Number(reshapeModel.vertexCount)
+      } catch (error) {}
+      if (!isFinite(count) || count > seq.length)
+        reshapeModel.removeVertex()
+    }
   }
 
   function reshapeRebuildPreview() {
     try {
-      const seq = reshapeSequence()
-      reshapeModel.reset(true)
-      for (let i = 0; i < seq.length; i++)
-        reshapeModel.addVertexFromPoint(GeometryUtils.point(
-            seq[i].x, seq[i].y, seq[i].z))
-      if (seq.length > 0)
-        reshapeModel.removeVertex()
+      reshapeWriteModel(reshapeSequence())
     } catch (error) {}
     updateReshapeMarkers()
   }
@@ -6438,23 +7388,53 @@ Item {
     return 'LINESTRING (' + coords.join(', ') + ')'
   }
 
+  // Wrap a geometry term (in map CRS) with the map→layer transform when
+  // the layer disagrees. Unreadable authids skip the transform (LGS
+  // exports are single-CRS mine grids) — worst case 0 candidates.
+  function reshapeCrsTerm(term) {
+    try {
+      const layerCrs = evalExpr(reshapeLayer, null,
+                                "layer_property(@layer, 'crs')")
+      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
+      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
+        return "transform(" + term + ", '" + mapCrs + "', '" +
+               layerCrs + "')"
+    } catch (error) {}
+    return term
+  }
+
   function reshapeProbeExpr() {
     const wkt = reshapeLineWkt()
     if (wkt === '')
       return ''
     let term = "geom_from_wkt('" + wkt + "')"
-    try {
-      // The line is in map (= project) CRS; reproject the probe when the
-      // layer disagrees. Unreadable authids skip the transform (LGS
-      // exports are single-CRS mine grids) — worst case 0 candidates.
-      const layerCrs = evalExpr(reshapeLayer, null,
-                                "layer_property(@layer, 'crs')")
-      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
-      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
-        term = "transform(" + term + ", '" + mapCrs + "', '" +
-               layerCrs + "')"
-    } catch (error) {}
-    return 'intersects($geometry, ' + term + ')'
+    if (wkt.length > reshapeProbeWktCap) {
+      // A LINESTRING this long can defeat the expression parser, and
+      // the whole scan then dies as 'no candidates'. Fall back to the
+      // conditioned CONTROL polyline buffered by half its longest
+      // chord — a superset of the real candidates (the spline never
+      // strays further from its control polygon than that); the extras
+      // just come back unchanged from the reshape itself (v32).
+      const controls = reshapeConditionSequence(reshapeControls,
+          reshapeConditionEps(), 0)
+      if (controls.length >= 2) {
+        let coords = []
+        let maxChord = 0
+        for (let i = 0; i < controls.length; i++) {
+          coords.push(controls[i].x + ' ' + controls[i].y)
+          if (i > 0) {
+            const dx = controls[i].x - controls[i - 1].x
+            const dy = controls[i].y - controls[i - 1].y
+            const chord = Math.sqrt(dx * dx + dy * dy)
+            if (chord > maxChord)
+              maxChord = chord
+          }
+        }
+        term = "buffer(geom_from_wkt('LINESTRING (" + coords.join(', ') +
+               ")'), " + (maxChord / 2) + ')'
+      }
+    }
+    return 'intersects($geometry, ' + reshapeCrsTerm(term) + ')'
   }
 
   // ----------------------------------------------------------------
@@ -6477,6 +7457,7 @@ Item {
     let plan = []
     let failed = 0
     let iterator = null
+    let scanFailed = false
     try {
       // The iterator honours the layer subsetString, so an active Z
       // filter means only VISIBLE polygons reshape — reshape what you see.
@@ -6494,7 +7475,11 @@ Item {
         }
         plan.push({ fid: feature.id, wkt: wkt, feature: feature })
       }
-    } catch (error) {}
+    } catch (error) {
+      // A dead iterator is NOT 'no candidates' — reporting it as such
+      // sends the user off redrawing a perfectly good line (v32).
+      scanFailed = true
+    }
     try {
       if (iterator !== null)
         iterator.close()
@@ -6502,7 +7487,95 @@ Item {
     if (failed > 0)
       toast(qsTr('%1 polygon(s) skipped (geometry read failed)').arg(failed))
     reshapePlan = plan
+    if (scanFailed && plan.length === 0)
+      return -1
     return plan.length
+  }
+
+  // ----------------------------------------------------------------
+  // Auto-repair ladder (v32). Three attempts per feature, stopping at
+  // the first Success: the line as drawn; the line rebuilt from
+  // harder-decimated controls; the line with its ends extended past
+  // the boundary of the specific polygon that refused it.
+  // ----------------------------------------------------------------
+  function reshapeApplyOnce(layer, fid) {
+    try {
+      return Number(GeometryUtils.reshapeFromRubberband(
+          layer, fid, reshapeModel))
+    } catch (error) {
+      return -1
+    }
+  }
+
+  // Attempt 2: decimate the controls at reshapeRepairPoints (harder
+  // than the 8 pt capture gate ever needed), re-spline with a FRESH
+  // cache (different controls must not pollute the session cache), and
+  // condition the result.
+  function reshapeRepairedSequence() {
+    const eps = reshapeConditionEps()
+    let minDist = 0
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        minDist = perPoint * reshapeRepairPoints
+    } catch (error) {}
+    const controls = splineDecimate(
+        reshapeConditionSequence(reshapeControls, eps, 0), minDist)
+    let seq = controls
+    if (reshapeSplineArmed) {
+      const s = splineConfirmSequence(controls, false, splineTightness,
+          splineTolerance, splineMaxSegments, ({}), reshapeDensity())
+      if (s !== null)
+        seq = s
+    }
+    return reshapeConditionSequence(seq, eps, reshapeLoopCap)
+  }
+
+  // Does this end of the line sit inside the SNAPSHOT feature, or graze
+  // its boundary within eps? The snapshot matters: the live geometry
+  // may already have been reshaped by an earlier feature this session.
+  // eps is in map units; boundary distance evaluates in layer units —
+  // same thing on the single-CRS mine grids LGS exports.
+  function reshapeEndNeedsExtend(layer, feature, p, eps) {
+    const term = reshapeCrsTerm('make_point(' + p.x + ', ' + p.y + ')')
+    const expr = 'intersects($geometry, ' + term + ')' +
+        (eps > 0 ? ' OR distance(boundary($geometry), ' + term + ') <= ' +
+                   eps : '')
+    return evalExpr(layer, feature, expr) === 'true'
+  }
+
+  // Attempt 3: extend whichever ends land inside (or graze) the target,
+  // doubling the extension until both ends probe clear or the iteration
+  // cap. Extension appends straight external points — it cannot change
+  // the drawn curve.
+  function reshapeExtendedSequence(layer, feature, seq, eps) {
+    if (seq.length < 2)
+      return null
+    const extFirst = reshapeEndNeedsExtend(layer, feature, seq[0], eps)
+    const extLast = reshapeEndNeedsExtend(layer, feature,
+                                          seq[seq.length - 1], eps)
+    if (!extFirst && !extLast)
+      return null
+    let dist = 0
+    try {
+      const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+      if (isFinite(perPoint) && perPoint > 0)
+        dist = perPoint * reshapeExtendStartPoints
+    } catch (error) {}
+    if (!(dist > 0))
+      dist = eps > 0 ? eps * 48 : 1
+    let out = seq
+    for (let i = 0; i < reshapeExtendMaxIter; i++) {
+      out = reshapeExtendEnds(seq, extFirst, extLast, dist)
+      const firstClear = !extFirst ||
+          !reshapeEndNeedsExtend(layer, feature, out[0], eps)
+      const lastClear = !extLast ||
+          !reshapeEndNeedsExtend(layer, feature, out[out.length - 1], eps)
+      if (firstClear && lastClear)
+        break
+      dist = dist * 2
+    }
+    return out
   }
 
   function executeReshape() {
@@ -6513,21 +7586,63 @@ Item {
       reshapeResultText = qsTr('Reshaping…')
       const names = attributeNames(layer, reshapePlan[0].feature)
       const uuidField = detectUuidField(names)
+      const eps = reshapeConditionEps()
+      // Ladder sequences, built once. The final splined line gets its
+      // own loop pass here — live preview skips it above the cap.
+      const seqBase = reshapeConditionSequence(reshapeSequence(), eps,
+                                               reshapeLoopCap)
+      let seqRepaired = null
+      try {
+        seqRepaired = reshapeRepairedSequence()
+        if (seqRepaired.length === seqBase.length &&
+            JSON.stringify(seqRepaired) === JSON.stringify(seqBase))
+          seqRepaired = null
+      } catch (error) {
+        seqRepaired = null
+      }
       let undoEntries = []
       let unchanged = 0
       let failed = 0
+      let repaired = 0
+      let written = null
+      function writeAttempt(tag, seq) {
+        if (written === tag)
+          return
+        reshapeWriteModel(seq)
+        written = tag
+      }
       try {
         layer.startEditing()
       } catch (error) {}
       for (const target of reshapePlan) {
-        let result = -1
-        try {
-          result = Number(GeometryUtils.reshapeFromRubberband(
-              layer, target.fid, reshapeModel))
-        } catch (error) {
-          result = -1
+        let attempts = []
+        writeAttempt('base', seqBase)
+        let result = reshapeApplyOnce(layer, target.fid)
+        attempts.push(result)
+        if (result === 1000 && seqRepaired !== null) {
+          writeAttempt('repaired', seqRepaired)
+          result = reshapeApplyOnce(layer, target.fid)
+          attempts.push(result)
         }
+        if (result === 1000) {
+          let seqExt = null
+          try {
+            seqExt = reshapeExtendedSequence(layer, target.feature,
+                seqRepaired !== null ? seqRepaired : seqBase, eps)
+          } catch (error) {
+            seqExt = null
+          }
+          if (seqExt !== null) {
+            writeAttempt('ext' + target.fid, seqExt)
+            result = reshapeApplyOnce(layer, target.fid)
+            attempts.push(result)
+          }
+        }
+        console.log('LGS reshape: fid ' + target.fid + ' attempts [' +
+                    attempts.join(', ') + ']')
         if (result === 0) {                 // GeometryUtils.Success
+          if (attempts.length > 1)
+            repaired++
           // Reshape mutates in place — fid and UUID stay stable, so the
           // undo can find the feature again by either.
           let uuid = ''
@@ -6579,8 +7694,10 @@ Item {
         iface.mapCanvas().refresh()
       } catch (error) {}
       let message = qsTr('Reshaped %1 polygon(s)').arg(undoEntries.length)
+      if (repaired > 0)
+        message += qsTr(' — %1 repaired automatically').arg(repaired)
       if (unchanged > 0)
-        message += qsTr(' — %1 unchanged (the line must cross the boundary at two points)').arg(unchanged)
+        message += qsTr(' — %1 unchanged (the line must enter and exit through the boundary)').arg(unchanged)
       if (failed > 0)
         message += qsTr(' — %1 failed').arg(failed)
       reshapeResultText = message
@@ -6722,6 +7839,10 @@ Item {
       // startup find of the state machine came up empty.
       if (plugin.featureModeToggle)
         plugin.initModeToggle()
+      // Same cheap resync for the layer switch: entering digitize mode
+      // is exactly when QField settles on an active layer.
+      if (plugin.featureLayerSwitch)
+        plugin.syncLayerSwitchActive()
     }
   }
 
@@ -6757,9 +7878,24 @@ Item {
     z: 1
 
     TapHandler {
-      // Default DragThreshold gesture policy: passive grab, so pan and
-      // pinch on the canvas underneath keep working — only clean taps
-      // land here.
+      // ReleaseWithinBounds (v32): the exclusive grab consumes the tap
+      // so it stops leaking through to QField's identify underneath —
+      // same policy, same reason as every pill. Movement past the drag
+      // threshold still hands the grab to the canvas's pan/pinch (the
+      // default grabPermissions approve the take-over); revert this one
+      // line if pan feel regresses on device. In freehand mode the
+      // accepted devices narrow to the drawing devices: a finger tap is
+      // inert (a real stray-point hazard once freehand is an explicit
+      // mode) while a clean stylus tap still places a single precise
+      // point.
+      gesturePolicy: TapHandler.ReleaseWithinBounds
+      acceptedDevices: plugin.reshapeStep === 2 &&
+                       plugin.reshapeStyle === 'free'
+          ? (plugin.reshapeSettingsItem !== null &&
+             plugin.reshapeSettingsItem.mouseAsTouchScreen
+              ? PointerDevice.Stylus
+              : PointerDevice.Stylus | PointerDevice.Mouse)
+          : PointerDevice.AllDevices
       onSingleTapped: function(eventPoint, button) {
         plugin.handleReshapeTap(eventPoint.position)
       }
@@ -6774,7 +7910,9 @@ Item {
       // handler and falls through to the TapHandler above — inherent
       // tap/stroke dedupe. grabPermissions omits CanTakeOverFromItems
       // so banner Buttons keep their stylus taps.
-      enabled: plugin.reshapeStep === 2
+      // v32: strokes only exist in freehand mode — Tap mode fully
+      // disables this handler.
+      enabled: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'free'
       acceptedDevices: plugin.reshapeSettingsItem !== null &&
                        plugin.reshapeSettingsItem.mouseAsTouchScreen
           ? PointerDevice.Stylus
@@ -6813,6 +7951,89 @@ Item {
       width: parent.width - 24
       spacing: 8
 
+      // Digitisation style toggles (v32) — Tap / Freehand, plus the
+      // reshape's own per-style Spline toggle. Same monochrome
+      // active-state language as the bottom pills: inverted while on.
+      Row {
+        visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
+        spacing: 8
+
+        Rectangle {
+          id: reshapeStyleTapPill
+          width: reshapeStyleTapText.contentWidth + 24
+          height: reshapeStyleTapText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeStyle === 'tap' ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeStyle === 'tap'
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeStyleTapText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeStyle === 'tap' ? 'black' : 'white'
+            text: qsTr('Tap')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.setReshapeStyle('tap')
+          }
+        }
+
+        Rectangle {
+          id: reshapeStyleFreePill
+          width: reshapeStyleFreeText.contentWidth + 24
+          height: reshapeStyleFreeText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeStyle === 'free' ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeStyle === 'free'
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeStyleFreeText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeStyle === 'free' ? 'black' : 'white'
+            // Real emoji on purpose — exotic symbols are tofu on Android.
+            text: qsTr('Freehand ✏')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.setReshapeStyle('free')
+          }
+        }
+
+        Rectangle {
+          id: reshapeSplinePill
+          visible: plugin.featureSpline
+          width: reshapeSplineText.contentWidth + 24
+          height: reshapeSplineText.contentHeight + 12
+          radius: height / 2
+          color: plugin.reshapeSplineArmed ? '#E6FFFFFF' : 'transparent'
+          border.color: plugin.reshapeSplineArmed
+              ? '#E6FFFFFF' : '#AAFFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeSplineText
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: plugin.reshapeSplineArmed ? 'black' : 'white'
+            // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
+            text: qsTr('~ Spline')
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: plugin.toggleReshapeSpline()
+          }
+        }
+      }
+
       Text {
         width: parent.width
         font.pixelSize: 15
@@ -6832,7 +8053,9 @@ Item {
         text: plugin.reshapeStep === 1
             ? qsTr('Tap polygons to limit the reshape, or draw straight away — with no picks every polygon the line crosses is reshaped')
             : plugin.reshapeStep === 2
-              ? qsTr('Tap along the new edge, or draw it with the stylus (finger pans) — the line must enter and exit each polygon it reshapes')
+              ? (plugin.reshapeStyle === 'free'
+                  ? qsTr('Draw the new edge with the stylus — finger pans, a stylus tap adds a single point; the line must enter and exit each polygon it reshapes')
+                  : qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes'))
               : plugin.reshapeResultText
       }
 
@@ -6849,8 +8072,10 @@ Item {
             return line + ' · ' + plugin.reshapeLayerLabel()
           }
           let line = qsTr('%1 point(s)').arg(plugin.reshapeControls.length)
-          line += ' · ' + (plugin.splineArmed ? qsTr('smoothed')
-                                              : qsTr('straight'))
+          line += ' · ' + (plugin.reshapeStyle === 'free'
+              ? qsTr('freehand') : qsTr('tap'))
+          line += ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
+                                                     : qsTr('straight'))
           if (plugin.reshapePicks.length > 0)
             line += ' · ' + qsTr('%1 picked').arg(plugin.reshapePicks.length)
           return line + ' · ' + plugin.reshapeLayerLabel()
@@ -6885,6 +8110,7 @@ Item {
           }
           onClicked: {
             plugin.reshapeStep = 2
+            plugin.splineRefreshDensity()
             plugin.toast(qsTr('Tap along the new edge — at least 2 points'))
           }
         }
@@ -6992,7 +8218,12 @@ Item {
           onClicked: {
             // Count first so the dialog can show how many polygons are
             // about to change; refuse a no-op reshape outright.
-            if (plugin.collectReshapeTargets() === 0) {
+            const count = plugin.collectReshapeTargets()
+            if (count < 0) {
+              plugin.toast(qsTr('Reshape scan failed — try again or simplify the line'))
+              return
+            }
+            if (count === 0) {
               plugin.toast(qsTr('The line does not cross any polygon'))
               return
             }
@@ -7090,7 +8321,7 @@ Item {
           if (plugin.reshapePicks.length > 0)
             lines += '\n' + qsTr('Limited to your %1 picked polygon(s).')
                 .arg(plugin.reshapePicks.length)
-          lines += '\n' + (plugin.splineArmed
+          lines += '\n' + (plugin.reshapeSplineArmed
               ? qsTr('Line: smoothed (Spline armed)')
               : qsTr('Line: straight segments'))
           lines += '\n' + qsTr('Layer: %1').arg(plugin.reshapeLayerLabel())
