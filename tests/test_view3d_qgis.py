@@ -383,6 +383,62 @@ check('frame_extent' in open_src, 'open_view aims the camera itself')
 check(open_src.index('apply_z_factor') < open_src.index('frame_extent'),
       'framing happens after the vertical scale is applied')
 
+section('terrain must be built the way QGIS builds it')
+# Hand-rolling a QgsDemTerrainSettings sets only the layer, so a project
+# terrain provider carrying an offset or scale silently lost both.
+from qgis.core import QgsRasterDemTerrainProvider  # noqa: E402
+
+if hasattr(Qgs3DMapSettings(), 'setTerrainSettings'):
+    prov = QgsRasterDemTerrainProvider()
+    prov.setLayer(dem)
+    prov.setOffset(12.0)
+    prov.setScale(3.0)
+    project.elevationProperties().setTerrainProvider(prov)
+    st = Qgs3DMapSettings()
+    st.setCrs(project.crs())
+    view._ensure_dem_terrain(st, dem, project)
+    ts = st.terrainSettings()
+    check(type(ts).__name__ == 'QgsDemTerrainSettings',
+          'DEM terrain installed')
+    check(abs(ts.elevationOffset() - 12.0) < 1e-6,
+          'a project terrain offset survives')
+    check(abs(ts.verticalScale() - 3.0) < 1e-6,
+          'a project terrain scale survives')
+    # put the plain provider back for the rest of the run
+    terrain.ensure_project_terrain(dem, project)
+else:
+    print('  note terrain settings are not reachable on this QGIS (3.40); '
+          '_ensure_dem_terrain is a no-op there by design')
+
+section('framing must be retried once the scene exists')
+# On 4.x the Qt3D engine is not built until the view is first shown, so
+# the first aim always misses scene.setViewFrom2DExtent. That is how the
+# camera ended up 101 km up with a scene-sized distance.
+check(hasattr(view, '_reframe_when_ready'),
+      'a deferred re-aim exists')
+open_src2 = inspect.getsource(view.open_view)
+check('_reframe_when_ready' in open_src2,
+      'open_view schedules the re-aim for a new view')
+check(open_src2.index('frame_extent') < open_src2.index(
+    '_reframe_when_ready'),
+    'it aims once immediately, then again when the scene is ready')
+
+reframe_src = inspect.getsource(view._reframe_when_ready)
+check('canvas.scene()' in reframe_src,
+      'the retry waits on the scene, not on a fixed delay')
+check('RuntimeError' in reframe_src,
+      'a view closed while waiting does not raise')
+check('remaining' in reframe_src, 'the retry gives up rather than looping')
+
+section('diagnostics can see the 4.2 sky')
+desc_src = inspect.getsource(view.describe)
+check('backgroundSettings' in desc_src,
+      'Diagnose reports the background settings, not just the colour')
+
+dlg_src = inspect.getsource(v3d_dialog.View3DPanel._apply_mode)
+check('mid_elevation' in dlg_src,
+      'pit-mode reframing aims at the ground, not Z=0')
+
 section('lighting')
 qe = Qgs3DMapSettings()
 check(qe.eyeDomeLightingEnabled() is False,

@@ -350,8 +350,11 @@ class View3DPanel(QDialog):
                 layer = self._selected_dem_layer()
                 # Move the camera, never the scene extent: setExtent on a
                 # live view shifts the origin and empties it.
+                # ...and aim at the ground, not Z=0: a pit near 381 m RL
+                # would otherwise be framed a pit-depth below itself.
                 if layer is not None and view.frame_extent(
-                        canvas, view.extent_in_project_crs(layer)):
+                        canvas, view.extent_in_project_crs(layer),
+                        view.mid_elevation(layer) * self._z_factor()):
                     self.status_label.setText(
                         "Framed to the pit surface DEM.")
                 else:

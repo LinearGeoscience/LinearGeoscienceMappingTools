@@ -287,7 +287,17 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
             target = iface.mapCanvas().extent()
         except Exception:
             target = None
-    frame_extent(canvas, target, mid_elevation(dem_layer) * z_factor)
+    ground_z = mid_elevation(dem_layer) * z_factor
+    frame_extent(canvas, target, ground_z)
+
+    if created:
+        # On 4.x the Qt3D engine — and so canvas.scene() — is not built
+        # until the widget is first shown, while 3.40 builds it in the
+        # constructor. Aiming now therefore always takes the fallback
+        # path and never the scene's own setViewFrom2DExtent, which is
+        # the better one because it knows the terrain's elevation range.
+        # Re-aim once the event loop has let the view appear.
+        _reframe_when_ready(canvas, target, ground_z)
 
     if not created:
         _focus(canvas)
@@ -434,6 +444,39 @@ def frame_extent(canvas, extent, ground_z=0.0):
         return False
 
 
+"""Attempts to catch the scene once Qt3D has built it. Each retry is a
+turn of the event loop plus a short wait; the scene normally appears on
+the first or second."""
+REFRAME_TRIES = 6
+REFRAME_INTERVAL_MS = 250
+
+
+def _reframe_when_ready(canvas, extent, ground_z, tries=REFRAME_TRIES):
+    """Re-aim the camera as soon as canvas.scene() exists.
+
+    Silently gives up after a few tries: a view that never builds a
+    scene has a bigger problem than its framing, and the first aim
+    already left the camera somewhere reasonable.
+    """
+    from qgis.PyQt.QtCore import QTimer
+
+    def attempt(remaining):
+        try:
+            scene = canvas.scene()
+        except RuntimeError:  # the view was closed while we waited
+            return
+        except Exception:
+            scene = None
+        if scene is not None:
+            frame_extent(canvas, extent, ground_z)
+            return
+        if remaining > 0:
+            QTimer.singleShot(REFRAME_INTERVAL_MS,
+                              lambda: attempt(remaining - 1))
+
+    QTimer.singleShot(0, lambda: attempt(tries))
+
+
 def zoom_full(canvas):
     """QGIS's own fit-the-whole-scene call — the escape hatch when the
     camera has ended up somewhere useless."""
@@ -528,6 +571,19 @@ def describe(iface, dem_layer=None):
             if bg.lightness() > 240 else ""))
     except Exception:
         pass
+    # QGIS 4.2 added a gradient sky that is drawn OVER the clear colour
+    # and never consults backgroundColor(), so our colour can be set and
+    # still inert. Without this line the two cases look identical.
+    if hasattr(settings, 'backgroundSettings'):
+        try:
+            bs = settings.backgroundSettings()
+            add("background settings",
+                "{0}{1}".format(
+                    type(bs).__name__ if bs is not None else "None",
+                    "  <-- a sky entity may be overriding the colour"
+                    if bs is not None else ""))
+        except Exception as exc:
+            add("background settings", "failed: {0}".format(exc))
     add("terrain rendering", settings.terrainRenderingEnabled())
     add("vertical scale", current_z_factor(settings))
     add("eye dome lighting", settings.eyeDomeLightingEnabled())
@@ -730,18 +786,53 @@ def _ensure_dem_terrain(settings, dem_layer, project):
     visible and harmless. Do not reintroduce an XML round-trip here.
     """
     if hasattr(settings, 'setTerrainSettings'):
-        _ensure_dem_terrain_4x(settings, dem_layer)
+        _ensure_dem_terrain_4x(settings, dem_layer, project)
 
 
-def _ensure_dem_terrain_4x(settings, dem_layer):
+def _ensure_dem_terrain_4x(settings, dem_layer, project=None):
+    """Give the view DEM terrain, preferring QGIS's own builder.
+
+    Hand-rolling a QgsDemTerrainSettings sets only the layer, so a
+    project terrain provider carrying a non-zero offset or scale would
+    silently lose it. The terrain registry returns exactly the object
+    QGIS itself would have built from the project.
+    """
+    project = project or QgsProject.instance()
     try:
         ts = settings.terrainSettings()
         layer = ts.layer() if hasattr(ts, 'layer') else None
         if layer is not None and layer.id() == dem_layer.id():
+            return  # QGIS already configured it from the project
+    except Exception:
+        pass
+
+    try:
+        from qgis._3d import Qgs3D
+        built = Qgs3D.terrainRegistry().configureTerrainFromProject(
+            project.elevationProperties())
+        # The registry reflects the PROJECT, so it hands back flat terrain
+        # when the project has none. Only accept it if it actually points
+        # at our DEM; otherwise fall through and build it ourselves.
+        got = built.layer() if (built is not None
+                                and hasattr(built, 'layer')) else None
+        if got is not None and got.id() == dem_layer.id():
+            settings.setTerrainSettings(built)
             return
+    except Exception as exc:
+        _log(f"3D view: terrain registry unavailable ({exc}); building "
+             "DEM terrain by hand", Qgis.MessageLevel.Info)
+
+    try:
         from qgis._3d import QgsDemTerrainSettings
         dem = QgsDemTerrainSettings()
         dem.setLayer(dem_layer)
+        provider = project.elevationProperties().terrainProvider()
+        if provider is not None:
+            try:
+                dem.setElevationOffset(provider.offset())
+                dem.setVerticalScale(provider.scale())
+            except Exception:
+                pass
         settings.setTerrainSettings(dem)
     except Exception as exc:
         _log(f"3D view: 4.x DEM terrain setup failed: {exc}",
