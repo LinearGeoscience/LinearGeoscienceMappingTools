@@ -156,6 +156,15 @@ _PLUGIN_TOOLS = (
         "identity, and its empty fields are filled from the others. "
         "One-tap undo restores the original polygons.",
     ),
+    (
+        "include_layerswitch_check",
+        "Include active layer switcher",
+        "Adds a column of layer name pills up the left edge of the "
+        "QField map: tap one to make that mapping layer the active "
+        "one for digitising, without opening the layer tree. The "
+        "names fade away to the right a moment after you stop "
+        "using them, leaving the map clear.",
+    ),
 )
 
 
@@ -1027,6 +1036,8 @@ class ExportDialog(QDialog):
             include_reverse_plugin=self.include_reverse_check.isChecked(),
             include_copyattrs_plugin=self.include_copyattrs_check.isChecked(),
             include_merge_plugin=self.include_merge_check.isChecked(),
+            include_layerswitch_plugin=(
+                self.include_layerswitch_check.isChecked()),
             bake_terrain=(self.bake_terrain_check.isChecked()
                           and self._terrain_layer_id is not None),
             terrain_layer_id=self._terrain_layer_id,

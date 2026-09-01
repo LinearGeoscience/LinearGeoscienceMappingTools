@@ -66,6 +66,7 @@ class OfflineConverter(QObject):
                  include_reverse_plugin: bool = True,
                  include_copyattrs_plugin: bool = True,
                  include_merge_plugin: bool = True,
+                 include_layerswitch_plugin: bool = True,
                  bake_terrain: bool = False,
                  terrain_layer_id: str = None,
                  terrain_scale: float = 1.0):
@@ -97,6 +98,8 @@ class OfflineConverter(QObject):
                 feature's attributes onto others, cross-layer aware)
             include_merge_plugin: If True, enable the polygon merge tool
                 feature of the companion sidecar
+            include_layerswitch_plugin: If True, enable the left-edge
+                active-layer switcher feature of the companion sidecar
             bake_terrain: If True, write a raster terrain provider for
                 terrain_layer_id into the exported project so QField
                 4.1+'s 3D view uses the bundled DEM offline
@@ -118,6 +121,7 @@ class OfflineConverter(QObject):
         self.include_reverse_plugin = include_reverse_plugin
         self.include_copyattrs_plugin = include_copyattrs_plugin
         self.include_merge_plugin = include_merge_plugin
+        self.include_layerswitch_plugin = include_layerswitch_plugin
         self.bake_terrain = bake_terrain
         self.terrain_layer_id = terrain_layer_id
         self.terrain_scale = terrain_scale
@@ -312,7 +316,8 @@ class OfflineConverter(QObject):
                     or self.include_reshape_plugin
                     or self.include_reverse_plugin
                     or self.include_copyattrs_plugin
-                    or self.include_merge_plugin):
+                    or self.include_merge_plugin
+                    or self.include_layerswitch_plugin):
                 try:
                     z_filter_qfield.write_sidecar(
                         self.export_dir, project_file.stem,
@@ -325,6 +330,7 @@ class OfflineConverter(QObject):
                         reverse=self.include_reverse_plugin,
                         copyattrs=self.include_copyattrs_plugin,
                         merge=self.include_merge_plugin,
+                        layerswitch=self.include_layerswitch_plugin,
                         opacity_layers=self._raster_layer_names,
                         vector_layers=self._vector_layer_names,
                         opacity_groups=self._collect_opacity_groups(),
@@ -339,7 +345,9 @@ class OfflineConverter(QObject):
                          ("polygon reshape", self.include_reshape_plugin),
                          ("line reverse", self.include_reverse_plugin),
                          ("attribute copy", self.include_copyattrs_plugin),
-                         ("polygon merge", self.include_merge_plugin))
+                         ("polygon merge", self.include_merge_plugin),
+                         ("layer switcher",
+                          self.include_layerswitch_plugin))
                         if on)
                     self.log_message.emit(
                         f"  ✓ QField companion plugin ({features}): "

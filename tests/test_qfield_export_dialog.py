@@ -1,7 +1,7 @@
 """
 Tests for the QField exporter dialog's plugin-tool spec table.
 
-The nine "Include ..." checkboxes are built from the _PLUGIN_TOOLS table in
+The ten "Include ..." checkboxes are built from the _PLUGIN_TOOLS table in
 qfield_export/gui/export_dialog.py and read back one-for-one into
 OfflineConverter's include_*_plugin kwargs.  A table entry that is dropped,
 misnamed or added without a matching kwarg would silently ship the wrong
@@ -86,7 +86,7 @@ class TestPluginToolSpec(unittest.TestCase):
 
     def test_spec_table_is_well_formed(self):
         tools = _plugin_tools()
-        self.assertEqual(len(tools), 9, tools)
+        self.assertEqual(len(tools), 10, tools)
         for attr, label, tooltip in tools:
             self.assertTrue(attr.startswith(_ATTR_PREFIX), attr)
             self.assertTrue(attr.endswith(_ATTR_SUFFIX), attr)
