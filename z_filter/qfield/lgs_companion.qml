@@ -4232,6 +4232,15 @@ Item {
     return ok
   }
 
+  // Single quotes doubled, so a UUID that carries one cannot end the
+  // literal and change the expression it sits in. detectUuidField
+  // matches any field whose name merely CONTAINS uuid/guid/unique_id, on
+  // any polygon layer the user makes active, so the value reaching these
+  // expressions is not something the template controls.
+  function sqlLiteral(value) {
+    return String(value).split("'").join("''")
+  }
+
   function collectFidsByExpression(layer, expr) {
     let fids = []
     let iterator = null
@@ -7960,14 +7969,28 @@ Item {
         const feature = iterator.next()
         if (pickFids !== null && pickFids[feature.id] !== true)
           continue
-        // Pre-reshape snapshot: geometry WKT + the feature itself feed
-        // the one-level undo.
-        const wkt = evalExpr(layer, feature, 'geom_to_wkt($geometry)')
-        if (wkt === '') {
-          failed++
-          continue
+        // Pre-reshape snapshot, for the undo. QgsFeature.geometry is
+        // readable straight from QML (QField reads it that way itself),
+        // so take the value rather than serialising every candidate to
+        // WKT through the expression engine — on cover polygons that
+        // was the single most expensive thing the scan did. WKT stays
+        // as the fallback for a build that will not hand it over.
+        let geometry = null
+        try {
+          const g = feature.geometry
+          if (g !== undefined && g !== null && g.isNull !== true)
+            geometry = g
+        } catch (error) {}
+        let wkt = ''
+        if (geometry === null) {
+          wkt = evalExpr(layer, feature, 'geom_to_wkt($geometry)')
+          if (wkt === '') {
+            failed++
+            continue
+          }
         }
-        plan.push({ fid: feature.id, wkt: wkt, feature: feature })
+        plan.push({ fid: feature.id, geometry: geometry, wkt: wkt,
+                    feature: feature })
       }
     } catch (error) {
       // A dead iterator is NOT 'no candidates' — reporting it as such
@@ -7992,6 +8015,38 @@ Item {
   // harder-decimated controls; the line with its ends extended past
   // the boundary of the specific polygon that refused it.
   // ----------------------------------------------------------------
+  // Re-read a feature from the layer, edit buffer included, by fid.
+  function reshapeFeatureById(layer, fid) {
+    let iterator = null
+    let found = null
+    try {
+      iterator = LayerUtils.createFeatureIteratorFromExpression(
+          layer, '$id = ' + fid)
+      if (iterator.hasNext())
+        found = iterator.next()
+    } catch (error) {}
+    try {
+      if (iterator !== null)
+        iterator.close()
+    } catch (error) {}
+    return found
+  }
+
+  // Is the reshaped polygon still a valid geometry? An unreadable answer
+  // counts as valid: this guard exists to catch a specific, visible
+  // failure, not to block a reshape because a probe would not run.
+  function reshapeResultIsValid(layer, fid) {
+    try {
+      const feature = reshapeFeatureById(layer, fid)
+      if (feature === null)
+        return true
+      const answer = evalExpr(layer, feature, 'is_valid($geometry)')
+      return answer !== 'false'
+    } catch (error) {
+      return true
+    }
+  }
+
   function reshapeApplyOnce(layer, fid) {
     try {
       return Number(GeometryUtils.reshapeFromRubberband(
@@ -8130,9 +8185,21 @@ Item {
         reshapeWriteModel(seq)
         written = tag
       }
+      // Whether the layer was ALREADY being edited decides whether a
+      // rollBack is ours to make. QgsVectorLayer::isEditable is not
+      // reachable from QML, so ask the expression engine; an answer we
+      // cannot read counts as "someone else might be editing", which is
+      // the safe direction.
+      let opened = false
+      try {
+        const editable = evalExpr(layer, null,
+                                  "layer_property(@layer, 'is_editable')")
+        opened = editable === 'false' || editable === '0'
+      } catch (error) {}
       try {
         layer.startEditing()
       } catch (error) {}
+      let invalidFid = null
       for (const target of reshapePlan) {
         let attempts = []
         writeAttempt('base', seqBase)
@@ -8159,6 +8226,18 @@ Item {
         }
         console.log('LGS reshape: fid ' + target.fid + ' attempts [' +
                     attempts.join(', ') + ']')
+        if (result === 0 && !reshapeResultIsValid(layer, target.fid)) {
+          // Desktop parity: reshape_spline_tool.py checks isGeosValid()
+          // before it writes, because GeometryUtils.reshapeFromRubberband
+          // has no rung in its result enum for "succeeded, but the
+          // polygon is now self-intersecting". Such a polygon renders as
+          // nothing, which in the field is indistinguishable from the
+          // feature having been deleted. Nothing here can revert one
+          // feature inside an open buffer (changeGeometry is not
+          // reachable from QML), so the whole batch stands down.
+          invalidFid = target.fid
+          break
+        }
         if (result === 0) {                 // GeometryUtils.Success
           if (attempts.length > 1)
             repaired++
@@ -8173,12 +8252,21 @@ Item {
             } catch (error) {}
           }
           undoEntries.push({ fid: target.fid, uuid: uuid,
-                             wkt: target.wkt, feature: target.feature })
+                             geometry: target.geometry, wkt: target.wkt,
+                             feature: target.feature })
         } else if (result === 1000) {       // GeometryUtils.NothingHappened
           unchanged++
         } else {
           failed++
         }
+      }
+      if (invalidFid !== null) {
+        try {
+          layer.rollBack()
+        } catch (error) {}
+        toast(qsTr('Reshape would make a polygon invalid — nothing was changed. Pick fewer targets or redraw the line.'))
+        reshapeResultText = ''
+        return
       }
       if (undoEntries.length > 0) {
         let ok = false
@@ -8195,7 +8283,12 @@ Item {
           reshapeResultText = ''
           return
         }
-      } else {
+      } else if (opened) {
+        // Only roll back a session we know we opened. reshapeFromRubberband
+        // writes nothing unless it succeeds, so on zero successes the
+        // buffer holds nothing of ours — and discarding it could throw
+        // away an edit someone else (a tracking session, another tool)
+        // had in flight.
         try {
           layer.rollBack()
         } catch (error) {}
@@ -8279,20 +8372,37 @@ Item {
       }
       // The reshaped features, looked up fresh by UUID when possible
       // (fids survive commits but a resync could renumber them).
+      //
+      // ONE replacement per DELETED fid, never one per UUID group. A
+      // UUID is not unique in the template — duplicating a feature
+      // copies it — so a group lookup could return a sibling the reshape
+      // line never touched, and the old code deleted every match while
+      // building exactly one replacement. That silently destroyed an
+      // untouched polygon.
       let doomed = []
       let restored = []
       for (const entry of undo.entries) {
         let fids = []
         if (undo.uuidField !== null && entry.uuid !== '')
           fids = collectFidsByExpression(layer,
-              '"' + undo.uuidField + "\" = '" + entry.uuid + "'")
-        if (fids.length === 0)
+              '"' + undo.uuidField + "\" = '" + sqlLiteral(entry.uuid) + "'")
+        if (fids.length !== 1)
           fids = [entry.fid]
+        // Rebuild the original from the geometry snapshot taken before
+        // the reshape (WKT only where the geometry could not be read),
+        // all attributes copied verbatim — the UUID included, so
+        // identity is restored and not merely replaced.
+        let geometry = null
+        if (entry.geometry !== null && entry.geometry !== undefined)
+          geometry = entry.geometry
+        else if (entry.wkt !== '')
+          geometry = GeometryUtils.createGeometryFromWkt(entry.wkt)
+        if (geometry === null) {
+          toast(qsTr('Undo failed — the original geometry was not kept'))
+          return
+        }
         for (const fid of fids)
           doomed.push(fid)
-        // Rebuild the original from its pre-reshape WKT, all attributes
-        // copied verbatim — including the UUID (identity restored).
-        const geometry = GeometryUtils.createGeometryFromWkt(entry.wkt)
         let created = FeatureUtils.createFeature(layer, geometry)
         copyClipAttributes(created, entry.feature, undo.names, null, '',
                            layer)
@@ -8302,11 +8412,36 @@ Item {
         toast(qsTr('Undo failed — no changes made'))
         return
       }
+      // Read-back verify, the way finalizeClip does. applyClipEdits can
+      // only report that its own edits committed; it cannot know the
+      // restored polygon came back where the current Z filter can see
+      // it, and an Elevation default stamped onto a rebuilt feature can
+      // put it outside the active subsetString. Present but invisible
+      // reads exactly like still-deleted, so say so rather than toasting
+      // success.
+      let verified = -1
+      if (undo.uuidField !== null) {
+        let uuids = []
+        for (const entry of undo.entries) {
+          if (entry.uuid !== '')
+            uuids.push(sqlLiteral(entry.uuid))
+        }
+        if (uuids.length === undo.entries.length && uuids.length > 0) {
+          verified = collectFidsByExpression(layer,
+              '"' + undo.uuidField + "\" IN ('" + uuids.join("','") +
+              "')").length
+        }
+      }
       try {
         layer.triggerRepaint()
         iface.mapCanvas().refresh()
       } catch (error) {}
-      toast(qsTr('Reshape undone'))
+      if (verified >= 0 && verified < undo.entries.length) {
+        toast(qsTr('Undo restored %1 of %2 — check the level filter')
+              .arg(verified).arg(undo.entries.length))
+      } else {
+        toast(qsTr('Reshape undone'))
+      }
       // Only the round that really came back leaves the stack, so a
       // failed undo can be tried again instead of vanishing.
       reshapeHistory = reshapeHistory.slice(0, reshapeHistory.length - 1)
