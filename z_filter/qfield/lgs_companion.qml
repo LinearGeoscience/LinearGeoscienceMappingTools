@@ -2504,6 +2504,7 @@ Item {
     function onActiveLayerChanged() {
       plugin.syncLayerSwitchActive()
       plugin.wakeLayerSwitch()
+      plugin.reshapeRelockLayer()
     }
   }
 
@@ -2512,10 +2513,18 @@ Item {
     // Hidden while a sidecar tool is mid-flow — those own the screen and
     // have locked their layer already. Fewer than two present layers is
     // nothing to switch between, so the column stays away entirely.
+    //
+    // Reshape is the exception (v33): it now stays open between lines
+    // instead of closing after each one, so hiding the pills for the
+    // whole session would take away the very control you would use to
+    // reshape on another layer. They come back whenever no line is part
+    // drawn, and reshape re-locks itself to whatever you pick.
     visible: plugin.featureLayerSwitch && plugin.layerSwitchAttached &&
              plugin.layerSwitchSupported &&
              plugin.layerSwitchEntries.length > 1 &&
-             plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+             plugin.clipStep === 0 &&
+             (plugin.reshapeStep === 0 ||
+              plugin.reshapeControls.length === 0) &&
              plugin.reverseStep === 0 && plugin.copyStep === 0 &&
              plugin.mergeStep === 0
     spacing: 6
@@ -6902,8 +6911,22 @@ Item {
   property var reshapeControls: []     // [{x,y,z}] tapped points, map CRS
   property var reshapeCache: ({})      // spline segment cache, per session
   property var reshapePlan: []         // [{fid, wkt, feature}] at confirm
-  property var reshapeUndo: null       // one-level undo, session-only
+  // Session undo stack (v33), newest last. It used to be a single
+  // payload, reachable only from a step the tool left as soon as you
+  // pressed Done — so one tap and the undo was gone with no UI that
+  // could ever reach it again. It is also NOT cleared when the tool
+  // exits: a digitizing session starting force-exits reshape, and that
+  // must not throw away what you already changed.
+  property var reshapeHistory: []
   property string reshapeResultText: ''
+  // True between the confirm tap and the end of the write. The work runs
+  // a turn later (Qt.callLater) so the banner can actually paint it;
+  // assigning the text inside the synchronous block, as before, meant
+  // "Reshaping…" never appeared at all.
+  property bool reshapeBusy: false
+  // True while the target set came from QField's own selection rather
+  // than from taps inside the tool.
+  property bool reshapeLockedSelection: false
   property var reshapeMarkerPositions: []
   // Freehand stroke state (v24) — stylus draws, finger pans.
   property var reshapeUndoStack: []    // points per action: tap=1, stroke=n
@@ -7123,6 +7146,33 @@ Item {
     return null
   }
 
+  // Follow a legend/pill layer change while reshape is open but idle.
+  // The tool locks its layer on entry and must keep it for the line
+  // being drawn, so this only moves between lines — otherwise the line
+  // on screen would silently belong to a layer it was not drawn for.
+  // A non-polygon layer is ignored rather than breaking the session.
+  function reshapeRelockLayer() {
+    if (reshapeStep === 0 || reshapeControls.length > 0 || reshapeBusy)
+      return
+    try {
+      const layer = reshapeActiveLayer()
+      if (layer === null || layer === reshapeLayer)
+        return
+      if (evalExpr(layer, null, "layer_property(@layer, 'geometry_type')") !==
+          'Polygon')
+        return
+      try {
+        if (reshapeLayer !== null)
+          reshapeLayer.removeSelection()
+      } catch (error) {}
+      reshapeLayer = layer
+      reshapePicks = []
+      reshapeLockedSelection = false
+      reshapeResultText = ''
+      toast(qsTr('Reshape now targets %1').arg(reshapeLayerLabel()))
+    } catch (error) {}
+  }
+
   function reshapeLayerLabel() {
     try {
       return reshapeLayer ? String(reshapeLayer.name) : ''
@@ -7189,6 +7239,9 @@ Item {
       reshapeMarkerPositions = []
       reshapeUndoStack = []
       reshapeStrokeStart = -1
+      reshapeStrokeRaw.length = 0
+      reshapeLockedSelection = false
+      reshapeBusy = false
       reshapeModel.reset(true)
       reshapeLoadStyle()
       reshapeStep = 1
@@ -7217,6 +7270,12 @@ Item {
     reshapeMarkerPositions = []
     reshapeUndoStack = []
     reshapeStrokeStart = -1
+    reshapeStrokeRaw.length = 0
+    reshapeLockedSelection = false
+    reshapeBusy = false
+    // reshapeHistory deliberately survives: a digitizing session
+    // starting force-exits this tool, and that must not throw away
+    // reshapes you have already made. It is offered again on re-entry.
   }
 
   // ----------------------------------------------------------------
@@ -7880,6 +7939,31 @@ Item {
     return out
   }
 
+  // The confirm tap, one event-loop turn later so the busy state has
+  // painted. Scan, refuse a no-op, then write.
+  function runReshape() {
+    try {
+      const count = collectReshapeTargets()
+      if (count < 0) {
+        toast(qsTr('Reshape scan failed — try again or simplify the line'))
+        return
+      }
+      if (count === 0) {
+        // Desktop parity: "nothing was crossed" and "nothing you picked
+        // was crossed" are different problems and used to read the same.
+        toast(reshapePicks.length > 0
+            ? qsTr('None of the picked polygons cross the line')
+            : qsTr('The line does not cross any polygon'))
+        return
+      }
+      executeReshape()
+    } catch (error) {
+      toast(qsTr('Reshape failed'))
+    } finally {
+      reshapeBusy = false
+    }
+  }
+
   function executeReshape() {
     try {
       const layer = reshapeLayer
@@ -7983,12 +8067,14 @@ Item {
           layer.rollBack()
         } catch (error) {}
       }
-      reshapeUndo = undoEntries.length === 0 ? null : {
-        layer: layer,
-        layerName: reshapeLayerLabel(),
-        names: names,
-        uuidField: uuidField,
-        entries: undoEntries
+      if (undoEntries.length > 0) {
+        reshapeHistory = reshapeHistory.concat([{
+          layer: layer,
+          layerName: reshapeLayerLabel(),
+          names: names,
+          uuidField: uuidField,
+          entries: undoEntries
+        }])
       }
       try {
         layer.removeSelection()
@@ -8004,20 +8090,48 @@ Item {
         message += qsTr(' — %1 failed').arg(failed)
       reshapeResultText = message
       toast(message)
-      reshapeStep = 3
+      // Stay in the draw step with the line cleared, so the next edge is
+      // one stroke away instead of a trip back through the pill. The
+      // layer, style, spline arming and the target picks all survive;
+      // the picks are re-highlighted because executeReshape drops the
+      // selection above, and keeping them while wiping their highlight
+      // would silently filter the next line with nothing on screen to
+      // explain it.
+      reshapeClearLine()
+      updateReshapeSelection()
     } catch (error) {
       toast(qsTr('Reshape failed'))
       reshapeResultText = ''
     }
   }
 
+  // Everything about the drawn line, and nothing about the session.
+  function reshapeClearLine() {
+    reshapeControls = []
+    reshapeMarkerPositions = []
+    reshapeUndoStack = []
+    reshapeStrokeStart = -1
+    reshapeStrokeRaw.length = 0
+    reshapeLastSeq = null
+    reshapeCache = ({})
+    reshapePlan = []
+    try {
+      reshapeModel.reset(true)
+    } catch (error) {}
+  }
+
   // ----------------------------------------------------------------
-  // Undo (one level, session-only — never persisted)
+  // Undo (session-only — never persisted). One round per press, newest
+  // first; the stack survives leaving and re-entering the tool.
   // ----------------------------------------------------------------
   function undoLastReshape() {
-    const undo = reshapeUndo
-    if (undo === null || undo === undefined)
+    if (reshapeHistory.length === 0)
       return
+    const undo = reshapeHistory[reshapeHistory.length - 1]
+    if (undo === null || undo === undefined) {
+      reshapeHistory = reshapeHistory.slice(0, reshapeHistory.length - 1)
+      return
+    }
     try {
       let layer = undo.layer
       try {
@@ -8060,7 +8174,9 @@ Item {
         iface.mapCanvas().refresh()
       } catch (error) {}
       toast(qsTr('Reshape undone'))
-      reshapeUndo = null
+      // Only the round that really came back leaves the stack, so a
+      // failed undo can be tried again instead of vanishing.
+      reshapeHistory = reshapeHistory.slice(0, reshapeHistory.length - 1)
     } catch (error) {
       toast(qsTr('Undo failed'))
     }
@@ -8372,8 +8488,7 @@ Item {
         color: 'white'
         text: plugin.reshapeStep === 1
             ? qsTr('Reshape — pick targets (optional)')
-            : plugin.reshapeStep === 2 ? qsTr('Reshape — draw the new edge')
-                                       : qsTr('Reshape done')
+            : qsTr('Reshape — draw the new edge')
       }
 
       Text {
@@ -8381,17 +8496,24 @@ Item {
         wrapMode: Text.WordWrap
         font.pixelSize: 14
         color: 'white'
-        text: plugin.reshapeStep === 1
-            ? qsTr('Tap polygons to limit the reshape, or draw straight away — with no picks every polygon the line crosses is reshaped')
-            : plugin.reshapeStep === 2
-              ? (plugin.reshapeStyle === 'free'
-                  ? qsTr('Draw the new edge with the stylus — finger pans, a stylus tap adds a single point; the line must enter and exit each polygon it reshapes')
-                  : qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes'))
-              : plugin.reshapeResultText
+        text: {
+          if (plugin.reshapeBusy)
+            return qsTr('Reshaping…')
+          // After a reshape the result stands in for the hint until the
+          // next line starts, so it is readable without a dead step to
+          // park it in.
+          if (plugin.reshapeStep === 2 && plugin.reshapeControls.length === 0 &&
+              plugin.reshapeResultText !== '')
+            return plugin.reshapeResultText
+          if (plugin.reshapeStep === 1)
+            return qsTr('Tap polygons to limit the reshape, or just start drawing — with no picks every polygon the line crosses is reshaped')
+          return plugin.reshapeStyle === 'free'
+              ? qsTr('Draw the new edge with the stylus — finger pans, a stylus tap adds a single point; the line must enter and exit each polygon it reshapes')
+              : qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes')
+        }
       }
 
       Text {
-        visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
         width: parent.width
         wrapMode: Text.WordWrap
         font.pixelSize: 12
@@ -8475,7 +8597,8 @@ Item {
 
         Button {
           id: reshapeBackButton
-          visible: plugin.reshapeStep === 2
+          visible: plugin.reshapeStep === 2 &&
+                   plugin.reshapeControls.length > 0
           flat: true
           topPadding: 8
           bottomPadding: 8
@@ -8506,7 +8629,11 @@ Item {
           leftPadding: 14
           rightPadding: 14
           contentItem: Text {
-            text: qsTr('Cancel')
+            // "Cancel" is a lie once a reshape has landed: there is
+            // nothing left to cancel, you are just leaving.
+            text: plugin.reshapeHistory.length > 0 ||
+                  plugin.reshapeResultText !== ''
+                ? qsTr('Done') : qsTr('Cancel')
             color: 'white'
             font.pixelSize: 14
             horizontalAlignment: Text.AlignHCenter
@@ -8524,14 +8651,14 @@ Item {
         Button {
           id: reshapeExecuteButton
           visible: plugin.reshapeStep === 2
-          enabled: plugin.reshapeControls.length >= 2
+          enabled: plugin.reshapeControls.length >= 2 && !plugin.reshapeBusy
           flat: true
           topPadding: 8
           bottomPadding: 8
           leftPadding: 14
           rightPadding: 14
           contentItem: Text {
-            text: qsTr('Reshape ✓')
+            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Reshape ✓')
             color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
             font.pixelSize: 14
             font.bold: true
@@ -8546,33 +8673,31 @@ Item {
             border.width: 1
             radius: 4
           }
+          // No confirmation dialog (v33). It stood between every line
+          // and its result, and the tool is now built to be used over and
+          // over; a complete session undo is the better safety net. The
+          // work is deferred one turn so the banner and this button can
+          // repaint as busy first — assigning the text inside the
+          // synchronous block meant it never showed at all.
           onClicked: {
-            // Count first so the dialog can show how many polygons are
-            // about to change; refuse a no-op reshape outright.
-            const count = plugin.collectReshapeTargets()
-            if (count < 0) {
-              plugin.toast(qsTr('Reshape scan failed — try again or simplify the line'))
+            if (plugin.reshapeBusy)
               return
-            }
-            if (count === 0) {
-              plugin.toast(qsTr('The line does not cross any polygon'))
-              return
-            }
-            reshapeConfirmDialog.open()
+            plugin.reshapeBusy = true
+            Qt.callLater(plugin.runReshape)
           }
         }
 
         Button {
           id: reshapeUndoButton
-          visible: plugin.reshapeStep === 3
-          enabled: plugin.reshapeUndo !== null
+          visible: plugin.reshapeHistory.length > 0
+          enabled: !plugin.reshapeBusy
           flat: true
           topPadding: 8
           bottomPadding: 8
           leftPadding: 14
           rightPadding: 14
           contentItem: Text {
-            text: qsTr('Undo last reshape')
+            text: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
             color: reshapeUndoButton.enabled ? 'white' : '#66FFFFFF'
             font.pixelSize: 14
             horizontalAlignment: Text.AlignHCenter
@@ -8585,79 +8710,12 @@ Item {
             border.width: 1
             radius: 4
           }
-          onClicked: {
-            plugin.undoLastReshape()
-            plugin.exitReshapeMode()
-          }
+          // Undoing no longer leaves the tool: a failed undo used to
+          // drop you out with the payload stranded, and a second press
+          // now pops the round before it.
+          onClicked: plugin.undoLastReshape()
         }
 
-        Button {
-          id: reshapeDoneButton
-          visible: plugin.reshapeStep === 3
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Done')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitReshapeMode()
-        }
-      }
-    }
-  }
-
-  Dialog {
-    id: reshapeConfirmDialog
-    parent: mainWindow.contentItem
-    modal: true
-    title: qsTr('Reshape polygons')
-    x: (mainWindow.width - width) / 2
-    y: (mainWindow.height - height) / 2
-    width: Math.min(mainWindow.width - 40, 420)
-    standardButtons: Dialog.Ok | Dialog.Cancel
-
-    onOpened: {
-      try {
-        const okButton = reshapeConfirmDialog.standardButton(Dialog.Ok)
-        if (okButton)
-          okButton.text = qsTr('Reshape now')
-      } catch (error) {}
-    }
-
-    onAccepted: plugin.executeReshape()
-
-    ColumnLayout {
-      anchors.fill: parent
-      spacing: 8
-
-      Label {
-        Layout.fillWidth: true
-        wrapMode: Text.WordWrap
-        text: {
-          let lines = qsTr('%1 polygon(s) will be reshaped to the drawn line.')
-              .arg(plugin.reshapePlan.length)
-          if (plugin.reshapePicks.length > 0)
-            lines += '\n' + qsTr('Limited to your %1 picked polygon(s).')
-                .arg(plugin.reshapePicks.length)
-          lines += '\n' + (plugin.reshapeSplineArmed
-              ? qsTr('Line: smoothed (Spline armed)')
-              : qsTr('Line: straight segments'))
-          lines += '\n' + qsTr('Layer: %1').arg(plugin.reshapeLayerLabel())
-          return lines
-        }
       }
     }
   }
