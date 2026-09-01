@@ -1,6 +1,14 @@
 // Harness: extract the pure-JS freehand stroke gate of the reshape tool
 // (v24) from lgs_companion.qml verbatim and check it, alongside the
 // splineDecimate thinning it mirrors.
+//
+// v33 added the capture-neutrality invariant. The stroke now captures
+// UNGATED and thins once on release, instead of gating every pointer
+// move, so the ink can follow the pen. The two must select the same
+// control points or the saved curve changes -- that is what the
+// "capture ungated then decimate" block below pins, on jittered strokes
+// of 800/1600/3200 moves. If it ever fails, the capture change is not
+// geometry-neutral and must be reverted.
 // Run: node reshape_freehand_harness.js <path-to-qml>
 'use strict'
 const fs = require('fs')
@@ -21,13 +29,16 @@ function extractFunction(name) {
          qml.slice(bodyStart, i + 1)
 }
 
-const code = ['reshapeStrokeAppend', 'splineDecimate']
+const code = ['reshapeStrokeAppend', 'splineDecimate',
+              'splineCommonPrefixLength', 'reshapeWritePlan']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
 (0, eval)(code)
 const reshapeStrokeAppend = globalThis.reshapeStrokeAppend
 const splineDecimate = globalThis.splineDecimate
+const splineCommonPrefixLength = globalThis.splineCommonPrefixLength
+const reshapeWritePlan = globalThis.reshapeWritePlan
 
 let failures = 0
 function check(label, ok, detail) {
@@ -125,6 +136,177 @@ function pt(x, y) { return { x: x, y: y, z: NaN, fh: true } }
   check('undo pops the first tap', controls.length === 0)
   undo()
   check('undo on empty stack and controls is safe', controls.length === 0)
+}
+
+// --- capture ungated then decimate == today's live gate (v33) ---------
+// The whole justification for capturing raw. A deterministic jittered
+// stroke stands in for a hand: no Math.random, so a failure is
+// reproducible.
+function jitteredStroke(moves) {
+  const out = []
+  let x = 0, y = 0
+  for (let i = 0; i < moves; i++) {
+    // Two incommensurate sines: a curving run with fine tremor on top,
+    // the shape a stylus actually produces.
+    x += 0.9 + 0.6 * Math.sin(i * 0.11)
+    y += 1.4 * Math.sin(i * 0.017) + 0.25 * Math.sin(i * 0.9)
+    out.push({ x: x, y: y, z: NaN })
+  }
+  return out
+}
+
+for (const moves of [800, 1600, 3200]) {
+  const raw = jitteredStroke(moves)
+  const gate = 8
+  const live = []
+  for (const p of raw)
+    reshapeStrokeAppend(live, p, gate)
+  const decimated = splineDecimate(raw, gate)
+
+  // splineDecimate always keeps the final point; the live gate cannot
+  // know which sample is final, so it keeps it only when it clears the
+  // gate. Every other choice must agree exactly.
+  const tail = raw[raw.length - 1]
+  const liveKeptTail = live.length > 0 &&
+      live[live.length - 1].x === tail.x && live[live.length - 1].y === tail.y
+  const expected = liveKeptTail ? live : live.concat([tail])
+  check('capture-neutral at ' + moves + ' moves: decimate == live gate',
+        JSON.stringify(decimated) === JSON.stringify(expected),
+        'live ' + live.length + ' decimate ' + decimated.length +
+        ' liveKeptTail ' + liveKeptTail)
+
+  // And the one deliberate difference: the true end of the stroke always
+  // survives. Today's live gate can drop it, which is the "line stops
+  // short of exiting the polygon" hazard in miniature.
+  const last = decimated[decimated.length - 1]
+  check('capture-neutral at ' + moves + ' moves: stroke end survives',
+        last.x === tail.x && last.y === tail.y)
+
+  // A prefix relationship, stated separately so a failure says which
+  // half broke.
+  let prefixOk = live.length <= decimated.length
+  for (let i = 0; prefixOk && i < live.length; i++)
+    prefixOk = live[i].x === decimated[i].x && live[i].y === decimated[i].y
+  check('capture-neutral at ' + moves + ' moves: live is a prefix',
+        prefixOk)
+}
+
+// --- write-cost simulation: reset-per-tick vs one write (v33) ---------
+// Today the 40 ms timer rebuilds the whole model every tick: one reset,
+// one addVertexFromPoint per vertex, one removeVertex. The invokable
+// count is therefore quadratic in stroke length. Capturing into a plain
+// buffer and writing once on release is linear. The signature of that
+// fix is that the RATIO grows with the stroke, so assert the growth, not
+// a fixed number.
+function tickWriteCost(raw, gate, movesPerTick) {
+  // Cost of the v32 live path: rebuild from scratch on every tick.
+  const live = []
+  let cost = 0
+  for (let i = 0; i < raw.length; i++) {
+    reshapeStrokeAppend(live, raw[i], gate)
+    if ((i + 1) % movesPerTick === 0)
+      cost += 2 + live.length          // reset + N adds + removeVertex
+  }
+  return { cost: cost, controls: live.length }
+}
+
+const ratios = []
+for (const moves of [800, 1600, 3200]) {
+  const raw = jitteredStroke(moves)
+  const perTick = tickWriteCost(raw, 8, 4)   // ~40 ms at ~100 Hz
+  const onceOnRelease = 2 + perTick.controls // the single release write
+  ratios.push(perTick.cost / onceOnRelease)
+}
+check('write cost: per-tick rebuild is >=10x one release write at 800 moves',
+      ratios[0] >= 10, 'ratio ' + ratios[0].toFixed(1))
+check('write cost: the ratio rises with stroke length (quadratic tell)',
+      ratios[1] > ratios[0] && ratios[2] > ratios[1],
+      ratios.map(function(r) { return r.toFixed(1) }).join(' -> '))
+
+// --- prefix-diff write plan arithmetic (v33) --------------------------
+// What reshapeWriteModel does on a tap: the new sequence shares a long
+// prefix with the last one, so peel the changed tail instead of
+// resetting. Mirrors splineWriteSequence's cost test.
+{
+  const a = []
+  for (let i = 0; i < 500; i++)
+    a.push({ x: i, y: 0, z: NaN })
+  const b = a.slice(0, 480)
+  for (let i = 0; i < 25; i++)
+    b.push({ x: 480 + i, y: 7, z: NaN })
+  const prefix = splineCommonPrefixLength(a, b)
+  check('prefix diff finds the shared head', prefix === 480,
+        'got ' + prefix)
+  const modelCount = a.length
+  const pops = modelCount - (prefix + 1)
+  const incremental = pops + (b.length - prefix) + 1
+  const full = b.length + 2
+  check('prefix diff is cheaper than a full reset here',
+        incremental < full, incremental + ' vs ' + full)
+  check('an unrelated sequence falls back to the full reset',
+        splineCommonPrefixLength(a, b.slice().reverse()) === 0)
+}
+
+// --- reshapeWritePlan (v33) -------------------------------------------
+// The real decision function, extracted from the QML rather than
+// re-modelled here.
+function plan(lastSeq, seq, modelCount) {
+  const prefix = lastSeq === null ? 0
+      : splineCommonPrefixLength(lastSeq, seq)
+  return reshapeWritePlan(lastSeq, seq, modelCount, prefix)
+}
+function seqOf(n, yTailFrom, y) {
+  const out = []
+  for (let i = 0; i < n; i++)
+    out.push({ x: i, y: (yTailFrom !== undefined && i >= yTailFrom) ? y : 0,
+               z: NaN })
+  return out
+}
+{
+  const a = seqOf(500)
+  // One more point on the end: the classic tap.
+  const b = a.concat([{ x: 500, y: 0, z: NaN }])
+  const p = plan(a, b, a.length + 1)
+  check('write plan: an appended point takes the tail path',
+        p.mode === 'tail' && p.prefix === 499 && p.pops === 1,
+        JSON.stringify(p))
+}
+{
+  const a = seqOf(500)
+  const b = seqOf(500, 480, 7)
+  const p = plan(a, b, a.length + 1)
+  check('write plan: a changed tail takes the tail path',
+        p.mode === 'tail' && p.prefix === 480, JSON.stringify(p))
+  check('write plan: the tail path really is cheaper',
+        p.pops + (b.length - p.prefix) + 1 < b.length + 2)
+}
+{
+  const a = seqOf(500)
+  const b = seqOf(500).reverse()
+  check('write plan: an unrelated sequence resets',
+        plan(a, b, a.length + 1).mode === 'reset')
+}
+{
+  const b = seqOf(50)
+  check('write plan: no record means reset',
+        plan(null, b, 0).mode === 'reset')
+  check('write plan: an unreadable vertex count means reset',
+        plan(seqOf(50), b, NaN).mode === 'reset')
+  check('write plan: a SHRUNK model means reset',
+        plan(seqOf(50), b, 10).mode === 'reset',
+        'modelCount below lastSeq.length cannot be diffed')
+}
+{
+  // A model GROWN behind the diff's back (a live stroke appending
+  // straight onto it) must not be trusted into a tail write that pops
+  // the wrong number of vertices.
+  const a = seqOf(50)
+  const b = seqOf(60)
+  const p = plan(a, b, 400)
+  const survives = p.mode === 'reset' ||
+      (p.pops === 400 - (p.prefix + 1) && p.prefix <= a.length - 1)
+  check('write plan: a grown model still pops back to the shared prefix',
+        survives, JSON.stringify(p))
 }
 
 process.exit(failures === 0 ? 0 : 1)

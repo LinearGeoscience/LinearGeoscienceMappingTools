@@ -7031,6 +7031,12 @@ Item {
     lineWidth: 3
     z: 1
 
+    // Read the polyline ONCE (v33). RubberbandShape recomputes
+    // `polylines` on every model change, and both ShapePaths below were
+    // reading polylines[0] independently — doubling the conversion on
+    // every vertex of every write.
+    readonly property var linePath: polylines.length > 0 ? polylines[0] : []
+
     Shape {
       anchors.fill: parent
 
@@ -7043,7 +7049,7 @@ Item {
         capStyle: ShapePath.RoundCap
 
         PathPolyline {
-          path: reshapeShape.polylines[0]
+          path: reshapeShape.linePath
         }
       }
 
@@ -7056,7 +7062,7 @@ Item {
         capStyle: ShapePath.RoundCap
 
         PathPolyline {
-          path: reshapeShape.polylines[0]
+          path: reshapeShape.linePath
         }
       }
     }
@@ -7177,6 +7183,7 @@ Item {
       reshapePicks = []
       reshapeControls = []
       reshapeCache = ({})
+      reshapeLastSeq = null
       reshapePlan = []
       reshapeResultText = ''
       reshapeMarkerPositions = []
@@ -7204,6 +7211,7 @@ Item {
     reshapePicks = []
     reshapeControls = []
     reshapeCache = ({})
+    reshapeLastSeq = null
     reshapePlan = []
     reshapeResultText = ''
     reshapeMarkerPositions = []
@@ -7496,8 +7504,14 @@ Item {
     // Condition the CONTROLS, not just the output: capture jitter must
     // never become a spline control point (v32). Loop removal here is
     // cheap — controls are already gated at 8 pt spacing.
+    //
+    // v33: the cap is reshapeLoopCap here too, not 0. The confirm path
+    // conditioned with the cap and this one without, so the two splined
+    // DIFFERENT control arrays and reshapeCache missed on every confirm
+    // — a cold full-density spline each time. Above the cap neither
+    // removes loops, which is the point: preview and saved line agree.
     const controls = reshapeConditionSequence(reshapeControls,
-        reshapeConditionEps(), 0)
+        reshapeConditionEps(), reshapeLoopCap)
     if (reshapeSplineArmed) {
       const seq = splineConfirmSequence(controls, false,
           splineTightness, splineTolerance, splineMaxSegments, reshapeCache,
@@ -7508,28 +7522,113 @@ Item {
     return controls
   }
 
-  // The one writer of reshapeModel's geometry (v32). The model keeps a
-  // floating tail vertex after every add, hence the final removeVertex —
-  // but addVertex SKIPS an add when two consecutive points are exactly
-  // equal, and an unconditional remove then eats the last REAL point:
-  // the line silently stops just short of exiting the polygon. Remove
-  // the tail only when the count says it is really there (falling back
-  // to the old behaviour when the count is unreadable).
+  // The write PLAN, pure JS so tests/reshape_freehand_harness.js can
+  // extract it: given the sequence the model is believed to hold, the
+  // one we want, and the model's real vertex count, decide between
+  // peeling the changed tail and rewriting from scratch.
+  //
+  // Successive writes differ only in their last segments (one more
+  // control point, one more stroke), so the shared prefix is nearly the
+  // whole line. Every addVertexFromPoint is a cross-language call that
+  // makes QField rebuild the rubberband's screen polyline, which is what
+  // made a long line cost O(N^2) to draw. Same idea, same arithmetic and
+  // the same fallback rule as splineWriteSequence.
+  function reshapeWritePlan(lastSeq, seq, modelCount, prefixLength) {
+    let prefix = 0
+    if (lastSeq !== null && lastSeq !== undefined &&
+        isFinite(modelCount) && modelCount >= lastSeq.length) {
+      prefix = prefixLength
+      prefix = Math.min(prefix, lastSeq.length - 1, modelCount - 1,
+                        seq.length - 1)
+      if (prefix < 0)
+        prefix = 0
+    }
+    const pops = modelCount - (prefix + 1)
+    const incremental = pops + (seq.length - prefix) + 1
+    const full = seq.length + 2
+    if (prefix > 0 && pops >= 0 && incremental < full)
+      return { mode: 'tail', prefix: prefix, pops: pops }
+    return { mode: 'reset', prefix: 0, pops: 0 }
+  }
+
+  // The one writer of reshapeModel's geometry (v32/v33).
+  //
+  // The model keeps a floating tail vertex after every add, hence the
+  // final removeVertex — but addVertexFromPoint SKIPS an add when two
+  // consecutive points are exactly equal, and an unconditional remove
+  // then eats the last REAL point: the line silently stops just short of
+  // exiting the polygon. So the tail comes off only when the count says
+  // it is really there, and the tail-diff branch VERIFIES the count
+  // afterwards and rewrites from scratch if it does not agree. That
+  // check is not optional: the diff is exactly the shape of write that
+  // can hide a skipped add.
+  //
   // keepFloating (v33) leaves the trailing floating vertex in place. The
   // model always keeps one, and addVertexFromPoint OVERWRITES it before
-  // appending a fresh one - so a live stroke that appends straight onto
-  // a trimmed model would eat the last real control point (the junction
+  // appending a fresh one — so a live stroke appending straight onto a
+  // trimmed model would eat the last real control point (the junction
   // with the previous stroke or tap, exactly where a kink shows).
   // Leaving the duplicate means the first stroke sample overwrites the
   // duplicate instead.
   function reshapeWriteModel(seq, keepFloating) {
-    reshapeModel.reset(true)
-    for (let i = 0; i < seq.length; i++) {
+    let modelCount = NaN
+    try {
+      modelCount = Number(reshapeModel.vertexCount)
+    } catch (error) {}
+    const plan = reshapeWritePlan(reshapeLastSeq, seq, modelCount,
+        reshapeLastSeq === null ? 0
+            : splineCommonPrefixLength(reshapeLastSeq, seq))
+    // Suppress the rubberband's screen rebuild for the duration of the
+    // write: it is dirtied by every single vertex signal, and both
+    // ShapePaths redraw from it. Imperative and read back, never a
+    // binding — a build without the property just pays the old cost.
+    let frozen = false
+    try {
+      if (reshapeShape.freeze !== undefined) {
+        reshapeShape.freeze = true
+        frozen = reshapeShape.freeze === true
+      }
+    } catch (error) {}
+    try {
+      if (plan.mode === 'tail') {
+        for (let i = 0; i < plan.pops; i++)
+          reshapeModel.removeVertex()
+        reshapeAddPoints(seq, plan.prefix)
+        if (keepFloating !== true)
+          reshapeModel.removeVertex()
+        let after = NaN
+        try {
+          after = Number(reshapeModel.vertexCount)
+        } catch (error) {}
+        const want = keepFloating === true ? seq.length + 1 : seq.length
+        if (!isFinite(after) || after !== want)
+          reshapeWriteModelReset(seq, keepFloating)
+      } else {
+        reshapeWriteModelReset(seq, keepFloating)
+      }
+      reshapeLastSeq = seq
+    } catch (error) {
+      reshapeLastSeq = null
+    }
+    if (frozen) {
+      try {
+        reshapeShape.freeze = false
+      } catch (error) {}
+    }
+  }
+
+  function reshapeAddPoints(seq, from) {
+    for (let i = from; i < seq.length; i++) {
       const z = Number(seq[i].z)
       reshapeModel.addVertexFromPoint(isFinite(z)
           ? GeometryUtils.point(seq[i].x, seq[i].y, z)
           : GeometryUtils.point(seq[i].x, seq[i].y))
     }
+  }
+
+  function reshapeWriteModelReset(seq, keepFloating) {
+    reshapeModel.reset(true)
+    reshapeAddPoints(seq, 0)
     if (seq.length > 0 && keepFloating !== true) {
       let count = NaN
       try {
@@ -7571,6 +7670,7 @@ Item {
     reshapeMarkerPositions = []
     reshapeUndoStack = []
     reshapeStrokeStart = -1
+    reshapeLastSeq = null
     try {
       reshapeModel.reset(true)
     } catch (error) {}
