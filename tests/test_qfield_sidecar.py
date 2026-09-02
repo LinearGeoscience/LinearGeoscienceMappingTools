@@ -317,8 +317,29 @@ class TestWriteSidecar(unittest.TestCase):
                        'reshapeTapIsTouch', 'reshapeSelectionLatched',
                        'reshapeSelectionLatchMs', 'reshapeRunTimer',
                        'get_feature_by_id', 'reshapeSplineDefault',
-                       'reshapeClearPicksButton', 'wasValid'):
+                       'reshapeClearPicksButton', 'wasValid',
+                       # Truth-value fix: predicates answer '1', not 'true'.
+                       'exprTrue', 'exprFalse'):
             self.assertIn(needle, text, needle)
+
+    def test_qml_never_reads_a_predicate_as_the_string_true(self):
+        # QGIS geometry predicates (intersects, ...) and comparison
+        # operators return TVL ints -- QVariant(1)/QVariant(0) -- so
+        # through ExpressionEvaluator.evaluate().toString() a truthy
+        # answer is '1', never 'true'. A bare === 'true' on such a result
+        # is always false: it silently emptied every box-then-exact-test
+        # scan in the field ("The line does not cross any polygon"). Every
+        # boolean read goes through exprTrue/exprFalse; the helpers
+        # themselves are the only lines allowed to spell the literals.
+        with open(SIDECAR_SOURCE, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        offenders = []
+        for number, line in enumerate(lines, 1):
+            code = line.split('//', 1)[0]
+            if re.search(r"[!=]==\s*'(true|false)'", code) and \
+                    'return value ===' not in code:
+                offenders.append('%d: %s' % (number, line.strip()))
+        self.assertEqual(offenders, [], '\n'.join(offenders))
 
 
 if __name__ == '__main__':

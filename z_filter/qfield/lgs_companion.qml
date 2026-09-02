@@ -171,7 +171,10 @@
  *    line's bounding box (as the desktop tool does), falling back to a
  *    full scan when the CRS pair cannot be trusted — a partly-wrong box
  *    would mean a silent partial reshape. The iterator honours the
- *    layer subsetString either way: reshape what you see.
+ *    layer subsetString either way: reshape what you see. The exact
+ *    re-test on what the box returns is read through exprTrue: QGIS
+ *    predicates answer with TVL ints, so intersects() comes back as '1',
+ *    never 'true' (comparing against the word emptied every v33 scan).
  *
  *    Each target is reshaped by GeometryUtils.reshapeFromRubberband —
  *    the native op behind QField's own single-feature reshape editor —
@@ -3691,6 +3694,22 @@ Item {
     }
   }
 
+  // Read a boolean answer from evalExpr. QGIS geometry predicates
+  // (intersects, contains, ...) and every comparison / AND / OR operator
+  // return TVL ints — QVariant(1) / QVariant(0) — and only plain functions
+  // (is_valid, layer_property) return a real bool, so through the
+  // evaluator's toString() a truthy answer arrives as '1' OR 'true'. A
+  // bare === 'true' on a predicate is ALWAYS false; it silently emptied
+  // every v33 box-then-exact-test scan. Pure JS, extracted by
+  // tests/reshape_freehand_harness.js.
+  function exprTrue(value) {
+    return value === 'true' || value === '1'
+  }
+
+  function exprFalse(value) {
+    return value === 'false' || value === '0'
+  }
+
   function candidateClipLayers() {
     let layers = []
     for (const name of clipLayerNames) {
@@ -3893,7 +3912,7 @@ Item {
               layer, probe)
         while (iterator.hasNext()) {
           const feature = iterator.next()
-          if (boxed && evalExpr(layer, feature, probe) !== 'true')
+          if (boxed && !exprTrue(evalExpr(layer, feature, probe)))
             continue
           // Stacked polygons: the small overlying unit is almost always
           // the intent, so the smallest hit wins.
@@ -4101,7 +4120,7 @@ Item {
         // Stringified result: 'true' on any sane build, '1' if a bool
         // ever arrives as an int.
         const verdict = evalExpr(layer, feature, '"' + name + '" IS NULL')
-        if (verdict === 'true' || verdict === '1')
+        if (exprTrue(verdict))
           nulls[name] = true
       }
     } catch (error) {}
@@ -4282,7 +4301,7 @@ Item {
     try {
       const editable = evalExpr(layer, null,
                                 "layer_property(@layer, 'is_editable')")
-      if (editable === 'true' || editable === '1') {
+      if (exprTrue(editable)) {
         toast(qsTr('%1 has unsaved edits from another tool — save or discard them first')
               .arg(String(layer.name)))
         return false
@@ -4464,7 +4483,7 @@ Item {
         const feature = entry.feature
         const touches = evalExpr(layer, feature,
             "intersects($geometry, geom_from_wkt('" + unionWkt + "'))")
-        if (touches !== 'true' && touches !== '1') {
+        if (!exprTrue(touches)) {
           // Non-intersecting targets stay completely untouched
           // (fid and UUID stable — matches desktop).
           untouchedCount++
@@ -4723,7 +4742,7 @@ Item {
           const touches = evalExpr(layer, null,
               "intersects(geom_from_wkt('" + part + "'), " +
               "geom_from_wkt('" + small.wkt + "'))")
-          if (touches !== 'true' && touches !== '1') {
+          if (!exprTrue(touches)) {
             newParts.push(part)
             continue
           }
@@ -8323,7 +8342,7 @@ Item {
         // index returned rather than on every row in the layer, and
         // running it for picks too keeps "none of the picked polygons
         // cross the line" an honest message.
-        if (boxed && evalExpr(layer, feature, probe) !== 'true')
+        if (boxed && !exprTrue(evalExpr(layer, feature, probe)))
           continue
         // Pre-reshape snapshot, for the undo. QgsFeature.geometry is
         // readable straight from QML (QField reads it that way itself),
@@ -8400,15 +8419,15 @@ Item {
       // layer per reshaped polygon, on the confirm path.
       const direct = evalExpr(layer, null,
           'is_valid(geometry(get_feature_by_id(@layer_id, ' + fid + ')))')
-      if (direct === 'true' || direct === '1')
+      if (exprTrue(direct))
         return true
-      if (direct === 'false' || direct === '0')
+      if (exprFalse(direct))
         return false
       const feature = reshapeFeatureById(layer, fid)
       if (feature === null)
         return true
       const answer = evalExpr(layer, feature, 'is_valid($geometry)')
-      return answer !== 'false'
+      return !exprFalse(answer)
     } catch (error) {
       return true
     }
@@ -8459,7 +8478,7 @@ Item {
     const expr = 'intersects($geometry, ' + term + ')' +
         (eps > 0 ? ' OR distance(boundary($geometry), ' + term + ') <= ' +
                    eps : '')
-    return evalExpr(layer, feature, expr) === 'true'
+    return exprTrue(evalExpr(layer, feature, expr))
   }
 
   // Attempt 3: extend whichever ends land inside (or graze) the target,
@@ -8540,7 +8559,7 @@ Item {
         editable = evalExpr(layer, null,
                             "layer_property(@layer, 'is_editable')")
       } catch (error) {}
-      if (editable === 'true' || editable === '1') {
+      if (exprTrue(editable)) {
         toast(qsTr('%1 has unsaved edits from another tool — save or discard them first')
               .arg(reshapeLayerLabel()))
         reshapeResultText = ''
@@ -8591,8 +8610,8 @@ Item {
       // already hold: no layer read.
       function wasValid(target) {
         try {
-          return evalExpr(layer, target.feature, 'is_valid($geometry)') !==
-                 'false'
+          return !exprFalse(
+              evalExpr(layer, target.feature, 'is_valid($geometry)'))
         } catch (error) {
           return true
         }

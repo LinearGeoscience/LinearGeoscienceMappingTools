@@ -30,7 +30,8 @@ function extractFunction(name) {
 }
 
 const code = ['reshapeStrokeAppend', 'splineDecimate',
-              'splineCommonPrefixLength', 'reshapeWritePlan']
+              'splineCommonPrefixLength', 'reshapeWritePlan',
+              'exprTrue', 'exprFalse']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
@@ -39,6 +40,8 @@ const reshapeStrokeAppend = globalThis.reshapeStrokeAppend
 const splineDecimate = globalThis.splineDecimate
 const splineCommonPrefixLength = globalThis.splineCommonPrefixLength
 const reshapeWritePlan = globalThis.reshapeWritePlan
+const exprTrue = globalThis.exprTrue
+const exprFalse = globalThis.exprFalse
 
 let failures = 0
 function check(label, ok, detail) {
@@ -307,6 +310,25 @@ function seqOf(n, yTailFrom, y) {
       (p.pops === 400 - (p.prefix + 1) && p.prefix <= a.length - 1)
   check('write plan: a grown model still pops back to the shared prefix',
         survives, JSON.stringify(p))
+}
+
+// --- exprTrue / exprFalse (v33 fix) ------------------------------------
+// QGIS predicates (intersects, ...) and comparison operators return TVL
+// ints, QVariant(1)/QVariant(0), which QField's evaluator stringifies as
+// '1'/'0'; only plain functions (is_valid, layer_property) come back as
+// 'true'/'false'. Reading a predicate with === 'true' is always false --
+// that emptied every box-then-exact-test scan in the field. Verified
+// against QGIS 3.40 with the expression engine directly.
+{
+  check("exprTrue accepts a TVL int '1'", exprTrue('1') === true)
+  check("exprTrue accepts a bool 'true'", exprTrue('true') === true)
+  check("exprTrue rejects '0', 'false', '', 'NULL' and 'TRUE'",
+        !exprTrue('0') && !exprTrue('false') && !exprTrue('') &&
+        !exprTrue('NULL') && !exprTrue('TRUE') && !exprTrue(undefined))
+  check("exprFalse accepts a TVL int '0' and a bool 'false'",
+        exprFalse('0') === true && exprFalse('false') === true)
+  check("exprFalse rejects '1', 'true' and '' (unknown is not false)",
+        !exprFalse('1') && !exprFalse('true') && !exprFalse(''))
 }
 
 process.exit(failures === 0 ? 0 : 1)
