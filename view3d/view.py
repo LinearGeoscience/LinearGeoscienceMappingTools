@@ -127,8 +127,13 @@ def apply_quality(settings, quality=DEFAULT_QUALITY, dem_layer=None):
     ground_error = DEFAULT_GROUND_ERROR
     pixel = dem_pixel_size(dem_layer) if dem_layer is not None else None
     if pixel:
-        # Subdividing past the DEM's own resolution only interpolates.
-        ground_error = min(DEFAULT_GROUND_ERROR, pixel)
+        # Track the DEM's own resolution in BOTH directions. Finer than
+        # the pixel only interpolates - and because the heightmap is
+        # sampled nearest-neighbour, a mesh denser than the pixels turns
+        # each pixel into a flat-topped column once the camera is close
+        # (seen with the 30 m 1-second DEM: min(1.0, pixel) forced 30x
+        # oversampling). The pixel size IS the floor.
+        ground_error = pixel
 
     if hasattr(settings, 'setTerrainSettings'):  # QGIS 4.x
         try:

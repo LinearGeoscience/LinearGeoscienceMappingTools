@@ -203,12 +203,14 @@ qs2 = Qgs3DMapSettings()
 view.apply_quality(qs2, 'ultra', dem)
 check(read_quality(qs2)[0] == 2048, 'ultra reaches 2048 px')
 
-# Ground error tracks the DEM but must never go COARSER than QGIS's 1.0.
+# Ground error tracks the DEM pixel in BOTH directions: a mesh denser
+# than the pixels renders each pixel as a flat-topped column close up
+# (nearest-neighbour heightmap sampling - the 1-second-DEM blockiness).
 px = view.dem_pixel_size(dem)
 check(px is not None and abs(px - 10.0) < 0.01,
       'DEM pixel size read back ({0})'.format(px))
-check(abs(read_quality(qs)[2] - 1.0) < 1e-6,
-      'a coarse DEM keeps the 1.0 m default ground error')
+check(abs(read_quality(qs)[2] - 10.0) < 1e-6,
+      'a coarse DEM coarsens the ground error to its pixel size')
 
 # Terrain MESH resolution lives on the DEM terrain settings, so it is
 # only reachable once DEM terrain is installed (4.x) — a bare settings
