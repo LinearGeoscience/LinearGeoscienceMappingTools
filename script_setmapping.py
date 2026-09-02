@@ -1097,6 +1097,11 @@ class LayerConfigurator:
                     f"[Label] Installed the zoom-out cutoff on {target.name()} "
                     f"- it predates the label scale gate",
                     'Linear Geoscience', Qgis.MessageLevel.Info)
+            if target and install_callout_gaps(target):
+                QgsMessageLog.logMessage(
+                    f"[Label] Installed paper-constant leader gaps on "
+                    f"{target.name()} - it predates the tiny-gap callouts",
+                    'Linear Geoscience', Qgis.MessageLevel.Info)
 
         linework = self.get_layer(layers_dict.get("Linework"))
         if linework:
@@ -1124,6 +1129,49 @@ class LayerConfigurator:
                 QgsMessageLog.logMessage(f"[Label] Rescaled Basemap label distance to {BASEMAP_DIST_FACTOR * callout_dist_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
             else:
                 QgsMessageLog.logMessage(f"[Label] {basemap.name()} labeling is not the LGS polygon-callout style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
+
+def install_callout_gaps(layer):
+    """Give an existing project's leader the tiny paper-constant end gaps.
+
+    The template ships them (the three callout injectors), but a .qgz
+    carries its own embedded styles - the same reasoning as
+    install_label_scale_gate below. Only ever additive: a callout that
+    already carries a gap dd is left exactly as it is. The statics are
+    updated alongside, since they are the unknown-reference fallback and the
+    old 0.5 + 1 mm is what ate the leader. FieldNotebook needs no retrofit -
+    its labeling is rebuilt wholesale with the gaps in it.
+
+    Returns True if it installed them.
+    """
+    labeling = layer.labeling()
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+    settings = QgsPalLayerSettings(labeling.settings())
+    callout = settings.callout()
+    if callout is None or not callout.enabled():
+        return False
+    existing = callout.dataDefinedProperties().property(
+        QgsCallout.Property.OffsetFromAnchor)
+    if existing.isActive():
+        return False
+    callout = callout.clone()
+    callout.setOffsetFromAnchor(CALLOUT_GAP_ANCHOR_MM)
+    callout.setOffsetFromLabel(CALLOUT_GAP_LABEL_MM)
+    callout.setMinimumLength(CALLOUT_MIN_LEN_MM)
+    props = callout.dataDefinedProperties()
+    for prop, mm in (
+            (QgsCallout.Property.OffsetFromAnchor, CALLOUT_GAP_ANCHOR_MM),
+            (QgsCallout.Property.OffsetFromLabel, CALLOUT_GAP_LABEL_MM),
+            (QgsCallout.Property.MinimumCalloutLength, CALLOUT_MIN_LEN_MM)):
+        props.setProperty(prop, QgsProperty.fromExpression(
+            callout_gap_expression(mm)))
+    callout.setDataDefinedProperties(props)
+    settings.setCallout(callout)
+    # By copy, never a rebuild - the auxiliary-storage bindings for manual
+    # label moves live in the same settings.
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    return True
 
 
 def install_label_scale_gate(layer, persist_major=False):
