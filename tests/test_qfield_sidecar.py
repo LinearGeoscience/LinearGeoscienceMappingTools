@@ -284,7 +284,32 @@ class TestWriteSidecar(unittest.TestCase):
                        'lgs_reshape_spline_tap',
                        'lgs_reshape_spline_free',
                        'reshapeSplineArmed', 'toggleReshapeSpline',
-                       'setReshapeStyle', 'reshapeLoadStyle'):
+                       'setReshapeStyle', 'reshapeLoadStyle',
+                       # v33 reshape rework. Reachability (the freehand
+                       # handler live in the pick step, on a named
+                       # handler so a device log can name it), the
+                       # in-place raw stroke buffer and its latched
+                       # gate, the prefix-diff writer and its pure plan,
+                       # QField's own selection as the target set, the
+                       # session undo stack, the bounding-box scans and
+                       # the geometry-validity refusal:
+                       'reshapeFreehandDrag', 'reshapeLogStroke',
+                       'ApprovesCancellation', 'reshapeFeatureForm',
+                       'reshapeStrokeRaw', 'reshapeStrokeGate',
+                       'reshapeRecenterAfterStroke',
+                       'reshapeLastSeq', 'reshapeWritePlan',
+                       'reshapeWriteModelReset', 'linePath',
+                       'reshapeSelectionPicks', 'latchReshapeSelection',
+                       'reshapeLockedSelection', 'focusedFeature',
+                       'selectedFeatures', 'onLongPressed',
+                       'handleReshapePickToggle', 'reshapeRelockLayer',
+                       'reshapeHistory', 'reshapeBusy', 'runReshape',
+                       'reshapeClearLine', 'sqlLiteral',
+                       'reshapeResultIsValid', 'reshapeFeatureById',
+                       'is_valid', 'is_editable',
+                       'createFeatureIteratorFromRectangle',
+                       'reprojectRectangle', 'reshapeSequenceRect',
+                       'tapRectForLayer', 'reshapeCrsPair'):
             self.assertIn(needle, text, needle)
 
 

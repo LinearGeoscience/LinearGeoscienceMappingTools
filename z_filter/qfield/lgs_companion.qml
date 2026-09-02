@@ -138,37 +138,74 @@
  *    adds) and below 2 committed vertices (3 for polygons), where the
  *    crosshair vertex is what keeps the geometry valid.
  *
- * 7. RESHAPE — "→ Reshape" pill: multi-polygon reshape on the ACTIVE
- *    layer (port of map_cleaning/tools/reshape_spline_tool.py — keep
- *    the semantics in sync). Optionally tap polygons first to limit
- *    the targets (clip-style picks), then draw the line and confirm:
- *    tap out points one by one, or draw FREEHAND with the stylus —
- *    QField's own freehand device gate (a DragHandler that never
- *    accepts TouchScreen), so a finger drag still pans while the pen
- *    draws; the stroke is thinned live to the spline minimum node
- *    spacing and undoes as ONE action. Every targeted polygon the
- *    line crosses is reshaped via
- *    GeometryUtils.reshapeFromRubberband — the same native op QField's
- *    own single-feature reshape editor uses, applied per feature in
- *    one edit session. The line draws on the plugin's OWN
- *    RubberbandModel/RubberbandShape (never QField's digitizing
- *    model, so this cannot fight the spline feature) and is
- *    spline-smoothed when the Spline pill is armed, straight
- *    otherwise (the Spline pill stays visible during reshape even
- *    though no digitizing model exists then). Candidate lookup honours
- *    the layer subsetString — reshape what you see. One-level,
- *    session-only undo restores the pre-reshape geometries from WKT
- *    (delete reshaped + recreate with copied attributes, UUID
- *    preserved). Only offered in BROWSE mode: the pill hides while a
- *    digitizing/measure session is active (mainWindow.currentRubberband
- *    is non-null then — the app state machine's own signal), so the
- *    native digitizing rubberband and crosshair never overlap the
- *    reshape drawing. The preview line renders through QField's own
- *    native mechanism: a RubberbandShape wrapped in Shape/ShapePath
- *    exactly like the app's Rubberband.qml — a bare RubberbandShape
- *    draws nothing, and it must never be anchored/sized (its C++
- *    transform positions the item to track the map). Requires
- *    QField 4.x.
+ * 7. RESHAPE — "→ Reshape" pill: multi-polygon reshape (port of
+ *    map_cleaning/tools/reshape_spline_tool.py — keep the semantics in
+ *    sync). Draw the new edge FREEHAND with the stylus, which is the
+ *    default, or tap out points one by one with the Tap pill. Freehand
+ *    uses QField's own device gate (a DragHandler that never accepts
+ *    TouchScreen), so a finger still pans while the pen draws, and it
+ *    is live from the moment the tool opens — a stroke that starts in
+ *    the pick step promotes itself to the draw step. While the pen is
+ *    down the handler refuses to hand its grab on, so the canvas cannot
+ *    turn the second half of a line into a pan; ApprovesCancellation is
+ *    kept, or Qt could not cancel the grab and the stroke would never
+ *    end. Capture is UNGATED and thinned once on release to the spline
+ *    minimum node spacing, which picks the same control points the old
+ *    live gate did (pinned by tests/reshape_freehand_harness.js), so
+ *    the ink follows the pen without changing the saved curve. A stroke
+ *    undoes as ONE action, and one that ends near a screen edge
+ *    recentres the map, as QField's own freehand lift does, so a long
+ *    edge can be drawn in strokes.
+ *
+ *    TARGETS: whatever QField has selected when the tool opens — both
+ *    the multi-select set and the everyday focused feature, which are
+ *    different things in QField's model and only the second of which
+ *    the "I tapped that polygon" case fills. That selection also picks
+ *    the layer, and it is latched, because QField's identify clears its
+ *    own model as the form hides. Otherwise: tap polygons to limit the
+ *    reshape, or draw straight away and take every polygon the line
+ *    crosses. A long press adds or removes a target mid-line.
+ *    Candidates are found through the provider's spatial index over the
+ *    line's bounding box (as the desktop tool does), falling back to a
+ *    full scan when the CRS pair cannot be trusted — a partly-wrong box
+ *    would mean a silent partial reshape. The iterator honours the
+ *    layer subsetString either way: reshape what you see.
+ *
+ *    Each target is reshaped by GeometryUtils.reshapeFromRubberband —
+ *    the native op behind QField's own single-feature reshape editor —
+ *    in one edit session, with a three-rung retry ladder. A result that
+ *    is not a valid geometry stands the whole batch down rather than
+ *    committing a polygon that renders as nothing (desktop parity).
+ *    Confirming applies immediately: there is no dialog, because the
+ *    tool is built to be used over and over and a session undo is the
+ *    better safety net. After a reshape the line clears and you are
+ *    still drawing, with layer, style, spline arming and targets
+ *    intact.
+ *
+ *    UNDO is a session stack, offered from both steps and never
+ *    persisted. Each round restores the pre-reshape geometries by
+ *    delete-and-recreate with attributes copied verbatim (UUID
+ *    included, so identity survives), one replacement per deleted fid,
+ *    then reads back to check the polygon really came back where the
+ *    current Z filter can see it.
+ *
+ *    The line draws on the plugin's OWN RubberbandModel/RubberbandShape
+ *    (never QField's digitizing model, so this cannot fight the spline
+ *    feature) and is spline-smoothed when the Spline pill is armed,
+ *    straight otherwise. Writes diff against the last sequence and peel
+ *    only the changed tail, verifying the vertex count afterwards,
+ *    because addVertexFromPoint skips an add on two equal consecutive
+ *    points and a hidden skip is how the line silently stops short of
+ *    exiting the polygon. Only offered in BROWSE mode: the pill hides
+ *    while a digitizing/measure session is active
+ *    (mainWindow.currentRubberband is non-null then — the app state
+ *    machine's own signal), so the native digitizing rubberband and
+ *    crosshair never overlap the reshape drawing. The preview renders
+ *    through QField's own native mechanism: a RubberbandShape wrapped
+ *    in Shape/ShapePath exactly like the app's Rubberband.qml — a bare
+ *    RubberbandShape draws nothing, and it must never be anchored or
+ *    sized (its C++ transform positions the item to track the map).
+ *    Requires QField 4.x.
  *
  * 8. REVERSE — "↔ Reverse" pill: flip the vertex order of a line
  *    feature so asymmetric line symbology (ticks, teeth, dip marks)
@@ -5550,6 +5587,13 @@ Item {
   // the live-capture twin of splineDecimate's after-the-fact thinning.
   // Returns whether it appended. Pure JS, no QML identifiers —
   // extracted verbatim into tests/reshape_freehand_harness.js.
+  //
+  // v33 no longer calls it: capture is ungated and splineDecimate does
+  // the thinning once, on release. It is kept because it IS the
+  // reference the harness measures that change against — the proof that
+  // capturing raw and decimating picks the same control points as
+  // gating every move is an equality between these two functions, and
+  // deleting one would delete the proof.
   function reshapeStrokeAppend(controls, pt, minDist) {
     if (controls.length === 0 || !(minDist > 0)) {
       controls.push(pt)
