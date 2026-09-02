@@ -61,7 +61,8 @@ from renderer_compat import (LABEL_GATE_RATIO,  # noqa: E402
                              LINEWORK_PERSIST_FACTOR,
                              label_scale_gate_expression)
 from script_setmapping import (REFERENCE_SCALE_LITERAL_RE,  # noqa: E402
-                               REFERENCE_SCALE_VAR)
+                               REFERENCE_SCALE_VAR,
+                               install_label_scale_gate)
 
 REFERENCE_SCALES = (50, 500, 1000, 5000, 25000, 100000, 250000)
 
@@ -424,6 +425,48 @@ def test_fieldnotebook_matches_what_set_mapping_scale_rebuilds():
               % (description, gate_expression_of(settings), wanted))
 
 
+def test_an_older_project_picks_it_up_from_set_mapping_scale():
+    print("\n9. a project made before the gate gains it, once, additively")
+    # A .qgz carries its own embedded styles and does not track the
+    # template, so without this every project made before today would go on
+    # drawing its labels at 1:250,000 forever. The literal bake cannot help:
+    # it rewrites the reference scale inside an expression that has to
+    # already be there.
+    for layer_name, persist in (("2 - Linework", True),
+                                ("3 - Overlay", False),
+                                ("4 - Basemap", False)):
+        settings = template_settings(layer_name)
+        props = settings.dataDefinedProperties()
+        props.setProperty(QgsPalLayerSettings.Property.MinimumScale,
+                          QgsProperty())
+        settings.setDataDefinedProperties(props)
+        settings.scaleVisibility = False
+        layer = probe_layer(settings)
+        # probe_layer clears dd Size but keeps everything else, so this is
+        # a faithful stand-in for a pre-gate style.
+        check(install_label_scale_gate(layer, persist_major=persist),
+              "%s: nothing installed on a pre-gate labeling" % layer_name)
+        installed = gate_expression_of(layer.labeling().settings())
+        check(installed == label_scale_gate_expression(persist_major=persist),
+              "%s: installed %r" % (layer_name, installed))
+        check(bool(layer.labeling().settings().scaleVisibility),
+              "%s: expression installed but the flag left off - inert"
+              % layer_name)
+        check(install_label_scale_gate(layer, persist_major=persist) is False,
+              "%s: installed twice; a gate already there is either ours or "
+              "someone's deliberate choice and must be left alone"
+              % layer_name)
+        # ...and it must actually bite now. The probe is a Minor feature,
+        # so it takes the ordinary cutoff even on Linework; the long one is
+        # test 4's job.
+        cutoff = 5000 * LABEL_GATE_RATIO
+        check(ink(layer, cutoff * INSIDE, 5000) > INK_FLOOR,
+              "%s: retrofitted gate hides labels inside the cutoff"
+              % layer_name)
+        check(ink(layer, cutoff * OUTSIDE, 5000) == 0,
+              "%s: retrofitted gate does not bite" % layer_name)
+
+
 def main():
     for test in (test_the_cutoff_tracks_the_mapping_scale,
                  test_major_and_regional_linework_hold_on_longer,
@@ -432,7 +475,8 @@ def main():
                  test_an_unknown_reference_scale_never_gates,
                  test_the_baked_literal_carries_it_without_the_plugin,
                  test_the_template_is_wired_for_it,
-                 test_fieldnotebook_matches_what_set_mapping_scale_rebuilds):
+                 test_fieldnotebook_matches_what_set_mapping_scale_rebuilds,
+                 test_an_older_project_picks_it_up_from_set_mapping_scale):
         test()
     print("\n%d passed, %d failed" % (_passed, _failed))
     return 1 if _failed else 0
