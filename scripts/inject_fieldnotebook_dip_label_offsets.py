@@ -29,7 +29,9 @@ strike symbols and lands inside the plunge arrows:
     Dip Labels     linear (plunge arrows)  21.5 pt -> 37.92
                    planar (strike symbols)  9.6 pt -> 16.93
                    non-structure fallback   2.3 pt -> '4.06,-4.06'
-    SymbolSuffix   17 pt -> 29.99 at dip direction +135; fallback 14.99
+    SymbolSuffix   upright map-frame subscript on the symbol's rotated
+                   bounding extent (see suffix_offset_expression below);
+                   non-structure fallback 8.5 pt -> '14.99,14.99'
 
 offsetUnits become MapUnit on the two structural rules only. The linear
 code list mirrors stereonet/data.py structure_classification ('L'/'l'
@@ -78,10 +80,53 @@ LINEAR = ("BAX", "FAX", "FAX1", "FAX1M", "FAX1S", "FAX1Z",
 D_LINEAR = pt_to_map_units(21.5)          # 37.92
 D_PLANAR = pt_to_map_units(9.6)           # 16.93
 D_FALLBACK = pt_to_map_units(2.3)         # 4.06
-D_SUFFIX = pt_to_map_units(17.0)          # 29.99
-D_SUFFIX_FALLBACK = pt_to_map_units(8.5)  # 14.99
+
+# The SymbolSuffix annotation sits UPRIGHT in the map frame as a subscript
+# to the symbol: below it, right-aligned to its rotated bounding extent for
+# planar structures, hanging off the bottom-right for linear ones (user
+# decision, 2 Sep 2026 - the old rotating +135-degree ring wandered above
+# and below the symbol as the bearing turned). Constants and expression text
+# mirror script_setmapping.suffix_offset_expression /
+# suffix_quadrant_expression; tests/test_label_code_template_qgis.py pins
+# template == code, and Set Mapping Scale rebuilds this rule wholesale.
+SUFFIX_HALF_PLANAR_PT = 15.0
+SUFFIX_HALF_LINEAR_PT = 15.0
+SUFFIX_TICK_PT = 7.0
+SUFFIX_GAP_PT = 2.0
+SUFFIX_DIP_CLEAR_PT = 10.0
+SUFFIX_OFFSET_FALLBACK_PT = 8.5
 
 _in = ",".join("'%s'" % c for c in LINEAR)
+
+
+def suffix_offset_expression():
+    """Plain-text twin of script_setmapping.suffix_offset_expression(5000).
+    Real quote characters here - ElementTree escapes them on serialise."""
+    lp = pt_to_map_units(SUFFIX_HALF_PLANAR_PT)
+    ll = pt_to_map_units(SUFFIX_HALF_LINEAR_PT)
+    tk = pt_to_map_units(SUFFIX_TICK_PT)
+    gap = pt_to_map_units(SUFFIX_GAP_PT)
+    clear = pt_to_map_units(SUFFIX_DIP_CLEAR_PT)
+    fallback = pt_to_map_units(SUFFIX_OFFSET_FALLBACK_PT)
+    dd = 'radians("DipDirection")'
+    dip_in_corner = f'(sin({dd}) >= 0 AND cos({dd}) < 0.1)'
+    return (
+        f'CASE WHEN "Type" = \'Structure\' AND "Subtype1" IN ({_in}) THEN '
+        f'to_string(({ll} * abs(sin({dd})))) '
+        f'|| \',\' || '
+        f'to_string(({ll} * abs(cos({dd})) + {gap} + '
+        f'(CASE WHEN {dip_in_corner} THEN {clear} ELSE 0 END))) '
+        f'WHEN "Type" = \'Structure\' THEN '
+        f'to_string(max({lp} * abs(cos({dd})), {tk} * sin({dd}))) '
+        f'|| \',\' || '
+        f'to_string((max({lp} * abs(sin({dd})), -{tk} * cos({dd})) + {gap})) '
+        f'ELSE \'{fallback},{fallback}\' END')
+
+
+def suffix_quadrant_expression():
+    """Plain-text twin of script_setmapping.suffix_quadrant_expression()."""
+    return (f'CASE WHEN "Type" = \'Structure\' AND "Subtype1" IN ({_in}) '
+            f'THEN 8 ELSE 6 END')
 
 
 def dip_expr(dist_linear, dist_planar, fallback):
@@ -91,14 +136,6 @@ def dip_expr(dist_linear, dist_planar, fallback):
             "|| ',' || "
             "to_string((@lgs_d * sin(radians(&quot;DipDirection&quot; - 90))))) "
             "ELSE '%s' END" % (_in, dist_linear, dist_planar, fallback))
-
-
-def suffix_expr(dist, fallback):
-    return ("CASE WHEN &quot;Type&quot; = 'Structure' THEN "
-            "to_string((%s * cos(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-            "|| ',' || "
-            "to_string((%s * sin(radians(&quot;DipDirection&quot; - 90 + 135)))) "
-            "ELSE '%s' END" % (dist, dist, fallback))
 
 
 # Prior states of the Dip Labels OffsetXY expression
@@ -112,16 +149,81 @@ OLD_MU = dip_expr("38.0", "17.0", "4,-4")
 OLD_POINT = dip_expr("21.5", "9.6", "2.3,-2.3")
 NEW = dip_expr(D_LINEAR, D_PLANAR, "%s,-%s" % (D_FALLBACK, D_FALLBACK))
 
-# SymbolSuffix rule: every prior form -> ground distances
-SUF_OLD = suffix_expr("30.0", "15,15")
-SUF_MM = suffix_expr("5.7", "2.8,2.8")
-SUF_POINT = suffix_expr("17.0", "8.5,8.5")
-SUF_NEW = suffix_expr(D_SUFFIX, "%s,%s" % (D_SUFFIX_FALLBACK,
-                                           D_SUFFIX_FALLBACK))
-
 
 def bail(msg):
     raise SystemExit("ABORT: " + msg)
+
+
+def _set_dd(settings, name, expr):
+    """Replace one settings-level dd entry, leaving its siblings alone
+    (same surgical shape as inject_basemap_label_placement.inject_dd)."""
+    dd = settings.find("dd_properties")
+    if dd is None:
+        return False
+    outer = dd.find("Option")
+    if outer is None:
+        outer = ET.SubElement(dd, "Option", {"type": "Map"})
+    props = None
+    for o in outer.findall("Option"):
+        if o.get("name") == "properties":
+            props = o
+    if props is None:
+        props = ET.SubElement(outer, "Option", {"name": "properties"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
+
+
+def _remove_dd(settings, name):
+    dd = settings.find("dd_properties")
+    if dd is None:
+        return False
+    for props in dd.iter("Option"):
+        if props.get("name") != "properties":
+            continue
+        for o in props.findall("Option"):
+            if o.get("name") == name:
+                props.remove(o)
+                return True
+    return False
+
+
+def rebuild_suffix_dd(qml):
+    """Rewrite the SymbolSuffix rule's placement dd to the upright design."""
+    m = re.search(r'<labeling type="rule-based">.*?</labeling>', qml, re.S)
+    if not m:
+        bail("rule-based <labeling> block not found")
+    lab = ET.fromstring(m.group(0))
+    settings = None
+    for rule in lab.iter("rule"):
+        if rule.get("description") == "SymbolSuffix Labels":
+            settings = rule.find("settings")
+    if settings is None:
+        bail("SymbolSuffix Labels rule not found")
+    if not _set_dd(settings, "OffsetXY", suffix_offset_expression()):
+        bail("SymbolSuffix: no dd_properties block")
+    _set_dd(settings, "OffsetQuad", suffix_quadrant_expression())
+    if _remove_dd(settings, "LabelRotation"):
+        print("SymbolSuffix: dd LabelRotation removed - the suffix is "
+              "upright now")
+    print("SymbolSuffix: dd OffsetXY -> bounding-extent subscript, "
+          "dd OffsetQuad -> below-left/right by family")
+    new_qml = qml[:m.start()] + ET.tostring(lab, encoding="unicode") \
+        + qml[m.end():]
+    try:
+        ET.fromstring(new_qml)
+    except ET.ParseError as exc:
+        bail(f"edited QML no longer parses: {exc}")
+    return new_qml
 
 
 def main():
@@ -154,20 +256,15 @@ def main():
     else:
         bail("Dip Labels OffsetXY expression not in any known state")
 
-    # 2. SymbolSuffix expression -> ground distances
-    if SUF_NEW in qml:
-        print("suffix expression already ground distances")
-    elif SUF_POINT in qml:
-        qml = qml.replace(SUF_POINT, SUF_NEW)
-        print("suffix expression converted from Point (17.0)")
-    elif SUF_OLD in qml:
-        qml = qml.replace(SUF_OLD, SUF_NEW)
-        print("suffix expression converted from authored MapUnit form")
-    elif SUF_MM in qml:
-        qml = qml.replace(SUF_MM, SUF_NEW)
-        print("suffix expression converted from interim MM form")
-    else:
-        bail("SymbolSuffix OffsetXY expression not in any known state")
+    # 2. SymbolSuffix rule: rebuilt outright rather than converted from
+    #    known prior states - the 2 Sep 2026 redesign replaced the rotating
+    #    +135-degree ring with the upright bounding-extent subscript, and a
+    #    whole-rebuild (the inject_label_size_scaling philosophy) upgrades
+    #    every prior form at once. ElementTree surgery: OffsetXY and
+    #    OffsetQuad are (re)written, the old LabelRotation dd is removed so
+    #    the annotation stays upright, and every other dd entry (the scale
+    #    gate among them) is left alone.
+    qml = rebuild_suffix_dd(qml)
 
     # 3. offsetUnits -> MapUnit on the two structural rules only; other
     #    rules (comment/callout labels) keep their own tuned units
@@ -199,8 +296,28 @@ def main():
     print("integrity_check:", cur.fetchone()[0])
     q, = cur.execute("SELECT styleQML FROM layer_styles WHERE f_table_name=?",
                      (LAYER,)).fetchone()
-    ET.fromstring(q)
-    assert NEW in q and SUF_NEW in q
+    root = ET.fromstring(q)
+    assert NEW in q
+    # The suffix dd, post-parse: OffsetXY + OffsetQuad in verbatim, the old
+    # LabelRotation gone, and the scale gate untouched beside them.
+    for rule in root.iter("rule"):
+        if rule.get("description") != "SymbolSuffix Labels":
+            continue
+        entries = {}
+        dd = rule.find("settings").find("dd_properties")
+        for entry in dd.iter("Option"):
+            if entry.get("type") == "Map" and entry.get("name"):
+                by = {o.get("name"): o.get("value")
+                      for o in entry.findall("Option")}
+                entries[entry.get("name")] = by.get("expression")
+        assert entries.get("OffsetXY") == suffix_offset_expression(), \
+            f"suffix OffsetXY wrong: {entries.get('OffsetXY')!r}"
+        assert entries.get("OffsetQuad") == suffix_quadrant_expression(), \
+            f"suffix OffsetQuad wrong: {entries.get('OffsetQuad')!r}"
+        assert "LabelRotation" not in entries, \
+            "the suffix still rotates with the symbol"
+        assert "MinimumScale" in entries, \
+            "the scale gate was lost from the suffix rule"
     for desc in ("Dip Labels", "SymbolSuffix Labels"):
         block = re.search(r'<rule\b[^>]*description="%s">.*?</rule>' % desc,
                           q, re.S).group(0)
@@ -209,14 +326,13 @@ def main():
         assert 'offsetUnits="MM"' not in block, desc
     assert OLD_FLAT30 not in q and OLD_MU not in q and OLD_MM not in q
     assert OLD_POINT not in q
-    assert SUF_OLD not in q and SUF_MM not in q and SUF_POINT not in q
     # The Regolith ring is a paper distance BY DESIGN and must survive.
     regolith = re.search(r'<rule\b[^>]*description="Regolith Note">.*?</rule>',
                          q, re.S).group(0)
     assert 'distUnits="Point"' in regolith, \
         "the Regolith ring should still be a paper distance"
     print(f"round-trip ok: {LAYER} dip labels family-aware ground distances "
-          f"(linear {D_LINEAR} / planar {D_PLANAR}, suffix {D_SUFFIX} "
+          f"(linear {D_LINEAR} / planar {D_PLANAR}, suffix upright subscript "
           f"at 1:{REFERENCE_SCALE})")
     con.close()
 

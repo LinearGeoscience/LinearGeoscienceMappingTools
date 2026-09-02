@@ -27,7 +27,7 @@ PKG = os.path.basename(REPO_ROOT)
 
 import importlib  # noqa: E402
 
-from qgis.core import (QgsApplication, QgsPalLayerSettings,  # noqa: E402
+from qgis.core import (QgsApplication, QgsCallout, QgsPalLayerSettings,  # noqa: E402
                        QgsRuleBasedLabeling, QgsVectorLayer)
 
 setmapping = importlib.import_module(PKG + ".script_setmapping")
@@ -88,6 +88,25 @@ def describe(settings):
     ring = dd.property(QgsPalLayerSettings.Property.LabelDistance)
     max_ring = dd.property(QgsPalLayerSettings.Property.MaximumDistance)
     gate = dd.property(QgsPalLayerSettings.Property.MinimumScale)
+    quad = dd.property(QgsPalLayerSettings.Property.OffsetQuad)
+    # The callout end gaps are dd ON THE CALLOUT, not on the settings, and
+    # a rebuild that lost them would bring back the leaders that vanish a
+    # few zooms in. Only a live callout is described: the template keeps a
+    # dormant disabled copy on the Regolith rule that the builder does not.
+    callout_gaps = None
+    if callout is not None and callout.enabled():
+        cdd = callout.dataDefinedProperties()
+        callout_gaps = (
+            round(callout.offsetFromAnchor(), 4),
+            round(callout.offsetFromLabel(), 4),
+            round(callout.minimumLength(), 4),
+            tuple(sorted(
+                (int(k), norm(cdd.property(k).expressionString()))
+                for k in (QgsCallout.Property.OffsetFromAnchor,
+                          QgsCallout.Property.OffsetFromLabel,
+                          QgsCallout.Property.MinimumCalloutLength)
+                if cdd.property(k).isActive())),
+        )
     return {
         "fieldName": norm(settings.fieldName),
         "isExpression": settings.isExpression,
@@ -124,6 +143,11 @@ def describe(settings):
         # to stop.
         "scaleVisibility": bool(settings.scaleVisibility),
         "ddMinimumScale": norm(gate.expressionString()) if gate.isActive() else "",
+        # The upright SymbolSuffix subscript: its quadrant is data-defined
+        # (below-left for planar, below-right for linear), and losing the
+        # entry would silently re-centre the annotation on its anchor.
+        "ddOffsetQuad": norm(quad.expressionString()) if quad.isActive() else "",
+        "calloutGaps": callout_gaps,
     }
 
 
