@@ -152,7 +152,12 @@
  *    end. Capture is UNGATED and thinned once on release to the spline
  *    minimum node spacing, which picks the same control points the old
  *    live gate did (pinned by tests/reshape_freehand_harness.js), so
- *    the ink follows the pen without changing the saved curve. A stroke
+ *    the ink follows the pen without changing the saved curve. With the
+ *    spline pill ON the stroke is read as intent instead: Douglas-Peucker
+ *    at 3 screen points keeps only the points that shape it (16 controls
+ *    for a semicircle where the ink keeps 78) and the spline flows
+ *    between them like a digitised spline does — freehand alone keeps
+ *    the ink, freehand with spline keeps the shape. A stroke
  *    undoes as ONE action, and one that ends near a screen edge
  *    recentres the map, as QField's own freehand lift does, so a long
  *    edge can be drawn in strokes.
@@ -5624,6 +5629,20 @@ Item {
     return out
   }
 
+  // Controls for a spline-armed freehand stroke: the points that SHAPE
+  // the ink rather than every 8 pt of it. Douglas-Peucker at the
+  // smoothing tolerance keeps the ends and whatever the pen actually
+  // turned around — corners land exactly where they were drawn, jitter
+  // under the tolerance is gone — and a half-gate decimation afterwards
+  // only removes near-coincident survivors at a jittery corner, which
+  // would otherwise put two controls a pixel apart and cusp the spline.
+  // Pure JS, no QML identifiers — extracted verbatim into
+  // tests/reshape_freehand_harness.js.
+  function reshapeStrokeControls(raw, gate, tolerance) {
+    const shaped = splineSimplify(raw, tolerance)
+    return splineDecimate(shaped, gate > 0 ? gate / 2 : 0)
+  }
+
   // Freehand stroke gate for the reshape tool (v24): append pt to
   // controls only when it clears minDist from the last kept point —
   // the live-capture twin of splineDecimate's after-the-fact thinning.
@@ -7081,6 +7100,19 @@ Item {
   // density is latched once per stroke) and cost a C++ property read
   // every sample.
   property real reshapeStrokeGate: 0
+  // The smoothing tolerance for a spline-armed stroke, in map units,
+  // latched at stroke begin beside the gate (0 = off).
+  property real reshapeStrokeSmooth: 0
+  // How far, in SCREEN points at draw time, the smoothed curve may sit
+  // from the ink. Freehand alone keeps the ink (controls every 8 pt, the
+  // polyline follows the pen); freehand WITH spline reads the ink as
+  // intent and keeps only the points that shape it. Splining controls
+  // 8 pt apart reproduced the hand wobble faithfully, so the two styles
+  // looked the same and neither looked like a digitised spline, which
+  // has a handful of controls and flows between them. 3 pt is about a
+  // millimetre on the tablet: under the width of a pencil line, over the
+  // tremor of a hand. Zoom in to draw finer.
+  readonly property real reshapeStrokeSmoothPoints: 3.0
   // The sequence reshapeModel currently holds, so the next write can
   // diff against it instead of resetting. null means "do not trust the
   // model's contents" — which is exactly what a live stroke appending
@@ -7818,6 +7850,14 @@ Item {
     // rule now covers the capture spacing (v33).
     splineRefreshDensity()
     reshapeStrokeGate = splineMinNodeMapUnits()
+    reshapeStrokeSmooth = 0
+    if (reshapeSplineArmed) {
+      try {
+        const perPoint = Number(canvas.mapSettings.mapUnitsPerPoint)
+        if (isFinite(perPoint) && perPoint > 0)
+          reshapeStrokeSmooth = perPoint * reshapeStrokeSmoothPoints
+      } catch (error) {}
+    }
     reshapeStrokeRaw.length = 0
     // Re-lay the committed line with its floating tail intact, so the
     // first stroke sample overwrites the duplicate and not a real point.
@@ -7880,7 +7920,11 @@ Item {
     // keeps the last sample, so the true end of the stroke — the point
     // where the line has to leave the polygon — can no longer be gated
     // away, which the live gate could do.
-    let thinned = splineDecimate(reshapeStrokeRaw, reshapeStrokeGate)
+    const smoothed = reshapeSplineArmed && reshapeStrokeSmooth > 0
+    let thinned = smoothed
+        ? reshapeStrokeControls(reshapeStrokeRaw, reshapeStrokeGate,
+                                reshapeStrokeSmooth)
+        : splineDecimate(reshapeStrokeRaw, reshapeStrokeGate)
     reshapeStrokeRaw.length = 0
     if (thinned.length === 0) {
       reshapeRebuildPreview()
@@ -7898,12 +7942,15 @@ Item {
     }
     // fh marks stroke interiors: no white marker dot each (a stroke
     // would spawn hundreds). The two ends stay untagged so they keep
-    // theirs. The spline math never reads the tag.
+    // theirs. The spline math never reads the tag. A SMOOTHED stroke
+    // keeps its dots: it has a handful of controls, they are where the
+    // curve is anchored, and seeing them is how the spline pill reads as
+    // on — the same as a digitised spline's nodes.
     let next = reshapeControls.slice()
     for (let i = 0; i < thinned.length; i++) {
       const p = thinned[i]
       const node = { x: p.x, y: p.y, z: p.z }
-      if (i > 0 && i < thinned.length - 1)
+      if (!smoothed && i > 0 && i < thinned.length - 1)
         node.fh = true
       next.push(node)
     }

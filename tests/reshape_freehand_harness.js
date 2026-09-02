@@ -31,7 +31,9 @@ function extractFunction(name) {
 
 const code = ['reshapeStrokeAppend', 'splineDecimate',
               'splineCommonPrefixLength', 'reshapeWritePlan',
-              'exprTrue', 'exprFalse']
+              'exprTrue', 'exprFalse', 'splinePerpDist',
+              'splineSimplifyIndices', 'splineSimplify',
+              'reshapeStrokeControls']
   .map(extractFunction).join('\n');
 // Indirect eval: runs non-strict in global scope so the extracted
 // function declarations become globals.
@@ -42,6 +44,8 @@ const splineCommonPrefixLength = globalThis.splineCommonPrefixLength
 const reshapeWritePlan = globalThis.reshapeWritePlan
 const exprTrue = globalThis.exprTrue
 const exprFalse = globalThis.exprFalse
+const splineSimplify = globalThis.splineSimplify
+const reshapeStrokeControls = globalThis.reshapeStrokeControls
 
 let failures = 0
 function check(label, ok, detail) {
@@ -329,6 +333,76 @@ function seqOf(n, yTailFrom, y) {
         exprFalse('0') === true && exprFalse('false') === true)
   check("exprFalse rejects '1', 'true' and '' (unknown is not false)",
         !exprFalse('1') && !exprFalse('true') && !exprFalse(''))
+}
+
+// --- reshapeStrokeControls: spline-armed strokes keep their SHAPE ------
+// Freehand alone keeps the ink (a control every gate); freehand with the
+// spline reads the ink as intent: Douglas-Peucker at the smoothing
+// tolerance, then a half-gate floor. The point of the change is that the
+// two now differ -- so pin that they do, and pin what the smoothing may
+// and may not throw away.
+{
+  const gate = 8, tol = 3
+  let seed = 7
+  function jitter() { seed = (seed * 9301 + 49297) % 233280; return (seed / 233280 - 0.5) * 2 }
+  // A wobbly "straight" line, 1200 samples, +-1.5 pt of hand tremor.
+  const straight = []
+  for (let i = 0; i < 1200; i++)
+    straight.push({ x: i * 0.5, y: jitter() * 1.5, z: NaN })
+  const inkControls = splineDecimate(straight, gate)
+  const shapeControls = reshapeStrokeControls(straight, gate, tol)
+  check('smoothing: a wobbly straight stroke becomes its two ends',
+        shapeControls.length === 2 &&
+        shapeControls[0] === straight[0] &&
+        shapeControls[1] === straight[straight.length - 1],
+        shapeControls.length + ' controls')
+  check('smoothing: ink controls stay dense (the styles now differ)',
+        inkControls.length > 60, inkControls.length + ' ink controls')
+
+  // A semicircle of radius 200 with the same tremor.
+  const arc = []
+  for (let i = 0; i <= 1000; i++) {
+    const a = Math.PI * i / 1000
+    const r = 200 + jitter() * 1.5
+    arc.push({ x: r * Math.cos(a), y: r * Math.sin(a), z: NaN })
+  }
+  const arcInk = splineDecimate(arc, gate)
+  const arcShape = reshapeStrokeControls(arc, gate, tol)
+  check('smoothing: an arc keeps a handful of controls, not one per gate',
+        arcShape.length >= 4 && arcShape.length < arcInk.length / 3,
+        arcShape.length + ' vs ' + arcInk.length)
+  // Every raw sample sits within tol of the control polyline.
+  let worst = 0
+  for (const s of arc) {
+    let best = Infinity
+    for (let i = 1; i < arcShape.length; i++)
+      best = Math.min(best, globalThis.splinePerpDist(s, arcShape[i - 1], arcShape[i]))
+    worst = Math.max(worst, best)
+  }
+  check('smoothing: no raw sample strays further than the tolerance',
+        worst <= tol + 1e-9, 'worst ' + worst)
+  check('smoothing: ends always survive',
+        arcShape[0] === arc[0] && arcShape[arcShape.length - 1] === arc[arc.length - 1])
+
+  // An L: a deliberate corner must land where the pen turned.
+  const ell = []
+  for (let i = 0; i <= 400; i++) ell.push({ x: i * 0.5, y: jitter() * 1.0, z: NaN })
+  for (let i = 1; i <= 400; i++) ell.push({ x: 200 + jitter() * 1.0, y: i * 0.5, z: NaN })
+  const ellShape = reshapeStrokeControls(ell, gate, tol)
+  let nearest = Infinity
+  for (const c of ellShape)
+    nearest = Math.min(nearest, Math.hypot(c.x - 200, c.y - 0))
+  check('smoothing: a drawn corner keeps a control within the tremor of it',
+        nearest <= 2, 'nearest control to the corner ' + nearest)
+  // And no two controls closer than half the gate.
+  let minGap = Infinity
+  for (let i = 1; i < ellShape.length; i++)
+    minGap = Math.min(minGap, Math.hypot(ellShape[i].x - ellShape[i - 1].x,
+                                         ellShape[i].y - ellShape[i - 1].y))
+  check('smoothing: the half-gate floor holds between controls',
+        minGap >= gate / 2, 'min gap ' + minGap)
+  check('smoothing: tolerance 0 degrades to the plain ink controls',
+        reshapeStrokeControls(arc, gate, 0).length === splineDecimate(arc, gate / 2).length)
 }
 
 process.exit(failures === 0 ? 0 : 1)

@@ -319,7 +319,9 @@ class TestWriteSidecar(unittest.TestCase):
                        'get_feature_by_id', 'reshapeSplineDefault',
                        'reshapeClearPicksButton', 'wasValid',
                        # Truth-value fix: predicates answer '1', not 'true'.
-                       'exprTrue', 'exprFalse'):
+                       'exprTrue', 'exprFalse',
+                       # Spline-armed strokes keep their shape, not the ink.
+                       'reshapeStrokeControls', 'reshapeStrokeSmoothPoints'):
             self.assertIn(needle, text, needle)
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):
