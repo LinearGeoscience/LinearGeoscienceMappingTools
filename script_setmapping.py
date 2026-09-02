@@ -23,9 +23,11 @@ except ImportError:
     from layer_select import layer_candidates, populate_layer_combo
 
 try:
-    from .renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+    from .renderer_compat import (PATTERN_RULE_LABEL, SCALE_GATE_RATIO,
+                                  label_scale_gate_expression)
 except ImportError:
-    from renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+    from renderer_compat import (PATTERN_RULE_LABEL, SCALE_GATE_RATIO,
+                                 label_scale_gate_expression)
 
 try:
     from .lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
@@ -733,6 +735,26 @@ class LayerConfigurator:
         obstacle_settings.setFactor(factor)
         settings.setObstacleSettings(obstacle_settings)
 
+    def apply_scale_gate(self, settings):
+        """Stop this rule drawing once the view pulls far enough back.
+
+        Mirrors what scripts/inject_label_scale_gate.py bakes into the other
+        three layers. It has to be here as well: this class rebuilds the
+        FieldNotebook labeling from four fresh QgsPalLayerSettings on every
+        Set Mapping Scale, so a gate that only lived in the template would be
+        silently wiped the first time anyone set the scale.
+        tests/test_label_code_template_qgis.py pins the two equal.
+
+        Read-modify-write of the dd collection, not a fresh one: the rules
+        that carry offsets and rotation set theirs before this runs.
+        """
+        settings.scaleVisibility = True
+        props = settings.dataDefinedProperties()
+        props.setProperty(
+            QgsPalLayerSettings.Property.MinimumScale,
+            QgsProperty.fromExpression(label_scale_gate_expression()))
+        settings.setDataDefinedProperties(props)
+
     def create_comment_callout(self):
         """Grey dashed leader line for the comment rules (Regolith/Fallback)."""
         callout = QgsSimpleLineCallout()
@@ -832,6 +854,8 @@ class LayerConfigurator:
             QgsProperty.fromExpression(dip_offset_expression(scale_value)))
         settings.setDataDefinedProperties(props)
 
+        self.apply_scale_gate(settings)
+
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
         rule.setDescription('Dip Labels')
@@ -882,6 +906,8 @@ class LayerConfigurator:
 
         settings.setDataDefinedProperties(props)
 
+        self.apply_scale_gate(settings)
+
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
         rule.setDescription('SymbolSuffix Labels')
@@ -915,6 +941,8 @@ class LayerConfigurator:
         self.apply_around_point_placement(
             settings, REGOLITH_RING, Qgis.RenderUnit.Points)
         self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
+
+        self.apply_scale_gate(settings)
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -952,6 +980,8 @@ class LayerConfigurator:
         # Dynamic engine-arranged placement with callout
         self.apply_dynamic_comment_placement(settings, x_value)
         self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
+
+        self.apply_scale_gate(settings)
 
         # Create rule - triggers when no Dip available but other fields have data
         # Excludes RegolithNote items which are handled by the dedicated Regolith Note rule

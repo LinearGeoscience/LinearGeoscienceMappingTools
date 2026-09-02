@@ -289,8 +289,9 @@ def main():
     assert "auxiliary_storage_labeling_positionx" in dd
     assert "auxiliary_storage_labeling_positiony" in dd
     # ...and so must the Size/Color expressions inject_label_size_scaling.py
-    # and the cover gold own, which share this block.
-    for name in ("Size", "Color") + tuple(DD_EXPRESSIONS):
+    # and the cover gold own, and the MinimumScale cutoff from
+    # inject_label_scale_gate.py, all of which share this block.
+    for name in ("Size", "Color", "MinimumScale") + tuple(DD_EXPRESSIONS):
         assert f'name="{name}"' in dd, f"dd {name} lost"
     for name, expr in DD_EXPRESSIONS.items():
         node = None
