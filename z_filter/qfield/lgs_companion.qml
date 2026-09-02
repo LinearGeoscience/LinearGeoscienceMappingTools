@@ -176,7 +176,12 @@
  *    line's bounding box (as the desktop tool does), falling back to a
  *    full scan when the CRS pair cannot be trusted — a partly-wrong box
  *    would mean a silent partial reshape. The iterator honours the
- *    layer subsetString either way: reshape what you see. The exact
+ *    layer subsetString either way: reshape what you see. Only the
+ *    targets change: the project's topological-editing and
+ *    avoid-intersections flags are parked while the write runs, because
+ *    QField's reshape otherwise rewrites every neighbouring polygon as
+ *    its difference from the result — and a unit stacked wholly inside
+ *    the reshaped one differences away to nothing. The exact
  *    re-test on what the box returns is read through exprTrue: QGIS
  *    predicates answer with TVL ints, so intersects() comes back as '1',
  *    never 'true' (comparing against the word emptied every v33 scan).
@@ -8562,6 +8567,57 @@ Item {
     return out
   }
 
+  // Reshape ONLY the polygon it is asked to. QField's reshapeFromRubberband
+  // does more than QgsGeometry::reshapeGeometry when the project has
+  // topological editing on (Set Mapping Scale turns it on, for snapping):
+  // every other polygon of the layer that intersects the reshaped one is
+  // rewritten as its difference() from it, and a polygon that lies wholly
+  // INSIDE the reshaped one — the stacked small unit this data is full of
+  // — differences away to an empty geometry. It was still there, with no
+  // geometry, which in the field is a deletion. With avoid-intersections
+  // on it is the reshaped polygon that gets holes punched where its
+  // neighbours are. The desktop tool calls changeGeometry and touches
+  // nothing else; this tool already reshapes every polygon the line
+  // crosses by itself. So both project flags are parked for the duration
+  // of the write and put back exactly as found — whatever the read gives
+  // back, so a build that refuses the write leaves the project as it was.
+  // Returns the restorer.
+  function reshapeSuppressTopology() {
+    let topo = null
+    let avoid = null
+    try {
+      if (qgisProject.topologicalEditing === true) {
+        qgisProject.topologicalEditing = false
+        if (qgisProject.topologicalEditing === false)
+          topo = true
+      }
+    } catch (error) {}
+    try {
+      const allow = Qgis.AvoidIntersectionsMode.AllowIntersections
+      const mode = qgisProject.avoidIntersectionsMode
+      if (mode !== undefined && mode !== allow) {
+        qgisProject.avoidIntersectionsMode = allow
+        if (qgisProject.avoidIntersectionsMode === allow)
+          avoid = mode
+      }
+    } catch (error) {}
+    if (topo !== null || avoid !== null)
+      console.log('LGS reshape: topological editing ' +
+                  (topo !== null ? 'parked' : 'off') +
+                  ', avoid intersections ' +
+                  (avoid !== null ? 'parked' : 'off'))
+    return function () {
+      try {
+        if (topo !== null)
+          qgisProject.topologicalEditing = true
+      } catch (error) {}
+      try {
+        if (avoid !== null)
+          qgisProject.avoidIntersectionsMode = avoid
+      } catch (error) {}
+    }
+  }
+
   // The confirm tap, one event-loop turn later so the busy state has
   // painted. Scan, refuse a no-op, then write.
   function runReshape() {
@@ -8579,7 +8635,12 @@ Item {
             : qsTr('The line does not cross any polygon'))
         return
       }
-      executeReshape()
+      const restoreTopology = reshapeSuppressTopology()
+      try {
+        executeReshape()
+      } finally {
+        restoreTopology()
+      }
     } catch (error) {
       toast(qsTr('Reshape failed'))
     } finally {

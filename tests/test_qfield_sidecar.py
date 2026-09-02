@@ -321,7 +321,11 @@ class TestWriteSidecar(unittest.TestCase):
                        # Truth-value fix: predicates answer '1', not 'true'.
                        'exprTrue', 'exprFalse',
                        # Spline-armed strokes keep their shape, not the ink.
-                       'reshapeStrokeControls', 'reshapeStrokeSmoothPoints'):
+                       'reshapeStrokeControls', 'reshapeStrokeSmoothPoints',
+                       # Only the targets change: QField's topological
+                       # reshape differenced stacked neighbours to nothing.
+                       'reshapeSuppressTopology', 'topologicalEditing',
+                       'avoidIntersectionsMode'):
             self.assertIn(needle, text, needle)
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):
