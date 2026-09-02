@@ -36,15 +36,18 @@
  *    free). Uses QgsQuickMapCanvasMap.zoomScale(center, scale) — a public
  *    slot — with a writable mapSettings.extent fallback.
  *
- * 3. LAYER OPACITY — "Opacity" pill opening a per-layer panel in two
- *    grouped columns (rasters left, vectors right; stacked on narrow
- *    screens): each layer gets a 100/50/25/Off row, plus an "All" row
- *    per column when it has several layers. The panel scrolls (a capped
- *    Flickable), so a long layer list stays reachable instead of
- *    growing the dialog past both screen edges. Above the columns sit
- *    FOLDER rows: one per exported layer-tree group with two or more
- *    exported members, setting every member at a tap; a folder carries
- *    its subgroups' layers and is named by its tree path. The layer
+ * 3. LAYER OPACITY — "Opacity" pill opening a NON-MODAL side sheet at
+ *    the right edge (v34): the map stays visible and pannable while you
+ *    tune, and the sheet closes from its × only. Rows follow the legend:
+ *    every exported folder is a header with its own 100/75/50/25/Off
+ *    ladder (one tap sets every member) and its layers indented beneath
+ *    it, nested folders as sub-headers, anything outside a folder under
+ *    "Layers" — each layer once. "All rasters" / "All vectors" lead. A
+ *    filter box narrows the list as you type. The ladders are the
+ *    banner kit's pills, the current step inverted. Folders are the
+ *    exported layer-tree groups with two or more exported members; a
+ *    folder carries its subgroups' layers and is named by its tree
+ *    path. The layer
  *    names are baked in at export via the LGS-EXPORT-DATA:opacitylayers
  *    (rasters) and LGS-EXPORT-DATA:vectoropacitylayers (spatial vectors
  *    — lookup tables are excluded) lines, and the folders via
@@ -2178,7 +2181,10 @@ Item {
 
       TapHandler {
         gesturePolicy: TapHandler.ReleaseWithinBounds
-        onTapped: opacityDialog.open()
+        // The sheet is non-modal and ignores taps on the map, so the
+        // pill that opened it is also the way to close it.
+        onTapped: opacityDialog.visible ? opacityDialog.close()
+                                        : opacityDialog.open()
       }
     }
 
@@ -2852,362 +2858,258 @@ Item {
   }
 
   // ==================================================================
-  // IMAGERY OPACITY
+  // LAYER OPACITY (v34 panel)
+  //
+  // A side sheet, not a dialog. Opacity is a visual tuning task, and
+  // the old modal dialog sat centred over the very map it was changing
+  // — you set 50, closed, looked, reopened. This one is non-modal and
+  // undimmed at the right edge, so the map stays visible AND pannable
+  // while you tune; it closes from its × or the pill, never from a tap
+  // on the map.
+  //
+  // Rows follow the LEGEND, not the file type: each exported folder is
+  // a header with its own ladder (one tap sets every member) and its
+  // layers indented beneath it, nested folders as sub-headers, and
+  // anything outside a folder under "Layers". Every layer appears once
+  // — the old panel listed a layer under its folder AND under
+  // Rasters/Vectors, up to three ladders for one thing. "All rasters" /
+  // "All vectors" stay as the first rows because "just the ortho" is
+  // the most common thing anyone does here.
+  //
+  // One ladder per row, built from the banner kit's pills: the current
+  // step is the inverted one, which reads at a glance where the old
+  // bold-and-green-border did not. Long names wrap to a second line
+  // instead of losing their tail — the tail is where North and South
+  // differ. A filter box narrows the list as you type.
   // ==================================================================
-  Dialog {
+  Popup {
     id: opacityDialog
     parent: mainWindow.contentItem
-    modal: true
-    title: qsTr('Layer Opacity')
-    x: (mainWindow.width - width) / 2
-    // Never let the title leave the screen — with enough rows the
-    // centring maths would push it past the top edge.
-    y: Math.max(20, (mainWindow.height - height) / 2)
-    width: Math.min(mainWindow.width - 40,
-                    opacityDialog.twoColumns ? 720 : 420)
-    standardButtons: Dialog.Close
+    modal: false
+    dim: false
+    closePolicy: Popup.CloseOnEscape
+    padding: 0
+    x: mainWindow.width - width - 12
+    y: 72
+    width: Math.min(mainWindow.width - 24, 400)
+    height: opacityColumn.implicitHeight
+    // Room for the list: the screen below the banners and above QField's
+    // bottom-right buttons, less the sheet's own header, filter and
+    // paddings. Computed from the window, never from the sheet's height,
+    // or the height would depend on itself.
+    readonly property int listMax: Math.max(120, mainWindow.height - y - 90 - 100)
 
-    // Rasters left, vectors right; columns stack on narrow screens. One
-    // row per resolved, supported layer — values are read live from
-    // imageryOpacities so button highlights follow taps.
-    property var rasterNames: []
-    property var vectorNames: []
-    // [{name, layers}] — exported layer-tree folders (v25), resolved on
-    // open like the name lists.
-    property var groupEntries: []
-    readonly property bool twoColumns:
-        mainWindow.width >= 700 &&
-        rasterNames.length > 0 && vectorNames.length > 0
+    // The rows shown, rebuilt on open and on every filter keystroke.
+    property var rows: []
+    property string filter: ''
 
     onAboutToShow: {
-      rasterNames = plugin.resolvedImageryNames()
-      vectorNames = plugin.resolvedVectorNames()
-      groupEntries = plugin.resolvedGroupEntries()
+      filter = ''
+      rows = plugin.opacityTreeRows('')
+    }
+    onFilterChanged: rows = plugin.opacityTreeRows(filter)
+
+    background: Rectangle {
+      radius: 8
+      color: '#CC000000'
     }
 
-    Flickable {
-      // v25: scroll instead of outgrowing the screen. The grid used to
-      // anchors.fill the dialog with no height bound, so a long layer
-      // list pushed rows past both screen edges with nothing to scroll.
-      // Same capped-Flickable idiom as the copy-attributes field panel.
-      id: opacityScroll
-      anchors.fill: parent
-      implicitWidth: opacityGrid.implicitWidth
-      implicitHeight: Math.min(opacityGrid.implicitHeight,
-                               mainWindow.height - 160)
-      contentWidth: width
-      contentHeight: opacityGrid.implicitHeight
-      clip: true
+    contentItem: Column {
+      id: opacityColumn
+      spacing: 6
+      topPadding: 10
+      bottomPadding: 10
+      leftPadding: 10
+      rightPadding: 10
 
-      GridLayout {
-        id: opacityGrid
-        width: opacityScroll.width
-        columns: opacityDialog.twoColumns ? 2 : 1
-        columnSpacing: 24
-        rowSpacing: 8
+      // Header: title, count, ×.
+      Item {
+        width: parent.width - 20
+        height: 28
 
-        // Folder rows (v25) — one tap sets every exported layer in a
-        // layer-tree group. Spans both columns: a folder may mix rasters
-        // and vectors.
-        ColumnLayout {
-          Layout.fillWidth: true
-          Layout.columnSpan: opacityDialog.twoColumns ? 2 : 1
-          visible: opacityDialog.groupEntries.length > 0
-          spacing: 8
+        LgsTitle {
+          anchors.left: parent.left
+          text: qsTr('Opacity')
+        }
 
-          Label {
-            Layout.fillWidth: true
-            elide: Text.ElideRight
-            text: qsTr('Folders')
-            font.bold: true
+        Text {
+          anchors.right: opacityClose.left
+          anchors.rightMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          font.pixelSize: 12
+          color: '#99FFFFFF'
+          text: qsTr('%1 layer(s)').arg(plugin.resolvedImageryNames().length +
+                                        plugin.resolvedVectorNames().length)
+        }
+
+        Rectangle {
+          id: opacityClose
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: 28
+          height: 28
+          radius: 14
+          color: 'transparent'
+          border.color: '#88FFFFFF'
+          border.width: 1
+
+          Text {
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            font.pixelSize: 17
+            color: 'white'
+            text: '×'
           }
 
-          Repeater {
-            model: opacityDialog.groupEntries
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: opacityDialog.close()
+          }
+        }
+      }
 
-            delegate: RowLayout {
-              id: groupOpacityRow
-              required property var modelData
-              Layout.fillWidth: true
-              spacing: 4
+      // Filter. Plain TextInput in a bordered field, monochrome like the
+      // rest; the × inside clears it.
+      Rectangle {
+        width: parent.width - 20
+        height: 32
+        radius: 4
+        color: '#33FFFFFF'
+        border.color: opacityFilterInput.activeFocus ? '#E6FFFFFF' : '#55FFFFFF'
+        border.width: 1
 
-              Label {
-                Layout.fillWidth: true
-                elide: Text.ElideRight
-                text: groupOpacityRow.modelData.name
-              }
+        TextInput {
+          id: opacityFilterInput
+          anchors.left: parent.left
+          anchors.right: opacityFilterClear.left
+          anchors.leftMargin: 10
+          anchors.rightMargin: 6
+          anchors.verticalCenter: parent.verticalCenter
+          font.pixelSize: 14
+          color: 'white'
+          clip: true
+          inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+          onTextChanged: opacityDialog.filter = text
 
-              Repeater {
-                model: plugin.opacitySteps
-
-                delegate: Button {
-                  id: groupStepButton
-                  required property var modelData
-                  // Highlighted only when EVERY member sits at this step.
-                  readonly property bool current:
-                      plugin.groupOpacityCurrent(
-                          groupOpacityRow.modelData.layers, modelData)
-                  flat: true
-                  topPadding: 4
-                  bottomPadding: 4
-                  leftPadding: 10
-                  rightPadding: 10
-                  text: modelData === 0 ? qsTr('Off')
-                                        : Math.round(modelData * 100)
-                  font.bold: current
-                  background: Rectangle {
-                    color: 'transparent'
-                    border.color: groupStepButton.current
-                        ? Theme.mainColor : Theme.secondaryTextColor
-                    border.width: groupStepButton.current ? 2 : 1
-                    radius: 2
-                  }
-                  onClicked: plugin.applyOpacityToNames(
-                                 groupOpacityRow.modelData.layers, modelData,
-                                 false)
-                }
-              }
-            }
+          Text {
+            anchors.fill: parent
+            verticalAlignment: Text.AlignVCenter
+            visible: parent.text === '' && !parent.activeFocus
+            font.pixelSize: 14
+            color: '#77FFFFFF'
+            text: qsTr('Find a layer…')
           }
         }
 
-        ColumnLayout {
-          Layout.fillWidth: true
-          Layout.alignment: Qt.AlignTop
-          visible: opacityDialog.rasterNames.length > 0
-          spacing: 8
+        Text {
+          id: opacityFilterClear
+          anchors.right: parent.right
+          anchors.rightMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          visible: opacityFilterInput.text !== ''
+          font.pixelSize: 17
+          color: '#CCFFFFFF'
+          text: '×'
 
-          Label {
-            Layout.fillWidth: true
-            elide: Text.ElideRight
-            text: qsTr('Rasters')
-            font.bold: true
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: {
+              opacityFilterInput.text = ''
+              opacityFilterInput.focus = false
+            }
           }
+        }
+      }
 
-          // One-tap group control, shown only when there is a group.
-          RowLayout {
-            Layout.fillWidth: true
-            visible: opacityDialog.rasterNames.length > 1
-            spacing: 4
+      Flickable {
+        id: opacityScroll
+        width: parent.width - 20
+        height: Math.min(opacityGrid.height, opacityDialog.listMax)
+        contentWidth: width
+        contentHeight: opacityGrid.height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
 
-            Label {
-              Layout.fillWidth: true
-              elide: Text.ElideRight
-              text: qsTr('All rasters')
-            }
+        Column {
+          id: opacityGrid
+          width: opacityScroll.width
+          spacing: 4
 
-            Repeater {
-              model: plugin.opacitySteps
-
-              delegate: Button {
-                required property var modelData
-                flat: true
-                topPadding: 4
-                bottomPadding: 4
-                leftPadding: 10
-                rightPadding: 10
-                text: modelData === 0 ? qsTr('Off')
-                                      : Math.round(modelData * 100)
-                background: Rectangle {
-                  color: 'transparent'
-                  border.color: Theme.secondaryTextColor
-                  border.width: 1
-                  radius: 2
-                }
-                onClicked: plugin.applyOpacityToNames(
-                               opacityDialog.rasterNames, modelData, false)
-              }
-            }
+          Text {
+            width: parent.width
+            visible: opacityDialog.rows.length === 0
+            topPadding: 8
+            font.pixelSize: 12
+            color: '#99FFFFFF'
+            text: opacityDialog.filter === ''
+                ? qsTr('No layers in this export support opacity')
+                : qsTr('No layer matches "%1"').arg(opacityDialog.filter)
           }
 
           Repeater {
-            model: opacityDialog.rasterNames
+            model: opacityDialog.rows
 
-            delegate: RowLayout {
+            // One row: a name (bold for a folder or an "All" row,
+            // indented by depth, wrapping to two lines rather than losing
+            // its tail) and a ladder of five pills, the current one
+            // inverted.
+            delegate: Item {
               id: opacityRow
+              required property int index
               required property var modelData
-              Layout.fillWidth: true
-              spacing: 4
+              readonly property bool isHeader:
+                  modelData.kind === 'group' || modelData.kind === 'all'
+              width: opacityGrid.width
+              height: Math.max(opacityRowName.height, opacityLadder.height) +
+                      (isHeader && index > 0 ? 6 : 0)
 
-              Label {
-                Layout.fillWidth: true
+              // A hairline above each folder, so the sections read as
+              // sections without a second colour.
+              Rectangle {
+                visible: opacityRow.isHeader && index > 0
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: '#33FFFFFF'
+              }
+
+              Text {
+                id: opacityRowName
+                anchors.left: parent.left
+                anchors.leftMargin: 12 * opacityRow.modelData.depth
+                anchors.right: opacityLadder.left
+                anchors.rightMargin: 8
+                anchors.verticalCenter: opacityLadder.verticalCenter
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
-                text: opacityRow.modelData
+                font.pixelSize: 13
+                font.bold: opacityRow.isHeader
+                color: opacityRow.modelData.kind === 'cover'
+                    ? '#BBFFFFFF' : 'white'
+                text: opacityRow.modelData.name
               }
 
-              Repeater {
-                model: plugin.opacitySteps
-
-                delegate: Button {
-                  id: stepButton
-                  required property var modelData
-                  readonly property bool current:
-                      Math.abs(plugin.layerOpacityValue(opacityRow.modelData)
-                               - modelData) < 0.01
-                  flat: true
-                  topPadding: 4
-                  bottomPadding: 4
-                  leftPadding: 10
-                  rightPadding: 10
-                  text: modelData === 0 ? qsTr('Off')
-                                        : Math.round(modelData * 100)
-                  font.bold: current
-                  background: Rectangle {
-                    color: 'transparent'
-                    border.color: stepButton.current
-                        ? Theme.mainColor : Theme.secondaryTextColor
-                    border.width: stepButton.current ? 2 : 1
-                    radius: 2
-                  }
-                  onClicked: plugin.applyLayerOpacity(
-                                 opacityRow.modelData, modelData, false)
-                }
-              }
-            }
-          }
-        }
-
-        ColumnLayout {
-          Layout.fillWidth: true
-          Layout.alignment: Qt.AlignTop
-          visible: opacityDialog.vectorNames.length > 0
-          spacing: 8
-
-          Label {
-            Layout.fillWidth: true
-            elide: Text.ElideRight
-            text: qsTr('Vectors')
-            font.bold: true
-          }
-
-          RowLayout {
-            Layout.fillWidth: true
-            visible: opacityDialog.vectorNames.length > 1
-            spacing: 4
-
-            Label {
-              Layout.fillWidth: true
-              elide: Text.ElideRight
-              text: qsTr('All vectors')
-            }
-
-            Repeater {
-              model: plugin.opacitySteps
-
-              delegate: Button {
-                required property var modelData
-                flat: true
-                topPadding: 4
-                bottomPadding: 4
-                leftPadding: 10
-                rightPadding: 10
-                text: modelData === 0 ? qsTr('Off')
-                                      : Math.round(modelData * 100)
-                background: Rectangle {
-                  color: 'transparent'
-                  border.color: Theme.secondaryTextColor
-                  border.width: 1
-                  radius: 2
-                }
-                onClicked: plugin.applyOpacityToNames(
-                               opacityDialog.vectorNames, modelData, false)
-              }
-            }
-          }
-
-          Repeater {
-            model: opacityDialog.vectorNames
-
-            delegate: ColumnLayout {
-              id: vectorOpacityRow
-              required property var modelData
-              Layout.fillWidth: true
-              spacing: 2
-
-              RowLayout {
-                Layout.fillWidth: true
-                spacing: 4
-
-                Label {
-                  Layout.fillWidth: true
-                  elide: Text.ElideRight
-                  text: vectorOpacityRow.modelData
-                }
+              Row {
+                id: opacityLadder
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: opacityRow.isHeader && index > 0 ? 6 : 0
+                spacing: 3
 
                 Repeater {
                   model: plugin.opacitySteps
 
-                  delegate: Button {
-                    id: vectorStepButton
+                  delegate: LgsPill {
                     required property var modelData
-                    readonly property bool current:
-                        Math.abs(plugin.layerOpacityValue(
-                                     vectorOpacityRow.modelData)
-                                 - modelData) < 0.01
-                    flat: true
-                    topPadding: 4
-                    bottomPadding: 4
-                    leftPadding: 10
-                    rightPadding: 10
-                    text: modelData === 0 ? qsTr('Off')
-                                          : Math.round(modelData * 100)
-                    font.bold: current
-                    background: Rectangle {
-                      color: 'transparent'
-                      border.color: vectorStepButton.current
-                          ? Theme.mainColor : Theme.secondaryTextColor
-                      border.width: vectorStepButton.current ? 2 : 1
-                      radius: 2
-                    }
-                    onClicked: plugin.applyLayerOpacity(
-                                   vectorOpacityRow.modelData, modelData, false)
-                  }
-                }
-              }
-
-              // Transported-cover sub-row, nested under the Basemap row.
-              // Off still hides via the subset string (features AND labels
-              // vanish); 100/50/25 fade the cover symbols through the
-              // data-defined opacity the desktop bakes onto the renderer
-              // (@lgs_cover_opacity) — QML has no renderer access itself.
-              RowLayout {
-                Layout.fillWidth: true
-                spacing: 4
-                visible: vectorOpacityRow.modelData === plugin.coverLayerName &&
-                         !plugin.coverUnsupported
-
-                Label {
-                  Layout.fillWidth: true
-                  Layout.leftMargin: 16
-                  elide: Text.ElideRight
-                  text: qsTr('Transported cover')
-                  color: Theme.secondaryTextColor
-                }
-
-                Repeater {
-                  model: plugin.opacitySteps
-
-                  delegate: Button {
-                    id: coverStepButton
-                    required property var modelData
-                    readonly property bool current:
-                        plugin.coverStepCurrent(modelData)
-                    flat: true
-                    topPadding: 4
-                    bottomPadding: 4
-                    leftPadding: 10
-                    rightPadding: 10
-                    text: modelData === 0 ? qsTr('Off')
-                                          : Math.round(modelData * 100)
-                    font.bold: current
-                    background: Rectangle {
-                      color: 'transparent'
-                      border.color: coverStepButton.current
-                          ? Theme.mainColor : Theme.secondaryTextColor
-                      border.width: coverStepButton.current ? 2 : 1
-                      radius: 2
-                    }
-                    onClicked: plugin.setCoverOpacity(modelData)
+                    square: true
+                    padX: 8
+                    label: modelData === 0 ? qsTr('Off')
+                                           : String(Math.round(modelData * 100))
+                    active: plugin.opacityRowCurrent(opacityRow.modelData,
+                                                     modelData)
+                    onTapped: plugin.opacityRowApply(opacityRow.modelData,
+                                                     modelData)
                   }
                 }
               }
@@ -3282,6 +3184,104 @@ Item {
         return false
     }
     return true
+  }
+
+  // The rows of the opacity sheet, in legend order (v34). Folders become
+  // headers with their layers indented beneath; a nested folder ("A / B"
+  // from the exporter) is a sub-header whose members are taken OUT of
+  // its parent's direct list, so every layer appears exactly once; what
+  // belongs to no folder goes under "Layers". The "All rasters" / "All
+  // vectors" rows lead, as they always have. `filter` narrows by
+  // case-insensitive substring: a folder whose NAME matches shows all
+  // its layers, otherwise only its matching ones, and a folder with no
+  // match anywhere beneath it is dropped. Each row is
+  // { kind: 'all' | 'group' | 'layer' | 'cover', name, depth, layers }.
+  function opacityTreeRows(filter) {
+    const needle = String(filter || '').trim().toLowerCase()
+    const matches = function (name) {
+      return needle === '' ||
+             String(name).toLowerCase().indexOf(needle) !== -1
+    }
+    const rasters = resolvedImageryNames()
+    const vectors = resolvedVectorNames()
+    const groups = resolvedGroupEntries()
+    let rows = []
+    if (needle === '') {
+      if (rasters.length > 1)
+        rows.push({ kind: 'all', name: qsTr('All rasters'), depth: 0,
+                    layers: rasters })
+      if (vectors.length > 1)
+        rows.push({ kind: 'all', name: qsTr('All vectors'), depth: 0,
+                    layers: vectors })
+    }
+    let placed = {}
+    const pushLayer = function (name, depth) {
+      rows.push({ kind: 'layer', name: name, depth: depth, layers: [name] })
+      placed[name] = true
+      if (name === coverLayerName && !coverUnsupported)
+        rows.push({ kind: 'cover', name: qsTr('Transported cover'),
+                    depth: depth + 1, layers: [] })
+    }
+    for (const group of groups) {
+      const path = String(group.name).split(' / ')
+      let nested = {}
+      for (const other of groups) {
+        if (String(other.name).indexOf(group.name + ' / ') === 0)
+          for (const n of other.layers)
+            nested[n] = true
+      }
+      let direct = []
+      for (const n of group.layers)
+        if (!nested[n] && !placed[n])
+          direct.push(n)
+      const headerHit = matches(path[path.length - 1])
+      const shown = headerHit ? direct : direct.filter(matches)
+      let any = headerHit || shown.length > 0
+      if (!any) {
+        for (const n of group.layers) {
+          if (matches(n)) {
+            any = true
+            break
+          }
+        }
+      }
+      if (!any)
+        continue
+      rows.push({ kind: 'group', name: path[path.length - 1],
+                  depth: path.length - 1, layers: group.layers })
+      for (const n of shown)
+        pushLayer(n, path.length)
+    }
+    let rest = []
+    for (const n of rasters.concat(vectors))
+      if (!placed[n] && matches(n))
+        rest.push(n)
+    if (rest.length > 0) {
+      const grouped = groups.length > 0
+      if (grouped)
+        rows.push({ kind: 'group', name: qsTr('Layers'), depth: 0,
+                    layers: rest })
+      for (const n of rest)
+        pushLayer(n, grouped ? 1 : 0)
+    }
+    return rows
+  }
+
+  function opacityRowCurrent(row, value) {
+    if (row.kind === 'cover')
+      return coverStepCurrent(value)
+    if (row.kind === 'layer')
+      return Math.abs(layerOpacityValue(row.name) - value) < 0.01
+    return groupOpacityCurrent(row.layers, value)
+  }
+
+  function opacityRowApply(row, value) {
+    if (row.kind === 'cover')
+      setCoverOpacity(value)
+    else if (row.kind === 'layer')
+      applyLayerOpacity(row.name, value, false)
+    else
+      applyOpacityToNames(row.layers, value, false)
   }
 
   function applyLayerOpacity(name, value, quiet) {
@@ -5002,8 +5002,9 @@ Item {
     property bool active: false
     property bool primary: false
     property bool square: false
+    property int padX: 12
     signal tapped()
-    width: pillText.contentWidth + 24
+    width: pillText.contentWidth + padX * 2
     height: pillText.contentHeight + (square ? 12 : 10)
     radius: square ? 4 : height / 2
     color: primary ? (enabled ? Theme.mainColor : 'transparent')

@@ -336,7 +336,11 @@ class TestWriteSidecar(unittest.TestCase):
                        'component LgsActions', 'switchClipMode',
                        'clipSavedMode', 'lgs_clip_mode',
                        'copyRearmSource',
-                       'opacitySteps: [1, 0.75, 0.5, 0.25, 0]'):
+                       'opacitySteps: [1, 0.75, 0.5, 0.25, 0]',
+                       # v34 opacity sheet: legend order, filter, non-modal.
+                       'opacityTreeRows', 'opacityRowCurrent',
+                       'opacityRowApply', 'opacityFilterInput',
+                       'Find a layer'):
             self.assertIn(needle, text, needle)
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):
