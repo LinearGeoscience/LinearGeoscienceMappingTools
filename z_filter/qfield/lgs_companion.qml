@@ -306,6 +306,15 @@
  *    stateMachine item for display and its toggleDigitizeMode signal
  *    for the flip — QField's handler refuses to leave digitize
  *    mid-feature with its own toast, a guard kept on purpose.
+ *
+ * 13. CANVAS TAPS BELONG TO THE OPEN TOOL — while Clip, Reshape,
+ *    Reverse, Copy or Merge is open the sidecar is registered with
+ *    QField's MapCanvasPointHandler, which QField consults before it
+ *    does anything with a canvas tap, so a stray tap or long-press no
+ *    longer runs identify and slides the feature panel over the map.
+ *    Double tap is left to QField (finger zoom). Deregistered when the
+ *    plugin unloads; absent on builds without the item (3.10.3), where
+ *    the tools behave as before.
  */
 
 import QtQuick
@@ -1389,6 +1398,10 @@ Item {
     startupTimer.start()
   }
 
+  // QField's canvas click handler holds our closure by reference; it
+  // must never be left calling into a destroyed plugin.
+  Component.onDestruction: removeCanvasHandler()
+
   Timer {
     id: startupTimer
     interval: 1500
@@ -1420,6 +1433,10 @@ Item {
         plugin.initModeToggle()
       if (plugin.featureLayerSwitch)
         plugin.initLayerSwitch()
+      if (plugin.featureClipping || plugin.featureReshape ||
+          plugin.featureReverse || plugin.featureCopyAttrs ||
+          plugin.featureMerge)
+        plugin.installCanvasHandler()
       // Unconditional: the rubberband model machinery also powers the
       // always-on native confirm fixup, not just the spline feature.
       plugin.initSpline()
@@ -11659,6 +11676,63 @@ Item {
         modeStateMachine = iface.findItemByObjectName('stateMachine')
     } catch (error) {}
     refreshMapModeState()
+  }
+
+  // ----------------------------------------------------------------
+  // Canvas taps belong to the open tool. QField runs every canvas tap,
+  // long-press and double tap through its MapCanvasPointHandler chain
+  // (objectName 'pointHandler') BEFORE identify, digitizing or the
+  // canvas menu see it; a registered handler that returns true ends the
+  // matter. Our catchers already handle the tap for the tool — this is
+  // what tells QField to stand down, so a stray tap no longer slides the
+  // feature panel over the map. Absent on builds without the item
+  // (desktop 3.10.3): the lookup returns null and nothing changes.
+  // ----------------------------------------------------------------
+  property var canvasPointHandler: null
+  readonly property string canvasHandlerName: 'lgs_tools'
+
+  function canvasToolActive() {
+    return clipStep > 0 || reshapeStep > 0 || reverseStep > 0 ||
+           copyStep > 0 || mergeStep > 0
+  }
+
+  function installCanvasHandler() {
+    try {
+      const item = iface.findItemByObjectName('pointHandler')
+      if (item === null || item === undefined ||
+          typeof item.registerHandler !== 'function')
+        return
+      canvasPointHandler = item
+      const handler = function (point, type, interaction) {
+        try {
+          if (!plugin.canvasToolActive())
+            return false
+          // Double tap stays QField's: it is the finger zoom, and taking
+          // it away would make every tool feel like it broke the map.
+          return interaction !== 'doubleClicked'
+        } catch (error) {
+          return false
+        }
+      }
+      // registerHandler refuses a name it already holds and keeps the
+      // OLD closure — one from a previous plugin instance, if the
+      // project was reloaded without a clean unload — which QField would
+      // go on calling into a dead object. Replace rather than fail.
+      if (item.registerHandler(canvasHandlerName, handler, 100) !== true) {
+        try {
+          item.deregisterHandler(canvasHandlerName)
+        } catch (error) {}
+        item.registerHandler(canvasHandlerName, handler, 100)
+      }
+    } catch (error) {}
+  }
+
+  function removeCanvasHandler() {
+    try {
+      if (canvasPointHandler !== null)
+        canvasPointHandler.deregisterHandler(canvasHandlerName)
+    } catch (error) {}
+    canvasPointHandler = null
   }
 
   function refreshMapModeState() {

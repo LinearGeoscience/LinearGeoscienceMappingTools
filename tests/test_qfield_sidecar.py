@@ -325,7 +325,11 @@ class TestWriteSidecar(unittest.TestCase):
                        # Only the targets change: QField's topological
                        # reshape differenced stacked neighbours to nothing.
                        'reshapeSuppressTopology', 'topologicalEditing',
-                       'avoidIntersectionsMode'):
+                       'avoidIntersectionsMode',
+                       # Canvas taps belong to the open tool.
+                       'installCanvasHandler', 'removeCanvasHandler',
+                       'registerHandler', 'deregisterHandler',
+                       'canvasToolActive', 'Component.onDestruction'):
             self.assertIn(needle, text, needle)
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):
