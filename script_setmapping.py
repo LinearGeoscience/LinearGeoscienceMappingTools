@@ -23,9 +23,11 @@ except ImportError:
     from layer_select import layer_candidates, populate_layer_combo
 
 try:
-    from .renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+    from .renderer_compat import (PATTERN_RULE_LABEL, SCALE_GATE_RATIO,
+                                  label_scale_gate_expression)
 except ImportError:
-    from renderer_compat import PATTERN_RULE_LABEL, SCALE_GATE_RATIO
+    from renderer_compat import (PATTERN_RULE_LABEL, SCALE_GATE_RATIO,
+                                 label_scale_gate_expression)
 
 try:
     from .lgs_layers import BASEMAP, FIELDNOTEBOOK, LINEWORK, OVERLAY
@@ -733,6 +735,26 @@ class LayerConfigurator:
         obstacle_settings.setFactor(factor)
         settings.setObstacleSettings(obstacle_settings)
 
+    def apply_scale_gate(self, settings):
+        """Stop this rule drawing once the view pulls far enough back.
+
+        Mirrors what scripts/inject_label_scale_gate.py bakes into the other
+        three layers. It has to be here as well: this class rebuilds the
+        FieldNotebook labeling from four fresh QgsPalLayerSettings on every
+        Set Mapping Scale, so a gate that only lived in the template would be
+        silently wiped the first time anyone set the scale.
+        tests/test_label_code_template_qgis.py pins the two equal.
+
+        Read-modify-write of the dd collection, not a fresh one: the rules
+        that carry offsets and rotation set theirs before this runs.
+        """
+        settings.scaleVisibility = True
+        props = settings.dataDefinedProperties()
+        props.setProperty(
+            QgsPalLayerSettings.Property.MinimumScale,
+            QgsProperty.fromExpression(label_scale_gate_expression()))
+        settings.setDataDefinedProperties(props)
+
     def create_comment_callout(self):
         """Grey dashed leader line for the comment rules (Regolith/Fallback)."""
         callout = QgsSimpleLineCallout()
@@ -832,6 +854,8 @@ class LayerConfigurator:
             QgsProperty.fromExpression(dip_offset_expression(scale_value)))
         settings.setDataDefinedProperties(props)
 
+        self.apply_scale_gate(settings)
+
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
         rule.setDescription('Dip Labels')
@@ -882,6 +906,8 @@ class LayerConfigurator:
 
         settings.setDataDefinedProperties(props)
 
+        self.apply_scale_gate(settings)
+
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
         rule.setDescription('SymbolSuffix Labels')
@@ -915,6 +941,8 @@ class LayerConfigurator:
         self.apply_around_point_placement(
             settings, REGOLITH_RING, Qgis.RenderUnit.Points)
         self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
+
+        self.apply_scale_gate(settings)
 
         # Create rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -953,6 +981,8 @@ class LayerConfigurator:
         self.apply_dynamic_comment_placement(settings, x_value)
         self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
+        self.apply_scale_gate(settings)
+
         # Create rule - triggers when no Dip available but other fields have data
         # Excludes RegolithNote items which are handled by the dedicated Regolith Note rule
         rule = QgsRuleBasedLabeling.Rule(settings)
@@ -983,6 +1013,15 @@ class LayerConfigurator:
         else:
             QgsMessageLog.logMessage("[Label] No Field Notebook layer selected, skipping labeling", 'Linear Geoscience', Qgis.MessageLevel.Warning)
 
+        for role, persist in (("Linework", True), ("Overlay", False),
+                              ("Basemap", False)):
+            target = self.get_layer(layers_dict.get(role))
+            if target and install_label_scale_gate(target, persist):
+                QgsMessageLog.logMessage(
+                    f"[Label] Installed the zoom-out cutoff on {target.name()} "
+                    f"- it predates the label scale gate",
+                    'Linear Geoscience', Qgis.MessageLevel.Info)
+
         linework = self.get_layer(layers_dict.get("Linework"))
         if linework:
             if is_lgs_linework_labeling(linework.labeling()):
@@ -1009,6 +1048,44 @@ class LayerConfigurator:
                 QgsMessageLog.logMessage(f"[Label] Rescaled Basemap label distance to {BASEMAP_DIST_FACTOR * callout_dist_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
             else:
                 QgsMessageLog.logMessage(f"[Label] {basemap.name()} labeling is not the LGS polygon-callout style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
+
+def install_label_scale_gate(layer, persist_major=False):
+    """Give an existing project's labeling the zoom-out cutoff.
+
+    The template ships the gate (scripts/inject_label_scale_gate.py), but a
+    .qgz carries its own embedded styles and does not track the template, so
+    every project made before the gate existed would keep drawing its labels
+    at 1:250,000 forever. The literal bake cannot help there - it rewrites
+    the reference scale INSIDE an expression that has to already be present.
+
+    So Set Mapping Scale installs it, the same way it retunes the lithology
+    texture cutoff on a project that predates that one. Only ever additive:
+    a labeling that already carries a MinimumScale is left exactly as it is,
+    because that is either ours (and the bake keeps its number current) or
+    somebody's deliberate choice, and neither wants overwriting.
+
+    Returns True if it installed one.
+    """
+    labeling = layer.labeling()
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+    settings = QgsPalLayerSettings(labeling.settings())
+    existing = settings.dataDefinedProperties().property(
+        QgsPalLayerSettings.Property.MinimumScale)
+    if existing.isActive():
+        return False
+    settings.scaleVisibility = True
+    props = settings.dataDefinedProperties()
+    props.setProperty(
+        QgsPalLayerSettings.Property.MinimumScale,
+        QgsProperty.fromExpression(
+            label_scale_gate_expression(persist_major=persist_major)))
+    settings.setDataDefinedProperties(props)
+    # By copy, never a rebuild - the auxiliary-storage bindings for manual
+    # label moves live in that same collection.
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    return True
 
 
 # The comment/alteration leader ring, ON PAPER. 5 mm ring, pushed out to

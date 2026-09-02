@@ -87,6 +87,7 @@ def describe(settings):
     rotation = dd.property(QgsPalLayerSettings.Property.LabelRotation)
     ring = dd.property(QgsPalLayerSettings.Property.LabelDistance)
     max_ring = dd.property(QgsPalLayerSettings.Property.MaximumDistance)
+    gate = dd.property(QgsPalLayerSettings.Property.MinimumScale)
     return {
         "fieldName": norm(settings.fieldName),
         "isExpression": settings.isExpression,
@@ -116,6 +117,13 @@ def describe(settings):
         # first rescale silently strips the zoom fix.
         "ddLabelDistance": norm(ring.expressionString()) if ring.isActive() else "",
         "ddMaximumDistance": norm(max_ring.expressionString()) if max_ring.isActive() else "",
+        # The zoom-out cutoff, for the same reason: the flag is inert without
+        # the expression and the expression is inert without the flag, so a
+        # rebuild that dropped either half would quietly bring back the mat
+        # of text at 1:250,000 that scripts/inject_label_scale_gate.py exists
+        # to stop.
+        "scaleVisibility": bool(settings.scaleVisibility),
+        "ddMinimumScale": norm(gate.expressionString()) if gate.isActive() else "",
     }
 
 

@@ -48,6 +48,67 @@ PATTERN_RULE_LABEL = "Lithology texture"
 # (script_setmapping.py set_reference_scale) have to agree on it.
 SCALE_GATE_RATIO = 5
 
+# How far past the project's mapping scale a LABEL keeps drawing.
+#
+# Separate from SCALE_GATE_RATIO on purpose, even though the two are equal
+# today. They answer different questions: the texture gate is about ink going
+# sub-pixel, this one is about lettering staying readable, and the sizes
+# behave differently on the way out. Label text does NOT fade away when you
+# zoom out - inject_label_size_scaling.PAPER_F clamps it at GROWTH_FLOOR, so
+# it settles at 0.85x its authored size and stays perfectly legible however
+# far back you go. A 1:5000 project viewed at 1:250,000 therefore draws every
+# label it has ever had, at full size, in a solid mat of text. Nothing else
+# turns them off: minFeatureSize takes the reference-scale multiplier itself,
+# so it gets LESS selective as you pull back.
+#
+# Held here rather than in the injector because the bake
+# (scripts/inject_label_scale_gate.py) and the runtime FieldNotebook rebuild
+# (script_setmapping.build_structural_labeling) must agree on it - the same
+# reason SCALE_GATE_RATIO lives here. Tuning one must not silently move the
+# other, so they get one constant each.
+LABEL_GATE_RATIO = 5
+
+# Major and Regional linework - the axial traces and the named regional
+# structures - are the framework you still want named on an overview, so they
+# hold on for twice as long as everything else (user decision, 2 Sep 2026).
+# Tier names are the ones inject_label_size_scaling.WEIGHT_F already ramps on.
+LINEWORK_PERSIST_FACTOR = 2
+LINEWORK_PERSIST_WEIGHTS = ("Major", "Regional")
+
+# The reference scale reaches an expression two ways, and both have to work:
+# the @lgs_reference_scale project variable (published by the plugin) and the
+# literal baked into the style by script_setmapping.bake_reference_scale_into
+# _styles(), which is what keeps a project working with the plugin disabled.
+# Byte-identical with inject_label_size_scaling.REF_SCALE and matched by
+# script_setmapping.REFERENCE_SCALE_LITERAL_RE - do not reformat one alone.
+_LABEL_GATE_REF = "coalesce(to_real(@lgs_reference_scale), 0)"
+
+
+def label_scale_gate_expression(persist_major=False):
+    """The most zoomed-OUT map scale at which a label still draws.
+
+    Feeds the data-defined QgsPalLayerSettings 'MinimumScale', which despite
+    the name holds the LARGER denominator: QGIS names these for the view, so
+    the "minimum" scale is the most zoomed-out one still shown. Writing it to
+    MaximumScale instead gives an empty range and no labels anywhere - the
+    same inversion that once cost the lithology textures. Confirmed for
+    labels: setting the API's minimumScale = 25000 serialises as QML
+    scaleMax="25000".
+
+    A zero or missing reference scale yields 0, which QGIS reads as "no
+    limit", so an unknown scale means every label draws exactly as it did
+    before the gate existed. That direction is not negotiable - see the
+    doctrine at script_setmapping.REFERENCE_SCALE_LITERAL_RE. A gate that
+    fires when it does not know the scale would blank a whole map.
+    """
+    if not persist_major:
+        return "%s * %s" % (_LABEL_GATE_REF, LABEL_GATE_RATIO)
+    weights = ", ".join("'%s'" % w for w in LINEWORK_PERSIST_WEIGHTS)
+    return ("CASE WHEN \"Weight\" IN (%s) THEN %s * %s ELSE %s * %s END"
+            % (weights, _LABEL_GATE_REF,
+               LABEL_GATE_RATIO * LINEWORK_PERSIST_FACTOR,
+               _LABEL_GATE_REF, LABEL_GATE_RATIO))
+
 # What QgsRuleBasedRenderer.convertFromRenderer() emits per category, i.e.
 # QgsExpression::createFieldEqualityExpression: "Field" = 'value'
 _EQ_RE = re.compile(r'^\s*"(?P<field>(?:[^"]|"")+)"\s*=\s*'
