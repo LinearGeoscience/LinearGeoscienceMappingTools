@@ -243,7 +243,7 @@ class TestWriteSidecar(unittest.TestCase):
                        'mergeCatcher', 'mergeBanner', 'handleMergeTap',
                        'buildMergeUnionWkt', 'mergeCarryValues',
                        'requestMerge', 'executeMerge', 'undoLastMerge',
-                       'lgs_merged_from', 'mergeConfirmDialog',
+                       'lgs_merged_from',
                        # Freehand recenter hold (v23):
                        'featureRecenterHold', 'holdPill',
                        'initRecenterHold', 'setRecenterHold',
@@ -329,7 +329,13 @@ class TestWriteSidecar(unittest.TestCase):
                        # Canvas taps belong to the open tool.
                        'installCanvasHandler', 'removeCanvasHandler',
                        'registerHandler', 'deregisterHandler',
-                       'canvasToolActive', 'Component.onDestruction'):
+                       'canvasToolActive', 'Component.onDestruction',
+                       # v34 banner kit: one language for every tool.
+                       'component LgsBanner', 'component LgsPill',
+                       'component LgsHeader', 'component LgsStatus',
+                       'component LgsActions', 'switchClipMode',
+                       'clipSavedMode', 'lgs_clip_mode',
+                       'copyRearmSource'):
             self.assertIn(needle, text, needle)
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):

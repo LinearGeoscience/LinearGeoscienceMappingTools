@@ -315,6 +315,15 @@
  *    Double tap is left to QField (finger zoom). Deregistered when the
  *    plugin unloads; absent on builds without the item (3.10.3), where
  *    the tools behave as before.
+ *
+ * 14. ONE BANNER LANGUAGE (v34) — every canvas tool's banner is built
+ *    from the inline components in the BANNER KIT section: a header
+ *    row (mode pills or a short title, the layer, × to leave), one
+ *    status line that is the hint until there is something to report,
+ *    and one action row with the single accent button on the right.
+ *    Clip opens in the last mode used and, like Merge and Reshape,
+ *    leaves you picking again after a result; none of the three has a
+ *    confirmation dialog any more — Undo is the safety net.
  */
 
 import QtQuick
@@ -3673,8 +3682,8 @@ Item {
   // mirror of MIN_AREA_THRESHOLD (slivers below this are dropped)
   readonly property real minPartArea: 1e-8
 
-  property int clipStep: 0        // 0=off, 1=pick A, 2=pick CUT (isolated), 3=done
-  // '' = choosing a mode (clipStep 1), then 'all' | 'isolated' | 'smart'.
+  property int clipStep: 0        // 0=off, 1=pick (KEEP for isolated), 2=pick CUT (isolated)
+  // 'all' | 'isolated' | 'smart'; '' only between enter and the saved mode.
   property string clipMode: ''
   property var clipLayer: null    // locked on the first successful hit
   property var keepFeatures: []   // [{id, feature}] — cutter(s) / smart picks
@@ -3786,14 +3795,34 @@ Item {
       clipCutterWkt = ''
       clipAllTargetCount = 0
       clipStep = 1
-      toast(qsTr('Choose clip type'))
+      // Straight into the last mode used (v34): the "choose type" screen
+      // was a tap and a paragraph between every clip and its first pick.
+      chooseClipMode(clipSavedMode())
     } catch (error) {
       toast(qsTr('Clip unavailable'))
     }
   }
 
+  function clipSavedMode() {
+    const saved = projVar('lgs_clip_mode', 'isolated')
+    return (saved === 'all' || saved === 'smart') ? saved : 'isolated'
+  }
+
+  // A mode pill on the banner: drop the picks, change mode, remember it.
+  function switchClipMode(mode) {
+    if (mode === clipMode)
+      return
+    clipBackToModeSelect()
+    clipResultText = ''
+    clipStep = 1
+    chooseClipMode(mode)
+  }
+
   function chooseClipMode(mode) {
     clipMode = mode
+    try {
+      saveVar('lgs_clip_mode', mode)
+    } catch (error) {}
     if (mode === 'all')
       toast(qsTr('Tap ONE cutter polygon'))
     else if (mode === 'smart')
@@ -4026,6 +4055,7 @@ Item {
         clipLayer = hit.layer
         toast(qsTr('Using layer: %1').arg(clipLayerLabel()))
       }
+      clipResultText = ''
       const fid = hit.feature.id
       if (clipMode === 'all') {
         // Single-select: tapping another polygon replaces the cutter,
@@ -4478,7 +4508,13 @@ Item {
     } catch (error) {}
     clipResultText = message
     toast(message)
-    clipStep = 3
+    // Back to picking in the same mode, with the result on the status
+    // line until the next pick — the "Clip done" step only had exits.
+    keepFeatures = []
+    cutFeatures = []
+    clipCutterWkt = ''
+    clipAllTargetCount = 0
+    clipStep = 1
     return true
   }
 
@@ -4920,8 +4956,188 @@ Item {
     }
   }
 
+  // ================================================================
+  // BANNER KIT — one visual language for every canvas tool (v34).
+  //
+  // Every tool used to carry its own copy of a banner: a bold title, a
+  // paragraph of instructions, a status line and a two-row flow of
+  // Controls Buttons, each restyled by hand. Together they were the
+  // tallest thing on the map and no two quite agreed. These inline
+  // components are the whole vocabulary now: a frame, a header row
+  // (mode pills or a short title, the layer, a × to leave), one status
+  // line that doubles as the hint while there is nothing to report, and
+  // an action row with the one accent button on the right.
+  //
+  // Pills are Rectangles with a TapHandler rather than Controls
+  // Buttons: a third of the height, monochrome, and one grab policy for
+  // everything on a banner — the freehand DragHandler beneath the
+  // reshape catcher has dragThreshold 0, so a pen-jitter pixel on a pill
+  // tap must never be allowed to take the grab and cancel the tap.
+  // ================================================================
+  component LgsBanner: Rectangle {
+    default property alias content: bannerColumn.data
+    z: 3
+    radius: 8
+    color: '#CC000000'
+    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
+    height: bannerColumn.height + 20
+
+    Column {
+      id: bannerColumn
+      anchors.top: parent.top
+      anchors.topMargin: 10
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width - 20
+      spacing: 7
+    }
+  }
+
+  // A pill. Round by default (a mode: `active` inverts it to white);
+  // `square` for an action; `primary` for the one accent per banner.
+  component LgsPill: Rectangle {
+    id: pill
+    property string label: ''
+    property bool active: false
+    property bool primary: false
+    property bool square: false
+    signal tapped()
+    width: pillText.contentWidth + 24
+    height: pillText.contentHeight + (square ? 12 : 10)
+    radius: square ? 4 : height / 2
+    color: primary ? (enabled ? Theme.mainColor : 'transparent')
+                   : (active ? '#E6FFFFFF' : 'transparent')
+    border.color: primary ? (enabled ? Theme.mainColor : '#55FFFFFF')
+                : active ? '#E6FFFFFF'
+                : enabled ? (square ? '#AAFFFFFF' : '#88FFFFFF')
+                          : '#55FFFFFF'
+    border.width: 1
+
+    Text {
+      id: pillText
+      anchors.centerIn: parent
+      font.pixelSize: 13
+      font.bold: pill.primary
+      color: (pill.active && !pill.primary) ? 'black'
+             : (pill.enabled ? 'white' : '#66FFFFFF')
+      text: pill.label
+    }
+
+    TapHandler {
+      enabled: pill.enabled
+      gesturePolicy: TapHandler.ReleaseWithinBounds
+      grabPermissions: PointerHandler.CanTakeOverFromItems |
+                       PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                       PointerHandler.ApprovesCancellation
+      onTapped: pill.tapped()
+    }
+  }
+
+  // A short bold title for a banner without mode pills.
+  component LgsTitle: Text {
+    anchors.verticalCenter: parent.verticalCenter
+    font.pixelSize: 13
+    font.bold: true
+    color: 'white'
+  }
+
+  // Row 1: mode pills or a title on the left, the layer small on the
+  // right, and × to leave ('×' is Latin-1, so it is in every Android
+  // font; the old Cancel/Done wording was a distinction nothing hung on).
+  component LgsHeader: Item {
+    id: header
+    default property alias pills: headerRow.data
+    property string layerLabel: ''
+    signal closed()
+    width: parent.width
+    height: Math.max(headerRow.height, closeGlyph.height)
+
+    Row {
+      id: headerRow
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: 6
+    }
+
+    Text {
+      anchors.right: closeGlyph.left
+      anchors.rightMargin: 10
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(0, parent.width - headerRow.width -
+                      closeGlyph.width - 26)
+      horizontalAlignment: Text.AlignRight
+      elide: Text.ElideLeft
+      font.pixelSize: 12
+      color: '#99FFFFFF'
+      text: header.layerLabel
+    }
+
+    Rectangle {
+      id: closeGlyph
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: 28
+      height: 28
+      radius: 14
+      color: 'transparent'
+      border.color: '#88FFFFFF'
+      border.width: 1
+
+      Text {
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: -1
+        font.pixelSize: 17
+        color: 'white'
+        text: '×'
+      }
+
+      TapHandler {
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        grabPermissions: PointerHandler.CanTakeOverFromItems |
+                         PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                         PointerHandler.ApprovesCancellation
+        onTapped: header.closed()
+      }
+    }
+  }
+
+  // Row 2: one line. The hint while there is nothing to report, the
+  // count while working, the result after.
+  component LgsStatus: Text {
+    width: parent.width
+    wrapMode: Text.WordWrap
+    font.pixelSize: 12
+    color: '#CCFFFFFF'
+  }
+
+  // Row 3: secondary actions flow from the left, the primary sits on
+  // the right. Hidden altogether when nothing in it is visible.
+  component LgsActions: Item {
+    id: actions
+    default property alias secondary: actionFlow.data
+    property alias primary: primaryHolder.data
+    width: parent.width
+    height: Math.max(actionFlow.height, primaryHolder.height)
+    visible: actionFlow.visibleChildren.length > 0 ||
+             primaryHolder.visibleChildren.length > 0
+
+    Flow {
+      id: actionFlow
+      anchors.left: parent.left
+      anchors.right: primaryHolder.left
+      anchors.rightMargin: 8
+      spacing: 6
+    }
+
+    Item {
+      id: primaryHolder
+      anchors.right: parent.right
+      anchors.top: parent.top
+      width: visibleChildren.length > 0 ? visibleChildren[0].width : 0
+      height: visibleChildren.length > 0 ? visibleChildren[0].height : 0
+    }
+  }
+
   // ----------------------------------------------------------------
-  // Clip UI: tap catcher + instruction banner + confirm dialog
+  // Clip UI: tap catcher + banner
   // ----------------------------------------------------------------
   Item {
     id: clipCatcher
@@ -4939,386 +5155,117 @@ Item {
     }
   }
 
-  Rectangle {
+  // The clip banner (v34). The three modes are pills on the header — the
+  // tool opens straight into the last one used, so the "choose type"
+  // screen and its paragraph are gone — and a clip leaves you picking
+  // again in the same mode with the result on the status line, the way
+  // reshape does. No confirmation dialog: the counts it showed are on
+  // the status line before ✓, and Undo covers the last clip.
+  LgsBanner {
     id: clipBanner
     visible: plugin.clipStep > 0
-    z: 3
-    radius: 8
-    color: '#CC000000'
-    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: clipBannerColumn.height + 24
 
-    Column {
-      id: clipBannerColumn
-      anchors.top: parent.top
-      anchors.topMargin: 12
-      anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 24
-      spacing: 8
+    LgsHeader {
+      layerLabel: plugin.clipLayerLabel()
+      onClosed: plugin.exitClipMode()
 
-      Text {
-        width: parent.width
-        font.pixelSize: 15
-        font.bold: true
-        color: 'white'
-        text: plugin.clipStep === 1
-            ? (plugin.clipMode === '' ? qsTr('Clip — choose type')
-              : plugin.clipMode === 'all' ? qsTr('Clip All — pick the cutter')
-              : plugin.clipMode === 'smart' ? qsTr('Smart Clip — pick polygons')
-                                            : qsTr('Clip — step 1 of 2'))
-            : plugin.clipStep === 2 ? qsTr('Clip — step 2 of 2')
-                                    : qsTr('Clip done')
+      LgsPill {
+        label: qsTr('Isolated')
+        active: plugin.clipMode === 'isolated'
+        onTapped: plugin.switchClipMode('isolated')
       }
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 14
-        color: 'white'
-        text: plugin.clipStep === 1
-            ? (plugin.clipMode === ''
-              ? qsTr('Clip All: one polygon cuts everything under it. Isolated: pick KEEP then CUT. Smart: smaller polygons cut into larger ones.')
-              : plugin.clipMode === 'all'
-                ? qsTr('Tap ONE cutter polygon — every polygon it overlaps loses the overlap')
-                : plugin.clipMode === 'smart'
-                  ? qsTr('Tap 2+ polygons — each smaller one is cut out of the larger ones it overlaps')
-                  : qsTr('Tap the polygon(s) to KEEP — they stay whole'))
-            : plugin.clipStep === 2
-              ? qsTr('Tap the polygon(s) to CUT — the overlap is removed')
-              : plugin.clipResultText
+      LgsPill {
+        label: qsTr('Clip All')
+        active: plugin.clipMode === 'all'
+        onTapped: plugin.switchClipMode('all')
       }
 
-      Text {
-        visible: (plugin.clipStep === 1 && plugin.clipMode !== '') ||
-                 plugin.clipStep === 2
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 12
-        color: '#CCFFFFFF'
-        text: {
-          const count = plugin.clipStep === 2
-              ? plugin.cutFeatures.length : plugin.keepFeatures.length
-          let line = qsTr('%1 selected — tap again to unselect').arg(count)
-          if (plugin.clipLayer !== null)
-            line += ' · ' + plugin.clipLayerLabel()
-          return line
+      LgsPill {
+        label: qsTr('Smart')
+        active: plugin.clipMode === 'smart'
+        onTapped: plugin.switchClipMode('smart')
+      }
+    }
+
+    LgsStatus {
+      text: {
+        const keep = plugin.keepFeatures.length
+        const cut = plugin.cutFeatures.length
+        if (plugin.clipStep === 1 && keep === 0 && cut === 0 &&
+            plugin.clipResultText !== '')
+          return plugin.clipResultText
+        if (plugin.clipMode === 'all') {
+          return keep === 0
+              ? qsTr('Tap ONE cutter polygon — every polygon it overlaps loses the overlap')
+              : qsTr('Cutter picked · Clip ✓ cuts everything under it · tap it again to unpick')
+        }
+        if (plugin.clipMode === 'smart') {
+          return keep < 2
+              ? qsTr('Tap 2+ polygons — each smaller one is cut out of the larger ones it overlaps')
+              : qsTr('%1 picked · smaller polygons cut into larger · tap again to unpick').arg(keep)
+        }
+        if (plugin.clipStep === 1) {
+          return keep === 0
+              ? qsTr('Tap the polygons to KEEP — they stay whole')
+              : qsTr('%1 to keep · Next ▸ then tap the polygons to cut').arg(keep)
+        }
+        return cut === 0
+            ? qsTr('%1 to keep · tap the polygons to CUT — the overlap is removed').arg(keep)
+            : qsTr('%1 to keep · %2 to cut').arg(keep).arg(cut)
+      }
+    }
+
+    LgsActions {
+      LgsPill {
+        id: clipBackButton
+        square: true
+        visible: plugin.clipStep === 2
+        label: qsTr('◂ Keep')
+        onTapped: {
+          plugin.clipStep = 1
+          plugin.updateClipSelection()
         }
       }
 
-      Flow {
-        width: parent.width
-        spacing: 8
+      LgsPill {
+        id: clipUndoButton
+        square: true
+        visible: plugin.clipUndo !== null
+        label: qsTr('Undo last clip')
+        onTapped: plugin.undoLastClip()
+      }
 
-        Button {
-          id: clipModeAllButton
-          visible: plugin.clipStep === 1 && plugin.clipMode === ''
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Clip All')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.chooseClipMode('all')
-        }
-
-        Button {
-          id: clipModeIsolatedButton
-          visible: plugin.clipStep === 1 && plugin.clipMode === ''
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Isolated')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.chooseClipMode('isolated')
-        }
-
-        Button {
-          id: clipModeSmartButton
-          visible: plugin.clipStep === 1 && plugin.clipMode === ''
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Smart')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.chooseClipMode('smart')
-        }
-
-        Button {
-          id: clipCancelButton
-          visible: plugin.clipStep === 1 || plugin.clipStep === 2
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Cancel')
-            color: 'white'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: 'transparent'
-            border.color: '#AAFFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitClipMode()
-        }
-
-        Button {
-          id: clipBackButton
-          visible: plugin.clipStep === 2 ||
-                   (plugin.clipStep === 1 && plugin.clipMode !== '')
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('◂ Back')
-            color: 'white'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: 'transparent'
-            border.color: '#AAFFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: {
-            if (plugin.clipStep === 2) {
-              plugin.clipStep = 1
-              plugin.updateClipSelection()
-            } else {
-              plugin.clipBackToModeSelect()
-            }
-          }
-        }
-
-        Button {
-          id: clipNextButton
-          visible: plugin.clipStep === 1 && plugin.clipMode === 'isolated'
-          enabled: plugin.keepFeatures.length > 0
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Next ▸')
-            color: clipNextButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: clipNextButton.enabled ? Theme.mainColor : 'transparent'
-            border.color: clipNextButton.enabled
-                ? Theme.mainColor : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: {
+      primary: LgsPill {
+        id: clipExecuteButton
+        primary: true
+        visible: plugin.clipStep === 1 || plugin.clipStep === 2
+        enabled: plugin.clipMode === 'all'
+            ? plugin.keepFeatures.length === 1
+            : plugin.clipMode === 'smart'
+              ? plugin.keepFeatures.length >= 2
+              : plugin.clipStep === 1
+                ? plugin.keepFeatures.length > 0
+                : plugin.cutFeatures.length > 0
+        label: plugin.clipMode === 'isolated' && plugin.clipStep === 1
+            ? qsTr('Next ▸') : qsTr('Clip ✓')
+        onTapped: {
+          if (plugin.clipMode === 'isolated' && plugin.clipStep === 1) {
             plugin.clipStep = 2
             plugin.updateClipSelection()
-            plugin.toast(qsTr('Tap the polygons to CUT'))
+            return
           }
-        }
-
-        Button {
-          id: clipExecuteButton
-          visible: plugin.clipStep === 2 ||
-                   (plugin.clipStep === 1 &&
-                    (plugin.clipMode === 'all' || plugin.clipMode === 'smart'))
-          enabled: plugin.clipMode === 'all'
-              ? plugin.keepFeatures.length === 1
-              : plugin.clipMode === 'smart'
-                ? plugin.keepFeatures.length >= 2
-                : plugin.cutFeatures.length > 0
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Clip ✓')
-            color: clipExecuteButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+          if (plugin.clipMode === 'all' &&
+              plugin.countClipAllTargets() === 0) {
+            plugin.toast(qsTr('Nothing overlaps the cutter'))
+            return
           }
-          background: Rectangle {
-            color: clipExecuteButton.enabled
-                ? Theme.mainColor : 'transparent'
-            border.color: clipExecuteButton.enabled
-                ? Theme.mainColor : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: {
-            if (plugin.clipMode === 'all') {
-              // Count first so the dialog can show how many polygons
-              // are about to be cut; refuse a no-op clip outright.
-              if (plugin.countClipAllTargets() === 0) {
-                plugin.toast(qsTr('Nothing overlaps the cutter'))
-                return
-              }
-            }
-            clipConfirmDialog.open()
-          }
-        }
-
-        Button {
-          id: clipUndoButton
-          visible: plugin.clipStep === 3 ||
-                   (plugin.clipStep === 1 && plugin.clipMode === '' &&
-                    plugin.clipUndo !== null)
-          enabled: plugin.clipUndo !== null
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Undo last clip')
-            color: clipUndoButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: 'transparent'
-            border.color: clipUndoButton.enabled ? '#AAFFFFFF' : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: {
-            plugin.undoLastClip()
-            if (plugin.clipStep === 3)
-              plugin.exitClipMode()
-          }
-        }
-
-        Button {
-          id: clipDoneButton
-          visible: plugin.clipStep === 3
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Done')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitClipMode()
+          plugin.executeClip()
         }
       }
     }
   }
 
-  Dialog {
-    id: clipConfirmDialog
-    parent: mainWindow.contentItem
-    modal: true
-    title: qsTr('Clip polygons')
-    x: (mainWindow.width - width) / 2
-    y: (mainWindow.height - height) / 2
-    width: Math.min(mainWindow.width - 40, 420)
-    standardButtons: Dialog.Ok | Dialog.Cancel
-
-    onOpened: {
-      try {
-        const okButton = clipConfirmDialog.standardButton(Dialog.Ok)
-        if (okButton)
-          okButton.text = qsTr('Clip now')
-      } catch (error) {}
-    }
-
-    onAccepted: plugin.executeClip()
-
-    ColumnLayout {
-      anchors.fill: parent
-      spacing: 8
-
-      Label {
-        Layout.fillWidth: true
-        wrapMode: Text.WordWrap
-        text: plugin.clipMode === 'all'
-            ? qsTr('Cutter: 1 polygon — unchanged.') + '\n' +
-              qsTr('All %1 visible polygon(s) it overlaps will have the overlap removed. Pieces that get split apart become separate polygons.').arg(
-                  plugin.clipAllTargetCount) + '\n' +
-              qsTr('Layer: %1').arg(plugin.clipLayerLabel())
-            : plugin.clipMode === 'smart'
-            ? qsTr('%1 polygons selected.').arg(
-                  plugin.keepFeatures.length) + '\n' +
-              qsTr('Each smaller polygon is cut out of every larger selected polygon it overlaps. Pieces that get split apart become separate polygons.') + '\n' +
-              qsTr('Layer: %1').arg(plugin.clipLayerLabel())
-            : qsTr('KEEP: %1 polygon(s) — unchanged.').arg(
-                  plugin.keepFeatures.length) + '\n' +
-              qsTr('CUT: %1 polygon(s) — the area under the KEEP polygons is removed. Pieces that get split apart become separate polygons.').arg(
-                  plugin.cutFeatures.length) + '\n' +
-              qsTr('Layer: %1').arg(plugin.clipLayerLabel())
-      }
-    }
-  }
 
   // ================================================================
   // SPLINE — port of the desktop spline tools
@@ -9350,437 +9297,150 @@ Item {
     }
   }
 
-  // The reshape banner (v33 layout). Three rows, nothing repeated: the
-  // style pills with a close glyph, one line of status that doubles as
-  // the hint while there is nothing to report, and one row of actions.
-  // The old banner spent a bold title, a three-line lecture and a
-  // two-row button flow on a map the user is trying to draw on; the pill
-  // that opened the tool already says what it is, and the hint is only
-  // shown when there is nothing better to say (no line yet, or a result).
-  Rectangle {
+  // The reshape banner, on the kit (v34). Style pills, one status line
+  // that is the hint until there is something to report, actions with
+  // Apply on the right. Back only shows in Tap style, where step 1 is
+  // the only way to pick — freehand picks with a finger or a long press.
+  LgsBanner {
     id: reshapeBanner
     visible: plugin.reshapeStep > 0
-    z: 3
-    radius: 8
-    color: '#CC000000'
-    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: reshapeBannerColumn.height + 20
 
-    // Shared pill/button metrics. Buttons are Rectangles with a
-    // TapHandler rather than Controls Buttons: same monochrome language
-    // as the style pills, a third of the height, and one grab policy for
-    // everything on the banner (the freehand DragHandler beneath has
-    // dragThreshold 0, so a pill tap must never approve a take-over).
-    readonly property int pillFont: 13
-    readonly property int pillPadX: 12
-    readonly property int pillPadY: 5
+    LgsHeader {
+      layerLabel: plugin.reshapeLayerLabel()
+      onClosed: plugin.exitReshapeMode()
 
-    Column {
-      id: reshapeBannerColumn
-      anchors.top: parent.top
-      anchors.topMargin: 10
-      anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 20
-      spacing: 7
-
-      // Row 1 — style pills, layer, close.
-      Item {
-        width: parent.width
-        height: reshapeStyleRow.height
-
-        Row {
-          id: reshapeStyleRow
-          spacing: 6
-
-          Rectangle {
-            id: reshapeStyleTapPill
-            width: reshapeStyleTapText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeStyleTapText.contentHeight + reshapeBanner.pillPadY * 2
-            radius: height / 2
-            color: plugin.reshapeStyle === 'tap' ? '#E6FFFFFF' : 'transparent'
-            border.color: plugin.reshapeStyle === 'tap'
-                ? '#E6FFFFFF' : '#88FFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeStyleTapText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: plugin.reshapeStyle === 'tap' ? 'black' : 'white'
-              text: qsTr('Tap')
-            }
-
-            TapHandler {
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              // Do not approve a take-over: the freehand DragHandler on
-              // the catcher below has dragThreshold 0, and a pixel of pen
-              // jitter on a pill tap would otherwise let it take the grab
-              // and cancel the tap.
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: plugin.setReshapeStyle('tap')
-            }
-          }
-
-          Rectangle {
-            id: reshapeStyleFreePill
-            width: reshapeStyleFreeText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeStyleFreeText.contentHeight + reshapeBanner.pillPadY * 2
-            radius: height / 2
-            color: plugin.reshapeStyle === 'free' ? '#E6FFFFFF' : 'transparent'
-            border.color: plugin.reshapeStyle === 'free'
-                ? '#E6FFFFFF' : '#88FFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeStyleFreeText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: plugin.reshapeStyle === 'free' ? 'black' : 'white'
-              // Real emoji on purpose — exotic symbols are tofu on Android.
-              text: qsTr('Freehand ✏')
-            }
-
-            TapHandler {
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: plugin.setReshapeStyle('free')
-            }
-          }
-
-          Rectangle {
-            id: reshapeSplinePill
-            visible: plugin.featureSpline
-            width: reshapeSplineText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeSplineText.contentHeight + reshapeBanner.pillPadY * 2
-            radius: height / 2
-            color: plugin.reshapeSplineArmed ? '#E6FFFFFF' : 'transparent'
-            border.color: plugin.reshapeSplineArmed
-                ? '#E6FFFFFF' : '#88FFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeSplineText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: plugin.reshapeSplineArmed ? 'black' : 'white'
-              // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
-              text: qsTr('~ Spline')
-            }
-
-            TapHandler {
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: plugin.toggleReshapeSpline()
-            }
-          }
-        }
-
-        // The layer being reshaped, small and out of the way.
-        Text {
-          anchors.right: reshapeCloseGlyph.left
-          anchors.rightMargin: 10
-          anchors.verticalCenter: parent.verticalCenter
-          width: Math.max(0, parent.width - reshapeStyleRow.width -
-                          reshapeCloseGlyph.width - 26)
-          horizontalAlignment: Text.AlignRight
-          elide: Text.ElideLeft
-          font.pixelSize: 12
-          color: '#99FFFFFF'
-          text: plugin.reshapeLayerLabel()
-        }
-
-        // Leave. '×' is Latin-1, so it is in every Android font; the
-        // label used to say Cancel or Done depending on whether a reshape
-        // had landed, which is a distinction nothing hangs on.
-        Rectangle {
-          id: reshapeCloseGlyph
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          width: reshapeStyleRow.height
-          height: width
-          radius: height / 2
-          color: 'transparent'
-          border.color: '#88FFFFFF'
-          border.width: 1
-
-          Text {
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: -1
-            font.pixelSize: 17
-            color: 'white'
-            text: '×'
-          }
-
-          TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            grabPermissions: PointerHandler.CanTakeOverFromItems |
-                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                             PointerHandler.ApprovesCancellation
-            onTapped: plugin.exitReshapeMode()
-          }
-        }
+      LgsPill {
+        label: qsTr('Tap')
+        active: plugin.reshapeStyle === 'tap'
+        onTapped: plugin.setReshapeStyle('tap')
       }
 
-      // Row 2 — status, or the hint while there is nothing to report.
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 12
-        color: '#CCFFFFFF'
-        text: {
-          if (plugin.reshapeBusy)
-            return qsTr('Reshaping…')
-          const picks = plugin.reshapePicks.length
-          const targets = picks === 0 ? ''
-              : ' · ' + (plugin.reshapeLockedSelection
-                  ? qsTr('%1 selected').arg(picks)
-                  : qsTr('%1 target(s)').arg(picks))
-          if (plugin.reshapeStep === 1)
-            return qsTr('Tap polygons to limit the reshape, or just draw') +
-                   targets
-          if (plugin.reshapeControls.length === 0) {
-            // After a reshape the result stands in for the hint until the
-            // next line starts.
-            if (plugin.reshapeResultText !== '')
-              return plugin.reshapeResultText + targets
-            return (plugin.reshapeStyle === 'free'
-                ? qsTr('Draw with the stylus · finger pans · long-press picks a polygon')
-                : qsTr('Tap along the new edge · long-press picks a polygon')) +
-                targets
-          }
-          return qsTr('%1 point(s)').arg(plugin.reshapeControls.length) +
-                 ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
-                                                    : qsTr('straight')) +
+      LgsPill {
+        // Real emoji on purpose — exotic symbols are tofu on Android.
+        label: qsTr('Freehand ✏')
+        active: plugin.reshapeStyle === 'free'
+        onTapped: plugin.setReshapeStyle('free')
+      }
+
+      LgsPill {
+        visible: plugin.featureSpline
+        // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
+        label: qsTr('~ Spline')
+        active: plugin.reshapeSplineArmed
+        onTapped: plugin.toggleReshapeSpline()
+      }
+    }
+
+    LgsStatus {
+      text: {
+        if (plugin.reshapeBusy)
+          return qsTr('Reshaping…')
+        const picks = plugin.reshapePicks.length
+        const targets = picks === 0 ? ''
+            : ' · ' + (plugin.reshapeLockedSelection
+                ? qsTr('%1 selected').arg(picks)
+                : qsTr('%1 target(s)').arg(picks))
+        if (plugin.reshapeStep === 1)
+          return qsTr('Tap polygons to limit the reshape, or just draw') +
                  targets
+        if (plugin.reshapeControls.length === 0) {
+          // After a reshape the result stands in for the hint until the
+          // next line starts.
+          if (plugin.reshapeResultText !== '')
+            return plugin.reshapeResultText + targets
+          return (plugin.reshapeStyle === 'free'
+              ? qsTr('Draw with the stylus · finger pans · long-press picks a polygon')
+              : qsTr('Tap along the new edge · long-press picks a polygon')) +
+              targets
+        }
+        return qsTr('%1 point(s)').arg(plugin.reshapeControls.length) +
+               ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
+                                                  : qsTr('straight')) +
+               targets
+      }
+    }
+
+    LgsActions {
+      LgsPill {
+        square: true
+        visible: plugin.reshapeStep === 1
+        label: qsTr('Draw line ▸')
+        onTapped: {
+          plugin.reshapeStep = 2
+          plugin.splineRefreshDensity()
         }
       }
 
-      // Row 3 — actions. Secondary on the left, Apply on the right; the
-      // Flow wraps only if a narrow screen forces it.
-      Item {
-        width: parent.width
-        height: Math.max(reshapeActionFlow.height, reshapeExecuteButton.height)
+      LgsPill {
+        id: reshapeUndoPointButton
+        square: true
+        visible: plugin.reshapeStep === 2
+        enabled: plugin.reshapeControls.length > 0
+        // One action per press: a tapped point OR a whole stroke.
+        label: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
+                                              : qsTr('Undo point')
+        onTapped: plugin.reshapeUndoVertex()
+      }
 
-        Flow {
-          id: reshapeActionFlow
-          anchors.left: parent.left
-          anchors.right: reshapeExecuteButton.left
-          anchors.rightMargin: 8
-          spacing: 6
+      LgsPill {
+        id: reshapeUndoButton
+        square: true
+        visible: plugin.reshapeHistory.length > 0
+        enabled: !plugin.reshapeBusy
+        label: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
+        // Undoing no longer leaves the tool: a failed undo used to drop
+        // you out with the payload stranded, and a second press now pops
+        // the round before it.
+        onTapped: plugin.undoLastReshape()
+      }
 
-          Rectangle {
-            id: reshapeDrawButton
-            visible: plugin.reshapeStep === 1
-            width: reshapeDrawText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeDrawText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-            radius: 4
-            color: 'transparent'
-            border.color: '#AAFFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeDrawText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: 'white'
-              text: qsTr('Draw line ▸')
-            }
-
-            TapHandler {
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: {
-                plugin.reshapeStep = 2
-                plugin.splineRefreshDensity()
-              }
-            }
-          }
-
-          Rectangle {
-            id: reshapeUndoPointButton
-            visible: plugin.reshapeStep === 2
-            enabled: plugin.reshapeControls.length > 0
-            width: reshapeUndoPointText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeUndoPointText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-            radius: 4
-            color: 'transparent'
-            border.color: enabled ? '#AAFFFFFF' : '#55FFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeUndoPointText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
-              // One action per press: a tapped point OR a whole stroke.
-              text: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
-                                                   : qsTr('Undo point')
-            }
-
-            TapHandler {
-              enabled: reshapeUndoPointButton.enabled
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: plugin.reshapeUndoVertex()
-            }
-          }
-
-          Rectangle {
-            id: reshapeUndoButton
-            visible: plugin.reshapeHistory.length > 0
-            enabled: !plugin.reshapeBusy
-            width: reshapeUndoText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeUndoText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-            radius: 4
-            color: 'transparent'
-            border.color: enabled ? '#AAFFFFFF' : '#55FFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeUndoText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: reshapeUndoButton.enabled ? 'white' : '#66FFFFFF'
-              text: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
-            }
-
-            TapHandler {
-              enabled: reshapeUndoButton.enabled
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              // Undoing no longer leaves the tool: a failed undo used to
-              // drop you out with the payload stranded, and a second
-              // press now pops the round before it.
-              onTapped: plugin.undoLastReshape()
-            }
-          }
-
-          Rectangle {
-            // Persisting picks across a confirm is right for the next
-            // edge of the SAME polygon and wrong for the next polygon;
-            // without this, releasing cost a long-press per pick.
-            id: reshapeClearPicksButton
-            visible: plugin.reshapePicks.length > 0
-            enabled: !plugin.reshapeBusy
-            width: reshapeClearPicksText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeClearPicksText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-            radius: 4
-            color: 'transparent'
-            border.color: '#AAFFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeClearPicksText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: 'white'
-              text: qsTr('Clear targets')
-            }
-
-            TapHandler {
-              enabled: reshapeClearPicksButton.enabled
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: {
-                plugin.reshapePicks = []
-                plugin.reshapeLockedSelection = false
-                plugin.updateReshapeSelection()
-                plugin.toast(qsTr('Every polygon the line crosses will be reshaped'))
-              }
-            }
-          }
-
-          Rectangle {
-            // Back to picking — only in Tap style, where step 1 is the
-            // only way to pick. Freehand picks with a finger or a long
-            // press while drawing, so there is nothing to go back to.
-            id: reshapeBackButton
-            visible: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'tap' &&
-                     plugin.reshapeControls.length > 0
-            width: reshapeBackText.contentWidth + reshapeBanner.pillPadX * 2
-            height: reshapeBackText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-            radius: 4
-            color: 'transparent'
-            border.color: '#AAFFFFFF'
-            border.width: 1
-
-            Text {
-              id: reshapeBackText
-              anchors.centerIn: parent
-              font.pixelSize: reshapeBanner.pillFont
-              color: 'white'
-              text: qsTr('◂ Back')
-            }
-
-            TapHandler {
-              gesturePolicy: TapHandler.ReleaseWithinBounds
-              grabPermissions: PointerHandler.CanTakeOverFromItems |
-                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                               PointerHandler.ApprovesCancellation
-              onTapped: plugin.reshapeBackToPicks()
-            }
-          }
+      LgsPill {
+        // Persisting picks across a confirm is right for the next edge
+        // of the SAME polygon and wrong for the next polygon; without
+        // this, releasing cost a long-press per pick.
+        id: reshapeClearPicksButton
+        square: true
+        visible: plugin.reshapePicks.length > 0
+        enabled: !plugin.reshapeBusy
+        label: qsTr('Clear targets')
+        onTapped: {
+          plugin.reshapePicks = []
+          plugin.reshapeLockedSelection = false
+          plugin.updateReshapeSelection()
+          plugin.toast(qsTr('Every polygon the line crosses will be reshaped'))
         }
+      }
 
-        Rectangle {
-          id: reshapeExecuteButton
-          anchors.right: parent.right
-          anchors.top: parent.top
-          visible: plugin.reshapeStep === 2
-          enabled: plugin.reshapeControls.length >= 2 && !plugin.reshapeBusy
-          width: reshapeExecuteText.contentWidth + reshapeBanner.pillPadX * 2 + 4
-          height: reshapeExecuteText.contentHeight + reshapeBanner.pillPadY * 2 + 2
-          radius: 4
-          color: enabled ? Theme.mainColor : 'transparent'
-          border.color: enabled ? Theme.mainColor : '#55FFFFFF'
-          border.width: 1
+      LgsPill {
+        id: reshapeBackButton
+        square: true
+        visible: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'tap' &&
+                 plugin.reshapeControls.length > 0
+        label: qsTr('◂ Back')
+        onTapped: plugin.reshapeBackToPicks()
+      }
 
-          Text {
-            id: reshapeExecuteText
-            anchors.centerIn: parent
-            font.pixelSize: reshapeBanner.pillFont
-            font.bold: true
-            color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
-            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
-          }
-
-          TapHandler {
-            enabled: reshapeExecuteButton.enabled
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            grabPermissions: PointerHandler.CanTakeOverFromItems |
-                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                             PointerHandler.ApprovesCancellation
-            // No confirmation dialog (v33). It stood between every line
-            // and its result, and the tool is now built to be used over
-            // and over; a complete session undo is the better safety net.
-            // The work is deferred one turn so the banner and this button
-            // can repaint as busy first — assigning the text inside the
-            // synchronous block meant it never showed at all.
-            onTapped: {
-              if (plugin.reshapeBusy)
-                return
-              plugin.reshapeBusy = true
-              // A Timer, not Qt.callLater: callLater posts a queued call,
-              // and posted events run BEFORE the scene graph's update
-              // timer fires, so the busy frame was never rendered before
-              // the work began. One tick past a frame is enough.
-              reshapeRunTimer.start()
-            }
-          }
+      primary: LgsPill {
+        id: reshapeExecuteButton
+        primary: true
+        visible: plugin.reshapeStep === 2
+        enabled: plugin.reshapeControls.length >= 2 && !plugin.reshapeBusy
+        label: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
+        // No confirmation dialog (v33). It stood between every line and
+        // its result, and the tool is built to be used over and over; a
+        // complete session undo is the better safety net. The work is
+        // deferred one turn so the banner and this button can repaint as
+        // busy first — assigning the text inside the synchronous block
+        // meant it never showed at all.
+        onTapped: {
+          if (plugin.reshapeBusy)
+            return
+          plugin.reshapeBusy = true
+          // A Timer, not Qt.callLater: callLater posts a queued call, and
+          // posted events run BEFORE the scene graph's update timer
+          // fires, so the busy frame was never rendered before the work
+          // began. One tick past a frame is enough.
+          reshapeRunTimer.start()
         }
       }
     }
@@ -10027,76 +9687,25 @@ Item {
     }
   }
 
-  Rectangle {
+
+  // Two rows: the tool is one gesture, so there is nothing to act on.
+  LgsBanner {
     id: reverseBanner
     visible: plugin.reverseStep === 1
-    z: 3
-    radius: 8
-    color: '#CC000000'
-    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: reverseBannerColumn.height + 24
 
-    Column {
-      id: reverseBannerColumn
-      anchors.top: parent.top
-      anchors.topMargin: 12
-      anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 24
-      spacing: 8
+    LgsHeader {
+      onClosed: plugin.exitReverseMode()
 
-      Text {
-        width: parent.width
-        font.pixelSize: 15
-        font.bold: true
-        color: 'white'
-        text: qsTr('Reverse line direction')
+      LgsTitle {
+        text: qsTr('Reverse')
       }
+    }
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 14
-        color: 'white'
-        text: qsTr('Tap a line to flip its direction — tap it again to flip it back')
-      }
-
-      Text {
-        visible: plugin.reverseCount > 0
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 12
-        color: '#CCFFFFFF'
-        text: qsTr('%1 reversed').arg(plugin.reverseCount)
-      }
-
-      Flow {
-        width: parent.width
-        spacing: 8
-
-        Button {
-          id: reverseDoneButton
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Done')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitReverseMode()
-        }
-      }
+    LgsStatus {
+      text: plugin.reverseCount > 0
+          ? qsTr('Tap a line to flip it · tap again to flip back · %1 reversed')
+                .arg(plugin.reverseCount)
+          : qsTr('Tap a line to flip its direction · tap it again to flip it back')
     }
   }
 
@@ -10362,6 +9971,24 @@ Item {
     } catch (error) {
       toast(qsTr('Copy unavailable'))
     }
+  }
+
+  // "New source" on the banner: re-arm without leaving the tool. The
+  // ticked field set and the undo survive; the count restarts with the
+  // new source it is counting stamps from.
+  function copyRearmSource() {
+    try {
+      if (copySourceLayer !== null)
+        copySourceLayer.removeSelection()
+    } catch (error) {}
+    copySourceLayer = null
+    copySourceFeature = null
+    copySourceLabel = ''
+    copyCount = 0
+    copyPendingHit = null
+    copyPendingPlan = []
+    copyStep = 1
+    toast(qsTr('Tap the feature to copy FROM'))
   }
 
   function exitCopyMode() {
@@ -10715,128 +10342,54 @@ Item {
     }
   }
 
-  Rectangle {
+
+  // Copy banner (v34). The source stays armed for rapid stamping; "New
+  // source" re-arms without leaving the tool, which used to cost an
+  // exit and a re-entry.
+  LgsBanner {
     id: copyBanner
     visible: plugin.copyStep > 0
-    z: 3
-    radius: 8
-    color: '#CC000000'
-    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: copyBannerColumn.height + 24
 
-    Column {
-      id: copyBannerColumn
-      anchors.top: parent.top
-      anchors.topMargin: 12
-      anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 24
-      spacing: 8
+    LgsHeader {
+      layerLabel: plugin.copyLayerLabel(plugin.copyLayer)
+      onClosed: plugin.exitCopyMode()
 
-      Text {
-        width: parent.width
-        font.pixelSize: 15
-        font.bold: true
-        color: 'white'
+      LgsTitle {
         text: qsTr('Copy attributes')
       }
+    }
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 14
-        color: 'white'
-        text: plugin.copyStep === 1
-            ? qsTr('Tap the feature to copy FROM · %1')
-                  .arg(plugin.copyLayerLabel(plugin.copyLayer))
-            : qsTr('Tap features to copy TO — the source stays armed. Only non-empty source values are written.')
+    LgsStatus {
+      text: {
+        if (plugin.copyStep === 1)
+          return qsTr('Tap the feature to copy FROM')
+        if (plugin.copyCount > 0)
+          return qsTr('%1 stamped from %2 · tap more features to copy TO')
+              .arg(plugin.copyCount).arg(plugin.copySourceLabel)
+        return qsTr('Source armed · tap features to copy TO — only non-empty values are written')
       }
+    }
 
-      Text {
+    LgsActions {
+      LgsPill {
+        square: true
         visible: plugin.copyStep === 2
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 12
-        color: '#CCFFFFFF'
-        text: plugin.copyCount > 0
-            ? qsTr('%1 copied from %2 — Undo covers the last one')
-                  .arg(plugin.copyCount).arg(plugin.copySourceLabel)
-            : qsTr('Source: %1').arg(plugin.copySourceLabel)
+        label: qsTr('Fields…')
+        onTapped: plugin.openCopyFieldPanel(null)
       }
 
-      Flow {
-        width: parent.width
-        spacing: 8
+      LgsPill {
+        square: true
+        visible: plugin.copyStep === 2
+        label: qsTr('New source')
+        onTapped: plugin.copyRearmSource()
+      }
 
-        Button {
-          visible: plugin.copyStep === 2
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Fields…')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: '#66000000'
-            border.color: 'white'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.openCopyFieldPanel(null)
-        }
-
-        Button {
-          visible: plugin.copyUndo !== null
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Undo')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: '#66000000'
-            border.color: 'white'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.undoLastCopy()
-        }
-
-        Button {
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Done')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitCopyMode()
-        }
+      LgsPill {
+        square: true
+        visible: plugin.copyUndo !== null
+        label: qsTr('Undo')
+        onTapped: plugin.undoLastCopy()
       }
     }
   }
@@ -11077,16 +10630,6 @@ Item {
     mergePendingWkt = ''
   }
 
-  function mergeBackToPicks() {
-    // 'Merge more' from the done step — keep the undo armed.
-    mergeLayer = null
-    mergeFeatures = []
-    mergeResultText = ''
-    mergePendingWkt = ''
-    mergeStep = 1
-    toast(qsTr('Tap 2 or more polygons to merge'))
-  }
-
   // ----------------------------------------------------------------
   // Tap handling
   // ----------------------------------------------------------------
@@ -11221,7 +10764,9 @@ Item {
         return
       }
       mergePendingWkt = parts[0]
-      mergeConfirmDialog.open()
+      // No confirmation dialog (v34): the pick count and the keeper rule
+      // are on the status line, and Undo restores every parent.
+      executeMerge()
     } catch (error) {
       toast(qsTr('Merge failed'))
     }
@@ -11334,7 +10879,10 @@ Item {
           .arg(parents.length)
       mergeFeatures = []
       mergePendingWkt = ''
-      mergeStep = 2
+      // Stay picking: the result sits on the status line until the next
+      // pick, and Undo stays on the banner.
+      mergeLayer = null
+      mergeStep = 1
       toast(mergeResultText)
     } catch (error) {
       toast(qsTr('Merge failed'))
@@ -11409,198 +10957,55 @@ Item {
     }
   }
 
-  Rectangle {
+
+  // Merge banner (v34). A merge leaves you picking again with the
+  // result on the status line; Undo stays on the banner instead of
+  // throwing you out of the tool. No confirmation dialog — the pick
+  // count and the keeper rule are on the status line, and Undo restores
+  // every parent.
+  LgsBanner {
     id: mergeBanner
     visible: plugin.mergeStep > 0
-    z: 3
-    radius: 8
-    color: '#CC000000'
-    width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: mergeBannerColumn.height + 24
 
-    Column {
-      id: mergeBannerColumn
-      anchors.top: parent.top
-      anchors.topMargin: 12
-      anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 24
-      spacing: 8
+    LgsHeader {
+      layerLabel: plugin.mergeLayerLabel()
+      onClosed: plugin.exitMergeMode()
 
-      Text {
-        width: parent.width
-        font.pixelSize: 15
-        font.bold: true
-        color: 'white'
-        text: qsTr('Merge polygons')
+      LgsTitle {
+        text: qsTr('Merge')
+      }
+    }
+
+    LgsStatus {
+      text: {
+        const picks = plugin.mergeFeatures.length
+        if (picks === 0 && plugin.mergeResultText !== '')
+          return plugin.mergeResultText
+        if (picks === 0)
+          return qsTr('Tap 2+ polygons on one layer — the first keeps its attributes · tap again to unpick')
+        return qsTr('%1 picked · the first is the keeper, the others are deleted')
+            .arg(picks)
+      }
+    }
+
+    LgsActions {
+      LgsPill {
+        square: true
+        visible: plugin.mergeUndo !== null
+        label: qsTr('Undo last merge')
+        onTapped: plugin.undoLastMerge()
       }
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 14
-        color: 'white'
-        text: plugin.mergeStep === 1
-            ? qsTr('Tap 2 or more polygons on one layer — the FIRST keeps its attributes and identity; its empty fields are filled from the others. Tap a polygon again to unpick it.')
-            : plugin.mergeResultText
-      }
-
-      Text {
-        visible: plugin.mergeStep === 1 && plugin.mergeFeatures.length > 0
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 12
-        color: '#CCFFFFFF'
-        text: qsTr('%1 picked on %2 — first pick is the keeper')
-              .arg(plugin.mergeFeatures.length).arg(plugin.mergeLayerLabel())
-      }
-
-      Flow {
-        width: parent.width
-        spacing: 8
-
-        Button {
-          visible: plugin.mergeStep === 1
-          enabled: plugin.mergeFeatures.length >= 2
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Merge ✓')
-            color: parent.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: parent.enabled ? Theme.mainColor : '#33000000'
-            border.color: parent.enabled ? Theme.mainColor : '#33000000'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.requestMerge()
-        }
-
-        Button {
-          visible: plugin.mergeStep === 2
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Merge more')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: '#66000000'
-            border.color: 'white'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.mergeBackToPicks()
-        }
-
-        Button {
-          visible: plugin.mergeStep === 2 && plugin.mergeUndo !== null
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Undo last merge')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: '#66000000'
-            border.color: 'white'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: {
-            plugin.undoLastMerge()
-            plugin.exitMergeMode()
-          }
-        }
-
-        Button {
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: plugin.mergeStep === 1 ? qsTr('Cancel') : qsTr('Done')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.exitMergeMode()
-        }
+      primary: LgsPill {
+        primary: true
+        visible: plugin.mergeStep === 1
+        enabled: plugin.mergeFeatures.length >= 2
+        label: qsTr('Merge ✓')
+        onTapped: plugin.requestMerge()
       }
     }
   }
 
-  Dialog {
-    id: mergeConfirmDialog
-    parent: mainWindow.contentItem
-    modal: true
-    title: qsTr('Merge polygons')
-    x: (mainWindow.width - width) / 2
-    y: (mainWindow.height - height) / 2
-    width: Math.min(mainWindow.width - 40, 420)
-    standardButtons: Dialog.Ok | Dialog.Cancel
-
-    onOpened: {
-      try {
-        const okButton = mergeConfirmDialog.standardButton(Dialog.Ok)
-        if (okButton)
-          okButton.text = qsTr('Merge now')
-      } catch (error) {}
-    }
-
-    onAccepted: plugin.executeMerge()
-
-    onRejected: plugin.mergePendingWkt = ''
-
-    ColumnLayout {
-      anchors.fill: parent
-      spacing: 8
-
-      Label {
-        Layout.fillWidth: true
-        wrapMode: Text.WordWrap
-        text: {
-          let lines = qsTr('%1 polygons will merge into one on %2.')
-              .arg(plugin.mergeFeatures.length)
-              .arg(plugin.mergeLayerLabel())
-          lines += '\n' + qsTr('The first polygon you tapped keeps its attributes and identity; its empty fields are filled from the others.')
-          lines += '\n' + qsTr('The other %1 polygon(s) are deleted.')
-              .arg(Math.max(plugin.mergeFeatures.length - 1, 0))
-          return lines
-        }
-      }
-    }
-  }
 
   // ================================================================
   // RECENTER HOLD (v23)
