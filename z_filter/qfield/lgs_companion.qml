@@ -9333,6 +9333,13 @@ Item {
     }
   }
 
+  // The reshape banner (v33 layout). Three rows, nothing repeated: the
+  // style pills with a close glyph, one line of status that doubles as
+  // the hint while there is nothing to report, and one row of actions.
+  // The old banner spent a bold title, a three-line lecture and a
+  // two-row button flow on a map the user is trying to draw on; the pill
+  // that opened the tool already says what it is, and the hint is only
+  // shown when there is nothing better to say (no line yet, or a result).
   Rectangle {
     id: reshapeBanner
     visible: plugin.reshapeStep > 0
@@ -9340,390 +9347,424 @@ Item {
     radius: 8
     color: '#CC000000'
     width: Math.min((parent !== null ? parent.width : 444) - 24, 420)
-    height: reshapeBannerColumn.height + 24
+    height: reshapeBannerColumn.height + 20
+
+    // Shared pill/button metrics. Buttons are Rectangles with a
+    // TapHandler rather than Controls Buttons: same monochrome language
+    // as the style pills, a third of the height, and one grab policy for
+    // everything on the banner (the freehand DragHandler beneath has
+    // dragThreshold 0, so a pill tap must never approve a take-over).
+    readonly property int pillFont: 13
+    readonly property int pillPadX: 12
+    readonly property int pillPadY: 5
 
     Column {
       id: reshapeBannerColumn
       anchors.top: parent.top
-      anchors.topMargin: 12
+      anchors.topMargin: 10
       anchors.horizontalCenter: parent.horizontalCenter
-      width: parent.width - 24
-      spacing: 8
+      width: parent.width - 20
+      spacing: 7
 
-      // Digitisation style toggles (v32) — Tap / Freehand, plus the
-      // reshape's own per-style Spline toggle. Same monochrome
-      // active-state language as the bottom pills: inverted while on.
-      Row {
-        visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
-        spacing: 8
-
-        Rectangle {
-          id: reshapeStyleTapPill
-          width: reshapeStyleTapText.contentWidth + 24
-          height: reshapeStyleTapText.contentHeight + 12
-          radius: height / 2
-          color: plugin.reshapeStyle === 'tap' ? '#E6FFFFFF' : 'transparent'
-          border.color: plugin.reshapeStyle === 'tap'
-              ? '#E6FFFFFF' : '#AAFFFFFF'
-          border.width: 1
-
-          Text {
-            id: reshapeStyleTapText
-            anchors.centerIn: parent
-            font.pixelSize: 14
-            color: plugin.reshapeStyle === 'tap' ? 'black' : 'white'
-            text: qsTr('Tap')
-          }
-
-          TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            // Do not approve a take-over: the freehand DragHandler on the
-            // catcher below has dragThreshold 0, and a pixel of pen jitter
-            // on a pill tap would otherwise let it take the grab and
-            // cancel the tap.
-            grabPermissions: PointerHandler.CanTakeOverFromItems |
-                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                             PointerHandler.ApprovesCancellation
-            onTapped: plugin.setReshapeStyle('tap')
-          }
-        }
-
-        Rectangle {
-          id: reshapeStyleFreePill
-          width: reshapeStyleFreeText.contentWidth + 24
-          height: reshapeStyleFreeText.contentHeight + 12
-          radius: height / 2
-          color: plugin.reshapeStyle === 'free' ? '#E6FFFFFF' : 'transparent'
-          border.color: plugin.reshapeStyle === 'free'
-              ? '#E6FFFFFF' : '#AAFFFFFF'
-          border.width: 1
-
-          Text {
-            id: reshapeStyleFreeText
-            anchors.centerIn: parent
-            font.pixelSize: 14
-            color: plugin.reshapeStyle === 'free' ? 'black' : 'white'
-            // Real emoji on purpose — exotic symbols are tofu on Android.
-            text: qsTr('Freehand ✏')
-          }
-
-          TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            grabPermissions: PointerHandler.CanTakeOverFromItems |
-                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                             PointerHandler.ApprovesCancellation
-            onTapped: plugin.setReshapeStyle('free')
-          }
-        }
-
-        Rectangle {
-          id: reshapeSplinePill
-          visible: plugin.featureSpline
-          width: reshapeSplineText.contentWidth + 24
-          height: reshapeSplineText.contentHeight + 12
-          radius: height / 2
-          color: plugin.reshapeSplineArmed ? '#E6FFFFFF' : 'transparent'
-          border.color: plugin.reshapeSplineArmed
-              ? '#E6FFFFFF' : '#AAFFFFFF'
-          border.width: 1
-
-          Text {
-            id: reshapeSplineText
-            anchors.centerIn: parent
-            font.pixelSize: 14
-            color: plugin.reshapeSplineArmed ? 'black' : 'white'
-            // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
-            text: qsTr('~ Spline')
-          }
-
-          TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            grabPermissions: PointerHandler.CanTakeOverFromItems |
-                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
-                             PointerHandler.ApprovesCancellation
-            onTapped: plugin.toggleReshapeSpline()
-          }
-        }
-      }
-
-      Text {
+      // Row 1 — style pills, layer, close.
+      Item {
         width: parent.width
-        font.pixelSize: 15
-        font.bold: true
-        color: 'white'
-        text: plugin.reshapeStep === 1
-            ? qsTr('Reshape — pick targets (optional)')
-            : qsTr('Reshape — draw the new edge')
-      }
+        height: reshapeStyleRow.height
 
-      Text {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        font.pixelSize: 14
-        color: 'white'
-        text: {
-          if (plugin.reshapeBusy)
-            return qsTr('Reshaping…')
-          // After a reshape the result stands in for the hint until the
-          // next line starts, so it is readable without a dead step to
-          // park it in.
-          if (plugin.reshapeStep === 2 && plugin.reshapeControls.length === 0 &&
-              plugin.reshapeResultText !== '')
-            return plugin.reshapeResultText
-          if (plugin.reshapeStep === 1)
-            return qsTr('Tap polygons to limit the reshape, or just start drawing — with no picks every polygon the line crosses is reshaped')
-          return plugin.reshapeStyle === 'free'
-              ? qsTr('Draw the new edge with the stylus — finger pans, a stylus tap adds a single point; the line must enter and exit each polygon it reshapes')
-              : qsTr('Tap along the new edge — the line must enter and exit each polygon it reshapes')
+        Row {
+          id: reshapeStyleRow
+          spacing: 6
+
+          Rectangle {
+            id: reshapeStyleTapPill
+            width: reshapeStyleTapText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeStyleTapText.contentHeight + reshapeBanner.pillPadY * 2
+            radius: height / 2
+            color: plugin.reshapeStyle === 'tap' ? '#E6FFFFFF' : 'transparent'
+            border.color: plugin.reshapeStyle === 'tap'
+                ? '#E6FFFFFF' : '#88FFFFFF'
+            border.width: 1
+
+            Text {
+              id: reshapeStyleTapText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: plugin.reshapeStyle === 'tap' ? 'black' : 'white'
+              text: qsTr('Tap')
+            }
+
+            TapHandler {
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              // Do not approve a take-over: the freehand DragHandler on
+              // the catcher below has dragThreshold 0, and a pixel of pen
+              // jitter on a pill tap would otherwise let it take the grab
+              // and cancel the tap.
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: plugin.setReshapeStyle('tap')
+            }
+          }
+
+          Rectangle {
+            id: reshapeStyleFreePill
+            width: reshapeStyleFreeText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeStyleFreeText.contentHeight + reshapeBanner.pillPadY * 2
+            radius: height / 2
+            color: plugin.reshapeStyle === 'free' ? '#E6FFFFFF' : 'transparent'
+            border.color: plugin.reshapeStyle === 'free'
+                ? '#E6FFFFFF' : '#88FFFFFF'
+            border.width: 1
+
+            Text {
+              id: reshapeStyleFreeText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: plugin.reshapeStyle === 'free' ? 'black' : 'white'
+              // Real emoji on purpose — exotic symbols are tofu on Android.
+              text: qsTr('Freehand ✏')
+            }
+
+            TapHandler {
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: plugin.setReshapeStyle('free')
+            }
+          }
+
+          Rectangle {
+            id: reshapeSplinePill
+            visible: plugin.featureSpline
+            width: reshapeSplineText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeSplineText.contentHeight + reshapeBanner.pillPadY * 2
+            radius: height / 2
+            color: plugin.reshapeSplineArmed ? '#E6FFFFFF' : 'transparent'
+            border.color: plugin.reshapeSplineArmed
+                ? '#E6FFFFFF' : '#88FFFFFF'
+            border.width: 1
+
+            Text {
+              id: reshapeSplineText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: plugin.reshapeSplineArmed ? 'black' : 'white'
+              // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
+              text: qsTr('~ Spline')
+            }
+
+            TapHandler {
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: plugin.toggleReshapeSpline()
+            }
+          }
+        }
+
+        // The layer being reshaped, small and out of the way.
+        Text {
+          anchors.right: reshapeCloseGlyph.left
+          anchors.rightMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.max(0, parent.width - reshapeStyleRow.width -
+                          reshapeCloseGlyph.width - 26)
+          horizontalAlignment: Text.AlignRight
+          elide: Text.ElideLeft
+          font.pixelSize: 12
+          color: '#99FFFFFF'
+          text: plugin.reshapeLayerLabel()
+        }
+
+        // Leave. '×' is Latin-1, so it is in every Android font; the
+        // label used to say Cancel or Done depending on whether a reshape
+        // had landed, which is a distinction nothing hangs on.
+        Rectangle {
+          id: reshapeCloseGlyph
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: reshapeStyleRow.height
+          height: width
+          radius: height / 2
+          color: 'transparent'
+          border.color: '#88FFFFFF'
+          border.width: 1
+
+          Text {
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: -1
+            font.pixelSize: 17
+            color: 'white'
+            text: '×'
+          }
+
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            grabPermissions: PointerHandler.CanTakeOverFromItems |
+                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                             PointerHandler.ApprovesCancellation
+            onTapped: plugin.exitReshapeMode()
+          }
         }
       }
 
+      // Row 2 — status, or the hint while there is nothing to report.
       Text {
         width: parent.width
         wrapMode: Text.WordWrap
         font.pixelSize: 12
         color: '#CCFFFFFF'
         text: {
-          if (plugin.reshapeStep === 1) {
-            let line = qsTr('%1 selected — tap again to unselect')
-                .arg(plugin.reshapePicks.length)
-            return line + ' · ' + plugin.reshapeLayerLabel()
+          if (plugin.reshapeBusy)
+            return qsTr('Reshaping…')
+          const picks = plugin.reshapePicks.length
+          const targets = picks === 0 ? ''
+              : ' · ' + (plugin.reshapeLockedSelection
+                  ? qsTr('%1 selected').arg(picks)
+                  : qsTr('%1 target(s)').arg(picks))
+          if (plugin.reshapeStep === 1)
+            return qsTr('Tap polygons to limit the reshape, or just draw') +
+                   targets
+          if (plugin.reshapeControls.length === 0) {
+            // After a reshape the result stands in for the hint until the
+            // next line starts.
+            if (plugin.reshapeResultText !== '')
+              return plugin.reshapeResultText + targets
+            return (plugin.reshapeStyle === 'free'
+                ? qsTr('Draw with the stylus · finger pans · long-press picks a polygon')
+                : qsTr('Tap along the new edge · long-press picks a polygon')) +
+                targets
           }
-          let line = qsTr('%1 point(s)').arg(plugin.reshapeControls.length)
-          line += ' · ' + (plugin.reshapeStyle === 'free'
-              ? qsTr('freehand') : qsTr('tap'))
-          line += ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
-                                                     : qsTr('straight'))
-          if (plugin.reshapePicks.length > 0) {
-            line += ' · ' + (plugin.reshapeLockedSelection
-                ? qsTr('%1 selected — long-press a polygon to add/remove')
-                    .arg(plugin.reshapePicks.length)
-                : qsTr('%1 picked — long-press a polygon to add/remove')
-                    .arg(plugin.reshapePicks.length))
-          }
-          return line + ' · ' + plugin.reshapeLayerLabel()
+          return qsTr('%1 point(s)').arg(plugin.reshapeControls.length) +
+                 ' · ' + (plugin.reshapeSplineArmed ? qsTr('smoothed')
+                                                    : qsTr('straight')) +
+                 targets
         }
       }
 
-      Flow {
+      // Row 3 — actions. Secondary on the left, Apply on the right; the
+      // Flow wraps only if a narrow screen forces it.
+      Item {
         width: parent.width
-        spacing: 8
+        height: Math.max(reshapeActionFlow.height, reshapeExecuteButton.height)
 
-        Button {
-          id: reshapeDrawButton
-          visible: plugin.reshapeStep === 1
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Draw line ▸')
-            color: 'white'
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: Theme.mainColor
-            border.color: Theme.mainColor
-            border.width: 1
+        Flow {
+          id: reshapeActionFlow
+          anchors.left: parent.left
+          anchors.right: reshapeExecuteButton.left
+          anchors.rightMargin: 8
+          spacing: 6
+
+          Rectangle {
+            id: reshapeDrawButton
+            visible: plugin.reshapeStep === 1
+            width: reshapeDrawText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeDrawText.contentHeight + reshapeBanner.pillPadY * 2 + 2
             radius: 4
-          }
-          onClicked: {
-            plugin.reshapeStep = 2
-            plugin.splineRefreshDensity()
-            plugin.toast(qsTr('Tap along the new edge — at least 2 points'))
-          }
-        }
-
-        Button {
-          id: reshapeUndoPointButton
-          visible: plugin.reshapeStep === 2
-          enabled: plugin.reshapeControls.length > 0
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            // One action per press: a tapped point OR a whole stroke.
-            text: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
-                                                 : qsTr('Undo point')
-            color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: 'transparent'
-            border.color: reshapeUndoPointButton.enabled
-                ? '#AAFFFFFF' : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.reshapeUndoVertex()
-        }
-
-        Button {
-          // Persisting picks across a confirm is right for the next edge
-          // of the SAME polygon and wrong for the next polygon; without
-          // this, releasing cost a long-press per pick.
-          id: reshapeClearPicksButton
-          visible: plugin.reshapePicks.length > 0
-          enabled: !plugin.reshapeBusy
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Clear targets')
-            color: 'white'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
             color: 'transparent'
             border.color: '#AAFFFFFF'
             border.width: 1
-            radius: 4
-          }
-          onClicked: {
-            plugin.reshapePicks = []
-            plugin.reshapeLockedSelection = false
-            plugin.updateReshapeSelection()
-            plugin.toast(qsTr('Every polygon the line crosses will be reshaped'))
-          }
-        }
 
-        Button {
-          id: reshapeBackButton
-          visible: plugin.reshapeStep === 2 &&
-                   plugin.reshapeControls.length > 0
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('◂ Back')
-            color: 'white'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            Text {
+              id: reshapeDrawText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: 'white'
+              text: qsTr('Draw line ▸')
+            }
+
+            TapHandler {
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: {
+                plugin.reshapeStep = 2
+                plugin.splineRefreshDensity()
+              }
+            }
           }
-          background: Rectangle {
+
+          Rectangle {
+            id: reshapeUndoPointButton
+            visible: plugin.reshapeStep === 2
+            enabled: plugin.reshapeControls.length > 0
+            width: reshapeUndoPointText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeUndoPointText.contentHeight + reshapeBanner.pillPadY * 2 + 2
+            radius: 4
+            color: 'transparent'
+            border.color: enabled ? '#AAFFFFFF' : '#55FFFFFF'
+            border.width: 1
+
+            Text {
+              id: reshapeUndoPointText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
+              // One action per press: a tapped point OR a whole stroke.
+              text: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
+                                                   : qsTr('Undo point')
+            }
+
+            TapHandler {
+              enabled: reshapeUndoPointButton.enabled
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: plugin.reshapeUndoVertex()
+            }
+          }
+
+          Rectangle {
+            id: reshapeUndoButton
+            visible: plugin.reshapeHistory.length > 0
+            enabled: !plugin.reshapeBusy
+            width: reshapeUndoText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeUndoText.contentHeight + reshapeBanner.pillPadY * 2 + 2
+            radius: 4
+            color: 'transparent'
+            border.color: enabled ? '#AAFFFFFF' : '#55FFFFFF'
+            border.width: 1
+
+            Text {
+              id: reshapeUndoText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: reshapeUndoButton.enabled ? 'white' : '#66FFFFFF'
+              text: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
+            }
+
+            TapHandler {
+              enabled: reshapeUndoButton.enabled
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              // Undoing no longer leaves the tool: a failed undo used to
+              // drop you out with the payload stranded, and a second
+              // press now pops the round before it.
+              onTapped: plugin.undoLastReshape()
+            }
+          }
+
+          Rectangle {
+            // Persisting picks across a confirm is right for the next
+            // edge of the SAME polygon and wrong for the next polygon;
+            // without this, releasing cost a long-press per pick.
+            id: reshapeClearPicksButton
+            visible: plugin.reshapePicks.length > 0
+            enabled: !plugin.reshapeBusy
+            width: reshapeClearPicksText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeClearPicksText.contentHeight + reshapeBanner.pillPadY * 2 + 2
+            radius: 4
             color: 'transparent'
             border.color: '#AAFFFFFF'
             border.width: 1
-            radius: 4
-          }
-          onClicked: plugin.reshapeBackToPicks()
-        }
 
-        Button {
-          id: reshapeCancelButton
-          visible: plugin.reshapeStep === 1 || plugin.reshapeStep === 2
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            // "Cancel" is a lie once a reshape has landed: there is
-            // nothing left to cancel, you are just leaving.
-            text: plugin.reshapeHistory.length > 0 ||
-                  plugin.reshapeResultText !== ''
-                ? qsTr('Done') : qsTr('Cancel')
-            color: 'white'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            Text {
+              id: reshapeClearPicksText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: 'white'
+              text: qsTr('Clear targets')
+            }
+
+            TapHandler {
+              enabled: reshapeClearPicksButton.enabled
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: {
+                plugin.reshapePicks = []
+                plugin.reshapeLockedSelection = false
+                plugin.updateReshapeSelection()
+                plugin.toast(qsTr('Every polygon the line crosses will be reshaped'))
+              }
+            }
           }
-          background: Rectangle {
+
+          Rectangle {
+            // Back to picking — only in Tap style, where step 1 is the
+            // only way to pick. Freehand picks with a finger or a long
+            // press while drawing, so there is nothing to go back to.
+            id: reshapeBackButton
+            visible: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'tap' &&
+                     plugin.reshapeControls.length > 0
+            width: reshapeBackText.contentWidth + reshapeBanner.pillPadX * 2
+            height: reshapeBackText.contentHeight + reshapeBanner.pillPadY * 2 + 2
+            radius: 4
             color: 'transparent'
             border.color: '#AAFFFFFF'
             border.width: 1
-            radius: 4
+
+            Text {
+              id: reshapeBackText
+              anchors.centerIn: parent
+              font.pixelSize: reshapeBanner.pillFont
+              color: 'white'
+              text: qsTr('◂ Back')
+            }
+
+            TapHandler {
+              gesturePolicy: TapHandler.ReleaseWithinBounds
+              grabPermissions: PointerHandler.CanTakeOverFromItems |
+                               PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                               PointerHandler.ApprovesCancellation
+              onTapped: plugin.reshapeBackToPicks()
+            }
           }
-          onClicked: plugin.exitReshapeMode()
         }
 
-        Button {
+        Rectangle {
           id: reshapeExecuteButton
+          anchors.right: parent.right
+          anchors.top: parent.top
           visible: plugin.reshapeStep === 2
           enabled: plugin.reshapeControls.length >= 2 && !plugin.reshapeBusy
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
-            color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
+          width: reshapeExecuteText.contentWidth + reshapeBanner.pillPadX * 2 + 4
+          height: reshapeExecuteText.contentHeight + reshapeBanner.pillPadY * 2 + 2
+          radius: 4
+          color: enabled ? Theme.mainColor : 'transparent'
+          border.color: enabled ? Theme.mainColor : '#55FFFFFF'
+          border.width: 1
+
+          Text {
+            id: reshapeExecuteText
+            anchors.centerIn: parent
+            font.pixelSize: reshapeBanner.pillFont
             font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
+            color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
+            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
           }
-          background: Rectangle {
-            color: reshapeExecuteButton.enabled
-                ? Theme.mainColor : 'transparent'
-            border.color: reshapeExecuteButton.enabled
-                ? Theme.mainColor : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          // No confirmation dialog (v33). It stood between every line
-          // and its result, and the tool is now built to be used over and
-          // over; a complete session undo is the better safety net. The
-          // work is deferred one turn so the banner and this button can
-          // repaint as busy first — assigning the text inside the
-          // synchronous block meant it never showed at all.
-          onClicked: {
-            if (plugin.reshapeBusy)
-              return
-            plugin.reshapeBusy = true
-            // A Timer, not Qt.callLater: callLater posts a queued call,
-            // and posted events run BEFORE the scene graph's update timer
-            // fires, so the busy frame was never rendered before the work
-            // began. One tick past a frame is enough.
-            reshapeRunTimer.start()
+
+          TapHandler {
+            enabled: reshapeExecuteButton.enabled
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            grabPermissions: PointerHandler.CanTakeOverFromItems |
+                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                             PointerHandler.ApprovesCancellation
+            // No confirmation dialog (v33). It stood between every line
+            // and its result, and the tool is now built to be used over
+            // and over; a complete session undo is the better safety net.
+            // The work is deferred one turn so the banner and this button
+            // can repaint as busy first — assigning the text inside the
+            // synchronous block meant it never showed at all.
+            onTapped: {
+              if (plugin.reshapeBusy)
+                return
+              plugin.reshapeBusy = true
+              // A Timer, not Qt.callLater: callLater posts a queued call,
+              // and posted events run BEFORE the scene graph's update
+              // timer fires, so the busy frame was never rendered before
+              // the work began. One tick past a frame is enough.
+              reshapeRunTimer.start()
+            }
           }
         }
-
-        Button {
-          id: reshapeUndoButton
-          visible: plugin.reshapeHistory.length > 0
-          enabled: !plugin.reshapeBusy
-          flat: true
-          topPadding: 8
-          bottomPadding: 8
-          leftPadding: 14
-          rightPadding: 14
-          contentItem: Text {
-            text: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
-            color: reshapeUndoButton.enabled ? 'white' : '#66FFFFFF'
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-          }
-          background: Rectangle {
-            color: 'transparent'
-            border.color: reshapeUndoButton.enabled
-                ? '#AAFFFFFF' : '#66FFFFFF'
-            border.width: 1
-            radius: 4
-          }
-          // Undoing no longer leaves the tool: a failed undo used to
-          // drop you out with the payload stranded, and a second press
-          // now pops the round before it.
-          onClicked: plugin.undoLastReshape()
-        }
-
       }
     }
   }
