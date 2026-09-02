@@ -7026,7 +7026,12 @@ Item {
   property var reshapeCrsCache: null
   // Segment cache for the repair rung's differently-decimated controls.
   property var reshapeRepairCache: ({})
-  readonly property real reshapeRepairPoints: 2.0
+  // Coarser than the CONTROL spacing, not the capture gate. At 2.0 it
+  // was FINER than splineMinNodePx (8), so splineDecimate could never
+  // remove a control and rung 2 could never produce a line different
+  // from rung 1: the three-attempt ladder was really two. The comment
+  // that justified 2.0 had the inequality backwards.
+  readonly property real reshapeRepairPoints: 16.0
   readonly property real reshapeExtendStartPoints: 24
   readonly property int reshapeExtendMaxIter: 6
   // Digitisation style (v32): 'tap' = point by point, 'free' = stylus
