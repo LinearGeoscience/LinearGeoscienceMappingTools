@@ -3218,7 +3218,9 @@ Item {
     }
   }
 
-  readonly property var opacitySteps: [1, 0.5, 0.25, 0]
+  // 75 joined the ladder (v34): a half-faded ortho was too faint to map
+  // against and full strength hid the linework under it.
+  readonly property var opacitySteps: [1, 0.75, 0.5, 0.25, 0]
   property var imageryOpacities: ({})    // layer name -> current value
   property var opacityUnsupported: ({})  // layer name -> true (row hidden)
   property bool opacitySupported: true   // false once EVERY layer refuses
