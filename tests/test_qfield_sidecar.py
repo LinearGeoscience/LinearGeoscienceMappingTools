@@ -309,7 +309,15 @@ class TestWriteSidecar(unittest.TestCase):
                        'is_valid', 'is_editable',
                        'createFeatureIteratorFromRectangle',
                        'reprojectRectangle', 'reshapeSequenceRect',
-                       'tapRectForLayer', 'reshapeCrsPair'):
+                       'tapRectForLayer', 'reshapeCrsPair',
+                       # v33 review round: the device decides what a tap
+                       # means, the latch expires, the busy frame gets a
+                       # real timer, validity is a transition probed by
+                       # fid request, targets can be released in one tap:
+                       'reshapeTapIsTouch', 'reshapeSelectionLatched',
+                       'reshapeSelectionLatchMs', 'reshapeRunTimer',
+                       'get_feature_by_id', 'reshapeSplineDefault',
+                       'reshapeClearPicksButton', 'wasValid'):
             self.assertIn(needle, text, needle)
 
 

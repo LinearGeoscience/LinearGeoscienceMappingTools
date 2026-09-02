@@ -157,14 +157,16 @@
  *    recentres the map, as QField's own freehand lift does, so a long
  *    edge can be drawn in strokes.
  *
- *    TARGETS: whatever QField has selected when the tool opens — both
- *    the multi-select set and the everyday focused feature, which are
- *    different things in QField's model and only the second of which
- *    the "I tapped that polygon" case fills. That selection also picks
- *    the layer, and it is latched, because QField's identify clears its
- *    own model as the form hides. Otherwise: tap polygons to limit the
- *    reshape, or draw straight away and take every polygon the line
- *    crosses. A long press adds or removes a target mid-line.
+ *    TARGETS: whatever QField has selected when the tool opens — the
+ *    multi-select set, the focused feature, or a one-row identify list,
+ *    which are three different things in QField's model and only the
+ *    last two of which the "I tapped that polygon" case fills. That
+ *    selection also picks the layer, and it is latched for a minute,
+ *    because QField's identify clears its own model as the form hides.
+ *    Otherwise: tap polygons to limit the reshape, or draw straight
+ *    away and take every polygon the line crosses. While drawing, a
+ *    finger tap or a long press adds or removes a target, and "Clear
+ *    targets" releases them all.
  *    Candidates are found through the provider's spatial index over the
  *    line's bounding box (as the desktop tool does), falling back to a
  *    full scan when the CRS pair cannot be trusted — a partly-wrong box
@@ -173,9 +175,13 @@
  *
  *    Each target is reshaped by GeometryUtils.reshapeFromRubberband —
  *    the native op behind QField's own single-feature reshape editor —
- *    in one edit session, with a three-rung retry ladder. A result that
- *    is not a valid geometry stands the whole batch down rather than
- *    committing a polygon that renders as nothing (desktop parity).
+ *    in one edit session, with a three-rung retry ladder. A polygon
+ *    that the line would make invalid is skipped — roll back, exclude,
+ *    run again — rather than committed to render as nothing (desktop
+ *    parity); one that was already invalid is not made worse and is
+ *    not refused. The layer is refused outright if another tool holds
+ *    unsaved edits on it, so nobody's half-finished work is committed
+ *    or discarded with ours.
  *    Confirming applies immediately: there is no dialog, because the
  *    tool is built to be used over and over and a session undo is the
  *    better safety net. After a reshape the line clears and you are
@@ -2314,8 +2320,11 @@ Item {
       // Settings toggle, not a canvas mode — stays visible while
       // digitizing (that is exactly when the freehand recenter bites);
       // hidden only while another sidecar tool is mid-flow.
+      // Reshape is not in this list (v33): it recentres on lift, this is
+      // the one switch for that, and the tool now stays open for a whole
+      // session of edges.
       visible: plugin.featureRecenterHold && plugin.recenterHoldAvailable &&
-               plugin.clipStep === 0 && plugin.reshapeStep === 0 &&
+               plugin.clipStep === 0 &&
                plugin.reverseStep === 0 && plugin.copyStep === 0 &&
                plugin.mergeStep === 0
       anchors.verticalCenter: parent.verticalCenter
@@ -2665,6 +2674,15 @@ Item {
           // The whole pill takes the tap, faded tail included — the
           // target size is the point of this revision.
           gesturePolicy: TapHandler.ReleaseWithinBounds
+          // And do not approve a take-over (v33): the reshape tool's
+          // freehand DragHandler sits on a catcher at this z and has
+          // dragThreshold 0, so while reshape is open a pixel of pen
+          // jitter on a layer pill would let it take the grab and cancel
+          // the tap. Cancellation stays approved so Qt can still clean
+          // up.
+          grabPermissions: PointerHandler.CanTakeOverFromItems |
+                           PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                           PointerHandler.ApprovesCancellation
           onTapped: plugin.setActiveLayerByName(layerSwitchButton.modelData.name)
         }
       }
@@ -4251,21 +4269,32 @@ Item {
     //    LayerUtils.selectFeaturesInLayer exists -- so selectByIds was a
     //    silent no-op inside its own try and deleteSelectedFeatures then
     //    deleted WHATEVER WAS SELECTED: during a clip the user's own
-    //    KEEP/CUT picks, during a merge the merge picks. The second route
-    //    now goes through LayerUtils and only fires once the selection has
-    //    really been narrowed to this one feature.
+    //    KEEP/CUT picks, during a merge the merge picks. There is no
+    //    fallback now at all (see the delete loop): a delete that fails
+    //    rolls the whole session back rather than leaving the original
+    //    and its replacements both on the map.
     //
-    // A delete that still fails rolls the whole session back rather than
-    // leaving the original and its replacements both on the map. Callers
-    // own the selection afterwards (each one removes it or rebuilds its
-    // own picks), so narrowing it here is safe.
+    // A layer already being edited belongs to someone else (a tracking
+    // session, another tool): committing would take their half-finished
+    // work with ours and rolling back would discard it. Refuse instead.
+    // isEditable is not reachable from QML; the expression engine
+    // answers, and an unreadable answer is treated as "not editing".
+    try {
+      const editable = evalExpr(layer, null,
+                                "layer_property(@layer, 'is_editable')")
+      if (editable === 'true' || editable === '1') {
+        toast(qsTr('%1 has unsaved edits from another tool — save or discard them first')
+              .arg(String(layer.name)))
+        return false
+      }
+    } catch (error) {}
     let ok = false
     try {
       layer.startEditing()
       for (const feature of newFeatures) {
         let landed = false
         try {
-          landed = LayerUtils.addFeature(layer, feature) !== false
+          landed = LayerUtils.addFeature(layer, feature) === true
         } catch (error) {
           landed = false
         }
@@ -4277,22 +4306,16 @@ Item {
         }
       }
       for (const fid of deleteIds) {
+        // No second route. deleteFeature returns false only when the
+        // layer is not editable, the fid is unknown, or it is already
+        // deleted — and in every one of those a selection-based delete
+        // fails too, so a fallback could only ever add risk (the previous
+        // one deleted whatever happened to be selected). A failed delete
+        // is a failed edit: roll the whole session back.
         let deleted = false
         try {
-          deleted = layer.deleteFeature(fid) !== false
+          deleted = layer.deleteFeature(fid) === true
         } catch (error) {}
-        if (!deleted) {
-          let narrowed = false
-          try {
-            LayerUtils.selectFeaturesInLayer(layer, [fid])
-            narrowed = true
-          } catch (error) {}
-          if (narrowed) {
-            try {
-              deleted = layer.deleteSelectedFeatures() !== false
-            } catch (error) {}
-          }
-        }
         if (!deleted) {
           try {
             layer.rollBack()
@@ -6997,7 +7020,7 @@ Item {
   // every targeted polygon inside one edit session.
   // ================================================================
 
-  property int reshapeStep: 0       // 0=off, 1=pick targets, 2=draw, 3=done
+  property int reshapeStep: 0       // 0=off, 1=pick targets, 2=draw
   // True while a digitizing/measure session is active — the app state
   // machine sets mainWindow.currentRubberband (null in browse mode).
   property bool reshapeEditingActive: false
@@ -7077,7 +7100,12 @@ Item {
   // that justified 2.0 had the inequality backwards.
   readonly property real reshapeRepairPoints: 16.0
   readonly property real reshapeExtendStartPoints: 24
-  readonly property int reshapeExtendMaxIter: 6
+  // Three doublings: 24, 48, 96 pt. Six let a stroke that stopped
+  // anywhere inside a polygon be shot out in a straight line for up to
+  // ~770 pt and reported as "repaired automatically". The case this rung
+  // exists for — the pen skidded and stopped a few mm short of the
+  // boundary — is covered by the first two.
+  readonly property int reshapeExtendMaxIter: 3
   // Digitisation style (v32): 'tap' = point by point, 'free' = stylus
   // freehand. Persisted, and the spline arming is remembered PER STYLE
   // ('freehand + spline' and 'tap + straight' are both coherent working
@@ -7098,11 +7126,21 @@ Item {
                                    : 'lgs_reshape_spline_tap'
   }
 
+  // The spline's default is per style, and for freehand it is ON: the
+  // pen draws a smooth line, and letting it snap to an 8 pt chord chain
+  // on lift (~0.3 mm facets on a 3 mm wiggle) is exactly the faceting
+  // the spline exists to prevent. Tap keeps the digitizing tool's
+  // setting as its seed, as before. A saved per-style choice wins.
+  function reshapeSplineDefault() {
+    return reshapeStyle === 'free'
+        ? '1' : projVar('lgs_spline_armed', '0')
+  }
+
   function reshapeLoadStyle() {
     reshapeStyle = projVar('lgs_reshape_style', 'free') === 'tap'
         ? 'tap' : 'free'
     reshapeSplineArmed = featureSpline &&
-        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+        projVar(reshapeSplineKey(), reshapeSplineDefault()) === '1'
   }
 
   function setReshapeStyle(style) {
@@ -7113,7 +7151,7 @@ Item {
     reshapeStyle = style
     saveVar('lgs_reshape_style', style)
     reshapeSplineArmed = featureSpline &&
-        projVar(reshapeSplineKey(), projVar('lgs_spline_armed', '0')) === '1'
+        projVar(reshapeSplineKey(), reshapeSplineDefault()) === '1'
     if (style === 'free')
       toast(qsTr('Freehand — stylus draws, finger pans'))
     // Drawn points are kept across a style switch: controls are
@@ -7277,6 +7315,30 @@ Item {
             Number(feature.id) >= 0) {
           out.layer = layer
           out.picks.push({ id: feature.id, feature: feature })
+          return out
+        }
+      }
+    } catch (error) {}
+    // Third case: QField's default, with the form NOT auto-opened, is a
+    // one-row identify LIST — count 1, nothing focused, nothing
+    // selected — and that single highlighted polygon is exactly what a
+    // user points at and calls "selected". Read it through the model's
+    // roles (MultiFeatureListModel::FeatureRole / LayerRole =
+    // Qt::UserRole + 4 / + 6, stable in the header). Only one row: two or
+    // more identified features is a list to choose from, not a choice.
+    try {
+      const model = reshapeSelectionModel
+      const form = reshapeFeatureForm()
+      if (model !== null && model !== undefined &&
+          form !== null && form.visible && Number(model.count) === 1) {
+        const index = model.index(0, 0)
+        const feature = model.data(index, 260)
+        const layer = model.data(index, 262)
+        if (feature !== undefined && feature !== null &&
+            layer !== undefined && layer !== null &&
+            Number(feature.id) >= 0) {
+          out.layer = layer
+          out.picks.push({ id: feature.id, feature: feature })
         }
       }
     } catch (error) {}
@@ -7287,8 +7349,29 @@ Item {
     if (reshapeStep !== 0)
       return
     const found = reshapeSelectionPicks()
-    if (found.layer !== null && found.picks.length > 0)
+    if (found.layer !== null && found.picks.length > 0) {
+      found.at = Date.now()
       reshapeSelectionLatch = found
+    }
+  }
+
+  // The latch is a bridge across QField clearing its own model as the
+  // form hides — not a memory. A polygon tapped an hour ago, three
+  // screens away, must not lock the next reshape and choose its layer
+  // (the entry toast is transient and the sub-line is 12 pt; the user
+  // would simply see their stroke refused). 60 s covers closing the form
+  // and reaching the pill with room to spare.
+  readonly property int reshapeSelectionLatchMs: 60000
+
+  function reshapeSelectionLatched() {
+    const latch = reshapeSelectionLatch
+    if (latch === null || latch === undefined)
+      return null
+    if (!(Date.now() - Number(latch.at) <= reshapeSelectionLatchMs)) {
+      reshapeSelectionLatch = null
+      return null
+    }
+    return latch
   }
 
   function updateReshapeEditingActive() {
@@ -7386,8 +7469,11 @@ Item {
       // more recently — so it wins. Live read first; the latch stands in
       // only when QField has already cleared the model.
       let seeded = reshapeSelectionPicks()
-      if (seeded.layer === null && reshapeSelectionLatch !== null)
-        seeded = reshapeSelectionLatch
+      if (seeded.layer === null) {
+        const latched = reshapeSelectionLatched()
+        if (latched !== null)
+          seeded = latched
+      }
       let layer = seeded.layer
       if (layer !== null &&
           evalExpr(layer, null, "layer_property(@layer, 'geometry_type')") !==
@@ -7454,6 +7540,14 @@ Item {
         reshapeLockedSelection = true
         reshapeSelectionLatch = null
         reshapeStep = 2
+        // The selection chose the layer; make QField's active layer (and
+        // so the layer-switch pill) say the same, or the legend would
+        // contradict the banner for the whole session.
+        if (featureLayerSwitch) {
+          try {
+            writeActiveLayer(layer)
+          } catch (error) {}
+        }
         updateReshapeSelection()
         splineRefreshDensity()
         toast(qsTr('Limited to the %1 polygon(s) you selected — long-press to change')
@@ -7514,6 +7608,14 @@ Item {
       if (o.x >= 0 && o.y >= 0 &&
           o.x <= overlayBar.width && o.y <= overlayBar.height)
         return true
+    } catch (error) {}
+    try {
+      if (layerSwitchBar.visible) {
+        const l = layerSwitchBar.mapFromItem(reshapeCatcher, pos.x, pos.y)
+        if (l.x >= 0 && l.y >= 0 &&
+            l.x <= layerSwitchBar.width && l.y <= layerSwitchBar.height)
+          return true
+      }
     } catch (error) {}
     try {
       if (zDialog.visible) {
@@ -7600,12 +7702,36 @@ Item {
     } catch (error) {}
   }
 
-  function handleReshapeTap(pos) {
+  // Was this tap made with a finger? Unknown (an eventPoint without a
+  // readable device) reads as "not a pen" on purpose: in freehand mode
+  // that makes the tap inert rather than placing a stray point, which is
+  // the behaviour v32 chose for finger taps and the safe direction.
+  function reshapeTapIsTouch(eventPoint) {
+    try {
+      const device = eventPoint.device
+      if (device === undefined || device === null)
+        return null
+      return device.type === PointerDevice.TouchScreen
+    } catch (error) {}
+    return null
+  }
+
+  function handleReshapeTap(pos, isTouch) {
     try {
       if (reshapeStep !== 1 && reshapeStep !== 2)
         return
       if (reshapeTapOnUi(pos))
         return
+      if (reshapeStep === 2 && reshapeStyle === 'free') {
+        // Freehand: the pen draws and places, the finger picks. An
+        // unknown device does nothing — never a stray point.
+        if (isTouch === true) {
+          handleReshapePickToggle(pos)
+          return
+        }
+        if (isTouch !== false)
+          return
+      }
       if (reshapeStep === 1) {
         const hit = findHitInLayers([reshapeLayer], pos)
         if (hit === null) {
@@ -7735,11 +7861,21 @@ Item {
     // keeps the last sample, so the true end of the stroke — the point
     // where the line has to leave the polygon — can no longer be gated
     // away, which the live gate could do.
-    const thinned = splineDecimate(reshapeStrokeRaw, reshapeStrokeGate)
+    let thinned = splineDecimate(reshapeStrokeRaw, reshapeStrokeGate)
     reshapeStrokeRaw.length = 0
     if (thinned.length === 0) {
       reshapeRebuildPreview()
       return
+    }
+    // A pen tap with a pixel or two of jitter arrives here as a
+    // two-sample "stroke" whose whole extent is under the control
+    // spacing. That is a single point, not two near-coincident controls
+    // with two overlapping dots.
+    if (thinned.length === 2 && reshapeStrokeGate > 0) {
+      const dx = thinned[1].x - thinned[0].x
+      const dy = thinned[1].y - thinned[0].y
+      if (dx * dx + dy * dy < reshapeStrokeGate * reshapeStrokeGate)
+        thinned = [thinned[0]]
     }
     // fh marks stroke interiors: no white marker dot each (a stroke
     // would spawn hundreds). The two ends stay untagged so they keep
@@ -7919,6 +8055,24 @@ Item {
     if (frozen) {
       try {
         reshapeShape.freeze = false
+        // Whether clearing freeze marks the shape dirty is not
+        // knowable from the headers. Nudge the model once so the write
+        // shows regardless: re-adding the last point overwrites the
+        // floating vertex with itself and appends a new one, and the
+        // remove takes it off again — the model ends exactly as it was,
+        // and the shape has been told. NOT after a keepFloating write:
+        // there the floating vertex already equals the last point, so
+        // addVertex would skip the add (its double-vertex rule) and the
+        // remove would eat the floating vertex the stroke is about to
+        // rely on. The stroke's own first sample repaints that case.
+        const n = seq.length
+        if (n > 0 && keepFloating !== true) {
+          const z = Number(seq[n - 1].z)
+          reshapeModel.addVertexFromPoint(isFinite(z)
+              ? GeometryUtils.point(seq[n - 1].x, seq[n - 1].y, z)
+              : GeometryUtils.point(seq[n - 1].x, seq[n - 1].y))
+          reshapeModel.removeVertex()
+        }
       } catch (error) {}
     }
   }
@@ -8239,6 +8393,17 @@ Item {
   // failure, not to block a reshape because a probe would not run.
   function reshapeResultIsValid(layer, fid) {
     try {
+      // get_feature_by_id issues a fid request, which the provider
+      // answers from its index and which still sees the edit buffer. A
+      // filter expression on $id is not compiled to SQL by the OGR
+      // provider, so the iterator below would read every row — one whole
+      // layer per reshaped polygon, on the confirm path.
+      const direct = evalExpr(layer, null,
+          'is_valid(geometry(get_feature_by_id(@layer_id, ' + fid + ')))')
+      if (direct === 'true' || direct === '1')
+        return true
+      if (direct === 'false' || direct === '0')
+        return false
       const feature = reshapeFeatureById(layer, fid)
       if (feature === null)
         return true
@@ -8363,6 +8528,24 @@ Item {
         return
       const started = Date.now()
       reshapeResultText = qsTr('Reshaping…')
+      // A layer that is ALREADY being edited belongs to someone else — a
+      // tracking session, another tool — and editing inside their buffer
+      // would either commit their half-finished work with ours or throw
+      // it away when we roll back. Refuse rather than guess.
+      // QgsVectorLayer::isEditable is not reachable from QML, so the
+      // expression engine answers; an answer we cannot read is treated as
+      // "not editing", which is what every build before this one assumed.
+      let editable = ''
+      try {
+        editable = evalExpr(layer, null,
+                            "layer_property(@layer, 'is_editable')")
+      } catch (error) {}
+      if (editable === 'true' || editable === '1') {
+        toast(qsTr('%1 has unsaved edits from another tool — save or discard them first')
+              .arg(reshapeLayerLabel()))
+        reshapeResultText = ''
+        return
+      }
       const names = attributeNames(layer, reshapePlan[0].feature)
       const uuidField = detectUuidField(names)
       const eps = reshapeConditionEps()
@@ -8392,10 +8575,6 @@ Item {
         }
         return seqRepaired
       }
-      let undoEntries = []
-      let unchanged = 0
-      let failed = 0
-      let repaired = 0
       let written = null
       function writeAttempt(tag, seq) {
         if (written === tag)
@@ -8403,88 +8582,117 @@ Item {
         reshapeWriteModel(seq)
         written = tag
       }
-      // Whether the layer was ALREADY being edited decides whether a
-      // rollBack is ours to make. QgsVectorLayer::isEditable is not
-      // reachable from QML, so ask the expression engine; an answer we
-      // cannot read counts as "someone else might be editing", which is
-      // the safe direction.
-      let opened = false
-      try {
-        const editable = evalExpr(layer, null,
-                                  "layer_property(@layer, 'is_editable')")
-        opened = editable === 'false' || editable === '0'
-      } catch (error) {}
-      try {
-        layer.startEditing()
-      } catch (error) {}
-      let invalidFid = null
-      for (const target of reshapePlan) {
-        let attempts = []
-        writeAttempt('base', seqBase)
-        let result = reshapeApplyOnce(layer, target.fid)
-        attempts.push(result)
-        if (result === 1000 && repairedSeq() !== null) {
-          writeAttempt('repaired', repairedSeq())
-          result = reshapeApplyOnce(layer, target.fid)
-          attempts.push(result)
+      // Validity is judged as a TRANSITION, not a state. A polygon that
+      // was already invalid before the line was drawn (a bow-tie from an
+      // import is common on transposed basemaps) is not made worse by
+      // the reshape and must not veto it — the first version refused any
+      // invalid result and so could never reshape anything near such a
+      // polygon. The snapshot is tested here, once, off the feature we
+      // already hold: no layer read.
+      function wasValid(target) {
+        try {
+          return evalExpr(layer, target.feature, 'is_valid($geometry)') !==
+                 'false'
+        } catch (error) {
+          return true
         }
-        if (result === 1000) {
-          let seqExt = null
-          try {
-            seqExt = reshapeExtendedSequence(layer, target.feature,
-                repairedSeq() !== null ? repairedSeq() : seqBase, eps)
-          } catch (error) {
-            seqExt = null
-          }
-          if (seqExt !== null) {
-            writeAttempt('ext' + target.fid, seqExt)
+      }
+      // The desktop tool skips a feature whose result would be invalid
+      // and carries on with the rest. Nothing can revert one feature
+      // inside an open buffer here (changeGeometry is not reachable from
+      // QML), so the equivalent is a second pass: roll back, exclude the
+      // offenders, run again. One retry — the excluded set can only grow.
+      let excluded = {}
+      let undoEntries = []
+      let unchanged = 0
+      let failed = 0
+      let repaired = 0
+      let skipped = 0
+      for (let pass = 0; pass < 2; pass++) {
+        undoEntries = []
+        unchanged = 0
+        failed = 0
+        repaired = 0
+        written = null
+        let offenders = []
+        try {
+          layer.startEditing()
+        } catch (error) {}
+        for (const target of reshapePlan) {
+          if (excluded[target.fid] === true)
+            continue
+          let attempts = []
+          writeAttempt('base', seqBase)
+          let result = reshapeApplyOnce(layer, target.fid)
+          attempts.push(result)
+          if (result === 1000 && repairedSeq() !== null) {
+            writeAttempt('repaired', repairedSeq())
             result = reshapeApplyOnce(layer, target.fid)
             attempts.push(result)
           }
-        }
-        console.log('LGS reshape: fid ' + target.fid + ' attempts [' +
-                    attempts.join(', ') + ']')
-        if (result === 0 && !reshapeResultIsValid(layer, target.fid)) {
-          // Desktop parity: reshape_spline_tool.py checks isGeosValid()
-          // before it writes, because GeometryUtils.reshapeFromRubberband
-          // has no rung in its result enum for "succeeded, but the
-          // polygon is now self-intersecting". Such a polygon renders as
-          // nothing, which in the field is indistinguishable from the
-          // feature having been deleted. Nothing here can revert one
-          // feature inside an open buffer (changeGeometry is not
-          // reachable from QML), so the whole batch stands down.
-          invalidFid = target.fid
-          break
-        }
-        if (result === 0) {                 // GeometryUtils.Success
-          if (attempts.length > 1)
-            repaired++
-          // Reshape mutates in place — fid and UUID stay stable, so the
-          // undo can find the feature again by either.
-          let uuid = ''
-          if (uuidField !== null) {
+          if (result === 1000) {
+            let seqExt = null
             try {
-              const value = target.feature.attribute(uuidField)
-              if (value !== undefined && value !== null)
-                uuid = String(value)
-            } catch (error) {}
+              seqExt = reshapeExtendedSequence(layer, target.feature,
+                  repairedSeq() !== null ? repairedSeq() : seqBase, eps)
+            } catch (error) {
+              seqExt = null
+            }
+            if (seqExt !== null) {
+              writeAttempt('ext' + target.fid, seqExt)
+              result = reshapeApplyOnce(layer, target.fid)
+              attempts.push(result)
+            }
           }
-          undoEntries.push({ fid: target.fid, uuid: uuid,
-                             geometry: target.geometry, wkt: target.wkt,
-                             feature: target.feature })
-        } else if (result === 1000) {       // GeometryUtils.NothingHappened
-          unchanged++
-        } else {
-          failed++
+          console.log('LGS reshape: fid ' + target.fid + ' attempts [' +
+                      attempts.join(', ') + ']')
+          if (result === 0 && wasValid(target) &&
+              !reshapeResultIsValid(layer, target.fid)) {
+            // Would render as nothing, which in the field is
+            // indistinguishable from a deletion. Desktop parity says skip
+            // it (isGeosValid before changeGeometry in the desktop tool);
+            // the second pass below is how this code skips.
+            offenders.push(target.fid)
+            continue
+          }
+          if (result === 0) {                 // GeometryUtils.Success
+            if (attempts.length > 1)
+              repaired++
+            // Reshape mutates in place — fid and UUID stay stable, so the
+            // undo can find the feature again by either.
+            let uuid = ''
+            if (uuidField !== null) {
+              try {
+                const value = target.feature.attribute(uuidField)
+                if (value !== undefined && value !== null)
+                  uuid = String(value)
+              } catch (error) {}
+            }
+            undoEntries.push({ fid: target.fid, uuid: uuid,
+                               geometry: target.geometry, wkt: target.wkt,
+                               feature: target.feature })
+          } else if (result === 1000) {       // GeometryUtils.NothingHappened
+            unchanged++
+          } else {
+            failed++
+          }
         }
-      }
-      if (invalidFid !== null) {
+        if (offenders.length === 0)
+          break
+        // Roll back the whole pass — it is our session, opened above on a
+        // layer we checked was not being edited — and go again without
+        // the offenders.
         try {
           layer.rollBack()
         } catch (error) {}
-        toast(qsTr('Reshape would make a polygon invalid — nothing was changed. Pick fewer targets or redraw the line.'))
-        reshapeResultText = ''
-        return
+        for (const fid of offenders)
+          excluded[fid] = true
+        skipped += offenders.length
+        if (pass === 1) {
+          toast(qsTr('Reshape failed — a polygon would become invalid'))
+          reshapeResultText = ''
+          return
+        }
       }
       if (undoEntries.length > 0) {
         let ok = false
@@ -8501,12 +8709,10 @@ Item {
           reshapeResultText = ''
           return
         }
-      } else if (opened) {
-        // Only roll back a session we know we opened. reshapeFromRubberband
-        // writes nothing unless it succeeds, so on zero successes the
-        // buffer holds nothing of ours — and discarding it could throw
-        // away an edit someone else (a tracking session, another tool)
-        // had in flight.
+      } else {
+        // Nothing of ours is in the buffer (reshapeFromRubberband writes
+        // nothing unless it succeeds), and the session is ours to close:
+        // the layer was checked not to be editing before we opened it.
         try {
           layer.rollBack()
         } catch (error) {}
@@ -8528,6 +8734,8 @@ Item {
       let message = qsTr('Reshaped %1 polygon(s)').arg(undoEntries.length)
       if (repaired > 0)
         message += qsTr(' — %1 repaired automatically').arg(repaired)
+      if (skipped > 0)
+        message += qsTr(' — %1 skipped (would become invalid)').arg(skipped)
       if (unchanged > 0)
         message += qsTr(' — %1 unchanged (the line must enter and exit through the boundary)').arg(unchanged)
       if (failed > 0)
@@ -8535,18 +8743,24 @@ Item {
       console.log('LGS reshape confirm: ' + (Date.now() - started) +
                   ' ms, ' + reshapePlan.length + ' target(s), ' +
                   seqBase.length + ' pts, ' + reshapeControls.length +
-                  ' controls, repaired ' + repaired + ', unchanged ' +
-                  unchanged + ', failed ' + failed)
+                  ' controls, repaired ' + repaired + ', skipped ' +
+                  skipped + ', unchanged ' + unchanged + ', failed ' +
+                  failed)
       reshapeResultText = message
       toast(message)
-      // Stay in the draw step with the line cleared, so the next edge is
-      // one stroke away instead of a trip back through the pill. The
-      // layer, style, spline arming and the target picks all survive;
-      // the picks are re-highlighted because executeReshape drops the
-      // selection above, and keeping them while wiping their highlight
-      // would silently filter the next line with nothing on screen to
-      // explain it.
-      reshapeClearLine()
+      if (undoEntries.length > 0) {
+        // Stay in the draw step with the line cleared, so the next edge
+        // is one stroke away instead of a trip back through the pill.
+        // The layer, style, spline arming and the target picks all
+        // survive; the picks are re-highlighted because the selection
+        // was dropped above, and keeping them while wiping their
+        // highlight would silently filter the next line with nothing on
+        // screen to explain it.
+        reshapeClearLine()
+      }
+      // When nothing changed the LINE STAYS: the message tells the user
+      // the line must enter and exit the polygon, and wiping it would
+      // take away the very thing they need to extend.
       updateReshapeSelection()
     } catch (error) {
       toast(qsTr('Reshape failed'))
@@ -8594,24 +8808,32 @@ Item {
         toast(qsTr('Undo failed — layer not found'))
         return
       }
-      // The reshaped features, looked up fresh by UUID when possible
-      // (fids survive commits but a resync could renumber them).
-      //
-      // ONE replacement per DELETED fid, never one per UUID group. A
-      // UUID is not unique in the template — duplicating a feature
-      // copies it — so a group lookup could return a sibling the reshape
-      // line never touched, and the old code deleted every match while
-      // building exactly one replacement. That silently destroyed an
-      // untouched polygon.
+      // The reshaped features, looked up by the fid we recorded and, when
+      // the layer carries one, checked against the UUID we recorded too.
+      // NEVER redirected: the old code looked a UUID up and deleted
+      // whatever answered, and a UUID is not unique in the template —
+      // duplicating a feature copies it — so with the original hidden by
+      // a level filter the one visible match was an untouched sibling on
+      // another bench, and undo deleted it. A recorded fid is current
+      // because every successful undo remaps the fids in the rounds still
+      // on the stack (below); a fid that no longer answers fails loudly
+      // instead of guessing.
+      const uuidTerm = function(entry) {
+        return undo.uuidField !== null && entry.uuid !== ''
+            ? ' AND "' + undo.uuidField + "\" = '" + sqlLiteral(entry.uuid) +
+              "'"
+            : ''
+      }
       let doomed = []
       let restored = []
+      let before = {}
       for (const entry of undo.entries) {
-        let fids = []
-        if (undo.uuidField !== null && entry.uuid !== '')
-          fids = collectFidsByExpression(layer,
-              '"' + undo.uuidField + "\" = '" + sqlLiteral(entry.uuid) + "'")
-        if (fids.length !== 1)
-          fids = [entry.fid]
+        const found = collectFidsByExpression(layer,
+            '$id = ' + entry.fid + uuidTerm(entry))
+        if (found.length !== 1) {
+          toast(qsTr('Undo failed — the reshaped polygon is not visible (check the level filter)'))
+          return
+        }
         // Rebuild the original from the geometry snapshot taken before
         // the reshape (WKT only where the geometry could not be read),
         // all attributes copied verbatim — the UUID included, so
@@ -8625,8 +8847,13 @@ Item {
           toast(qsTr('Undo failed — the original geometry was not kept'))
           return
         }
-        for (const fid of fids)
-          doomed.push(fid)
+        // Every fid that carries this UUID right now, so the recreated
+        // feature can be told apart from a duplicate sibling afterwards.
+        if (undo.uuidField !== null && entry.uuid !== '') {
+          before[entry.fid] = collectFidsByExpression(layer,
+              '"' + undo.uuidField + "\" = '" + sqlLiteral(entry.uuid) + "'")
+        }
+        doomed.push(entry.fid)
         let created = FeatureUtils.createFeature(layer, geometry)
         copyClipAttributes(created, entry.feature, undo.names, null, '',
                            layer)
@@ -8636,39 +8863,87 @@ Item {
         toast(qsTr('Undo failed — no changes made'))
         return
       }
-      // Read-back verify, the way finalizeClip does. applyClipEdits can
-      // only report that its own edits committed; it cannot know the
-      // restored polygon came back where the current Z filter can see
-      // it, and an Elevation default stamped onto a rebuilt feature can
-      // put it outside the active subsetString. Present but invisible
-      // reads exactly like still-deleted, so say so rather than toasting
-      // success.
-      let verified = -1
-      if (undo.uuidField !== null) {
-        let uuids = []
-        for (const entry of undo.entries) {
-          if (entry.uuid !== '')
-            uuids.push(sqlLiteral(entry.uuid))
+      // Read-back verify, the way finalizeClip does, and the fid remap.
+      // applyClipEdits can only report that its own edits committed; it
+      // cannot know the restored polygon came back where the current Z
+      // filter can see it, and an Elevation default stamped onto a
+      // rebuilt feature can put it outside the active subsetString.
+      // Present but invisible reads exactly like still-deleted, so say so
+      // rather than toasting success. The recreated feature is the UUID
+      // match that was not there before; older rounds on the stack and
+      // the target picks are pointed at it, otherwise the next undo would
+      // look for a fid that no longer exists and the next line would be
+      // filtered by one.
+      let verified = 0
+      let remap = {}
+      for (const entry of undo.entries) {
+        if (undo.uuidField === null || entry.uuid === '')
+          continue
+        const after = collectFidsByExpression(layer,
+            '"' + undo.uuidField + "\" = '" + sqlLiteral(entry.uuid) + "'")
+        const seen = {}
+        for (const fid of before[entry.fid] || [])
+          seen[fid] = true
+        let fresh = null
+        for (const fid of after) {
+          if (seen[fid] !== true && fid !== entry.fid)
+            fresh = fid
         }
-        if (uuids.length === undo.entries.length && uuids.length > 0) {
-          verified = collectFidsByExpression(layer,
-              '"' + undo.uuidField + "\" IN ('" + uuids.join("','") +
-              "')").length
+        if (fresh !== null) {
+          verified++
+          remap[entry.fid] = fresh
         }
       }
+      const canVerify = undo.uuidField !== null
+      if (canVerify) {
+        let rounds = reshapeHistory.slice(0, reshapeHistory.length - 1)
+        for (let r = 0; r < rounds.length; r++) {
+          let entries = rounds[r].entries.slice()
+          for (let e = 0; e < entries.length; e++) {
+            if (remap[entries[e].fid] !== undefined)
+              entries[e] = Object.assign({}, entries[e],
+                                         { fid: remap[entries[e].fid] })
+          }
+          rounds[r] = Object.assign({}, rounds[r], { entries: entries })
+        }
+        reshapeHistory = rounds
+        let picks = []
+        let dropped = 0
+        for (const pick of reshapePicks) {
+          if (remap[pick.id] !== undefined)
+            picks.push({ id: remap[pick.id], feature: pick.feature })
+          else if (doomed.indexOf(pick.id) >= 0)
+            dropped++
+          else
+            picks.push(pick)
+        }
+        reshapePicks = picks
+        if (dropped > 0)
+          toast(qsTr('%1 target(s) dropped — could not follow them through the undo').arg(dropped))
+      } else {
+        reshapeHistory = reshapeHistory.slice(0, reshapeHistory.length - 1)
+        // No UUID to follow the recreated features with: any pick that
+        // pointed at a deleted fid is gone.
+        let picks = []
+        for (const pick of reshapePicks) {
+          if (doomed.indexOf(pick.id) < 0)
+            picks.push(pick)
+        }
+        reshapePicks = picks
+      }
+      if (reshapePicks.length === 0)
+        reshapeLockedSelection = false
+      updateReshapeSelection()
       try {
         layer.triggerRepaint()
         iface.mapCanvas().refresh()
       } catch (error) {}
-      if (verified >= 0 && verified < undo.entries.length) {
+      if (canVerify && verified < undo.entries.length) {
         toast(qsTr('Undo restored %1 of %2 — check the level filter')
               .arg(verified).arg(undo.entries.length))
       } else {
         toast(qsTr('Reshape undone'))
       }
-      // Only the round that really came back leaves the stack, so a
-      // failed undo can be tried again instead of vanishing.
-      reshapeHistory = reshapeHistory.slice(0, reshapeHistory.length - 1)
     } catch (error) {
       toast(qsTr('Undo failed'))
     }
@@ -8726,6 +9001,13 @@ Item {
     }
   }
 
+  Timer {
+    id: reshapeRunTimer
+    interval: 50
+    repeat: false
+    onTriggered: plugin.runReshape()
+  }
+
   Connections {
     // Latch QField's selection while the tool is closed. Its identify
     // refills the model on every tap and clears it when the form hides,
@@ -8734,6 +9016,9 @@ Item {
     target: plugin.reshapeSelectionModel
     ignoreUnknownSignals: true
     function onSelectedCountChanged() {
+      plugin.latchReshapeSelection()
+    }
+    function onCountChanged() {
       plugin.latchReshapeSelection()
     }
   }
@@ -8817,15 +9102,23 @@ Item {
       // mode) while a clean stylus tap still places a single precise
       // point.
       gesturePolicy: TapHandler.ReleaseWithinBounds
-      acceptedDevices: plugin.reshapeStep === 2 &&
-                       plugin.reshapeStyle === 'free'
-          ? (plugin.reshapeSettingsItem !== null &&
-             plugin.reshapeSettingsItem.mouseAsTouchScreen
-              ? PointerDevice.Stylus
-              : PointerDevice.Stylus | PointerDevice.Mouse)
-          : PointerDevice.AllDevices
+      // v33: every device is accepted and the DEVICE decides what a tap
+      // means, instead of narrowing acceptedDevices in freehand mode.
+      // Narrowing left a finger tap unconsumed, so it fell through to
+      // QField's identify: the feature form opened over the map in the
+      // middle of a reshape and the selection model churned. Now a
+      // finger tap in freehand mode picks a target — one tap, no hold —
+      // and a pen tap still places a single precise point.
+      acceptedDevices: PointerDevice.AllDevices
+      // Same threshold as the long-press handler below. With the
+      // platform default (~0.8 s) a press released between 0.6 and 0.8 s
+      // fired BOTH: the pick toggled and a stray point landed where the
+      // pen sat, or the pick toggled straight back. A handler that has
+      // long-pressed does not tap.
+      longPressThreshold: 0.6
       onSingleTapped: function(eventPoint, button) {
-        plugin.handleReshapeTap(eventPoint.position)
+        plugin.handleReshapeTap(eventPoint.position,
+                                plugin.reshapeTapIsTouch(eventPoint))
       }
     }
 
@@ -8887,6 +9180,12 @@ Item {
              PointerHandler.CanTakeOverFromHandlersOfDifferentType |
              PointerHandler.ApprovesTakeOverByAnything)
       dragThreshold: 0
+      // No target: the default is the parent item, and a DragHandler
+      // moves its target on every sample. The catcher's anchors snapped
+      // it straight back, but that was geometry churn per sample and a
+      // hazard the moment the anchors change. QField sets this on every
+      // canvas handler.
+      target: null
       onActiveChanged: {
         if (active) {
           plugin.reshapeStrokeBegin(centroid.position)
@@ -8951,6 +9250,13 @@ Item {
 
           TapHandler {
             gesturePolicy: TapHandler.ReleaseWithinBounds
+            // Do not approve a take-over: the freehand DragHandler on the
+            // catcher below has dragThreshold 0, and a pixel of pen jitter
+            // on a pill tap would otherwise let it take the grab and
+            // cancel the tap.
+            grabPermissions: PointerHandler.CanTakeOverFromItems |
+                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                             PointerHandler.ApprovesCancellation
             onTapped: plugin.setReshapeStyle('tap')
           }
         }
@@ -8976,6 +9282,9 @@ Item {
 
           TapHandler {
             gesturePolicy: TapHandler.ReleaseWithinBounds
+            grabPermissions: PointerHandler.CanTakeOverFromItems |
+                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                             PointerHandler.ApprovesCancellation
             onTapped: plugin.setReshapeStyle('free')
           }
         }
@@ -9002,6 +9311,9 @@ Item {
 
           TapHandler {
             gesturePolicy: TapHandler.ReleaseWithinBounds
+            grabPermissions: PointerHandler.CanTakeOverFromItems |
+                             PointerHandler.CanTakeOverFromHandlersOfDifferentType |
+                             PointerHandler.ApprovesCancellation
             onTapped: plugin.toggleReshapeSpline()
           }
         }
@@ -9110,7 +9422,8 @@ Item {
           rightPadding: 14
           contentItem: Text {
             // One action per press: a tapped point OR a whole stroke.
-            text: qsTr('Undo point')
+            text: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
+                                                 : qsTr('Undo point')
             color: reshapeUndoPointButton.enabled ? 'white' : '#66FFFFFF'
             font.pixelSize: 14
             horizontalAlignment: Text.AlignHCenter
@@ -9124,6 +9437,39 @@ Item {
             radius: 4
           }
           onClicked: plugin.reshapeUndoVertex()
+        }
+
+        Button {
+          // Persisting picks across a confirm is right for the next edge
+          // of the SAME polygon and wrong for the next polygon; without
+          // this, releasing cost a long-press per pick.
+          id: reshapeClearPicksButton
+          visible: plugin.reshapePicks.length > 0
+          enabled: !plugin.reshapeBusy
+          flat: true
+          topPadding: 8
+          bottomPadding: 8
+          leftPadding: 14
+          rightPadding: 14
+          contentItem: Text {
+            text: qsTr('Clear targets')
+            color: 'white'
+            font.pixelSize: 14
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+          }
+          background: Rectangle {
+            color: 'transparent'
+            border.color: '#AAFFFFFF'
+            border.width: 1
+            radius: 4
+          }
+          onClicked: {
+            plugin.reshapePicks = []
+            plugin.reshapeLockedSelection = false
+            plugin.updateReshapeSelection()
+            plugin.toast(qsTr('Every polygon the line crosses will be reshaped'))
+          }
         }
 
         Button {
@@ -9189,7 +9535,7 @@ Item {
           leftPadding: 14
           rightPadding: 14
           contentItem: Text {
-            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Reshape ✓')
+            text: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
             color: reshapeExecuteButton.enabled ? 'white' : '#66FFFFFF'
             font.pixelSize: 14
             font.bold: true
@@ -9214,7 +9560,11 @@ Item {
             if (plugin.reshapeBusy)
               return
             plugin.reshapeBusy = true
-            Qt.callLater(plugin.runReshape)
+            // A Timer, not Qt.callLater: callLater posts a queued call,
+            // and posted events run BEFORE the scene graph's update timer
+            // fires, so the busy frame was never rendered before the work
+            // began. One tick past a frame is enough.
+            reshapeRunTimer.start()
           }
         }
 
