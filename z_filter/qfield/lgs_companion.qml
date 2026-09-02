@@ -8823,10 +8823,18 @@ Item {
       onSingleTapped: function(eventPoint, button) {
         plugin.handleReshapeTap(eventPoint.position)
       }
+    }
+
+    TapHandler {
       // Long-press adds or removes a target while you are drawing, so a
-      // locked selection stays editable without leaving the line. It is
-      // free in both styles: dragThreshold 0 means a press that never
-      // moves cannot activate the freehand handler.
+      // locked selection stays editable without leaving the line. It
+      // needs its OWN handler because the one above narrows its accepted
+      // devices to the pen in freehand mode -- which is right for
+      // placing a point and wrong for this, since a long press is a
+      // finger gesture as much as a pen one. Passive grab (the default
+      // DragThreshold policy), so it cannot fight the tap handler above
+      // or the canvas; and free in both styles, because dragThreshold 0
+      // means a press that never moves cannot start a stroke either.
       longPressThreshold: 0.6
       onLongPressed: plugin.handleReshapePickToggle(point.position)
     }
