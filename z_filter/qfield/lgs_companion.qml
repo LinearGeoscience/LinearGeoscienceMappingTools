@@ -7674,14 +7674,18 @@ Item {
     splineRefreshDensity()
     reshapeStrokeGate = splineMinNodeMapUnits()
     reshapeStrokeRaw.length = 0
-    // The stroke appends straight onto the model, behind the prefix
-    // diff's back, so the diff must not trust its record afterwards.
-    reshapeLastSeq = null
     // Re-lay the committed line with its floating tail intact, so the
     // first stroke sample overwrites the duplicate and not a real point.
     try {
       reshapeWriteModel(reshapeSequence(), true)
     } catch (error) {}
+    // AFTER that write, and not before it: the stroke then appends
+    // straight onto the model, behind the prefix diff's back, so the
+    // record the write just left would describe a model that has since
+    // grown. The plan copes with a grown model, but the release write
+    // should take the reset path deterministically rather than rely on
+    // it.
+    reshapeLastSeq = null
     reshapeStrokeMove(pos)
   }
 
