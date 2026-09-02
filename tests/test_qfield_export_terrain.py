@@ -129,15 +129,18 @@ class TestInjectionOnFixtureProject(unittest.TestCase):
         provider = root.find('ElevationProperties/terrainProvider')
         self.assertIsNotNone(provider)
         self.assertEqual(provider.get('type'), 'raster')
-        self.assertEqual(provider.get('layer'), 'dem_abc123')
-        self.assertEqual(provider.get('layerSource'), './Pit_DEM.tif')
-        self.assertEqual(provider.get('scale'), '2')
+        inner = provider.find('TerrainProvider')
+        self.assertIsNotNone(inner)
+        self.assertEqual(inner.get('layer'), 'dem_abc123')
+        self.assertEqual(inner.get('layerSource'), './Pit_DEM.tif')
+        self.assertEqual(inner.get('scale'), '2')
 
     def test_source_stays_relative(self):
         root = self._inject(dem_layer_id='dem_abc123',
                             dem_source='./Pit_DEM.tif')
         source = root.find(
-            'ElevationProperties/terrainProvider').get('layerSource')
+            'ElevationProperties/terrainProvider/TerrainProvider'
+        ).get('layerSource')
         self.assertTrue(source.startswith('./'), source)
         self.assertNotIn(':', source)  # no drive letter leaked in
 
@@ -146,7 +149,9 @@ class TestInjectionOnFixtureProject(unittest.TestCase):
         root = self._inject(dem_layer_id='b', dem_source='./b.tif')
         self.assertEqual(len(root.findall('ElevationProperties')), 1)
         self.assertEqual(
-            root.find('ElevationProperties/terrainProvider').get('layer'),
+            root.find(
+                'ElevationProperties/terrainProvider/TerrainProvider'
+            ).get('layer'),
             'b')
 
     def test_project_content_survives(self):

@@ -36,12 +36,17 @@ class TestInjectTerrain(unittest.TestCase):
         provider = elems[0].find('terrainProvider')
         self.assertIsNotNone(provider)
         self.assertEqual(provider.get('type'), 'raster')
-        self.assertEqual(provider.get('layer'), 'dem_layer_id_123')
-        self.assertEqual(provider.get('layerName'), 'Pit DEM')
-        self.assertEqual(provider.get('layerSource'), './pit_dem.tif')
-        self.assertEqual(provider.get('layerProvider'), 'gdal')
-        self.assertEqual(provider.get('scale'), '2')
-        self.assertEqual(provider.get('offset'), '0')
+        # QGIS's reader wants the details on a NESTED <TerrainProvider>
+        # child, exactly as QgsProject.write() produces them - flat
+        # attributes on <terrainProvider> parse as empty (flat terrain).
+        inner = provider.find('TerrainProvider')
+        self.assertIsNotNone(inner)
+        self.assertEqual(inner.get('layer'), 'dem_layer_id_123')
+        self.assertEqual(inner.get('layerName'), 'Pit DEM')
+        self.assertEqual(inner.get('layerSource'), './pit_dem.tif')
+        self.assertEqual(inner.get('layerProvider'), 'gdal')
+        self.assertEqual(inner.get('scale'), '2')
+        self.assertEqual(inner.get('offset'), '0')
 
     def test_replaces_not_duplicates(self):
         root = self._root()
@@ -49,9 +54,9 @@ class TestInjectTerrain(unittest.TestCase):
         terrain_xml.inject_terrain(root, 'b', './b.tif', scale=1.5)
         elems = root.findall('ElevationProperties')
         self.assertEqual(len(elems), 1)
-        provider = elems[0].find('terrainProvider')
-        self.assertEqual(provider.get('layer'), 'b')
-        self.assertEqual(provider.get('scale'), '1.5')
+        inner = elems[0].find('terrainProvider/TerrainProvider')
+        self.assertEqual(inner.get('layer'), 'b')
+        self.assertEqual(inner.get('scale'), '1.5')
 
     def test_replaces_existing_project_terrain(self):
         root = self._root()
@@ -68,8 +73,9 @@ class TestInjectTerrain(unittest.TestCase):
         terrain_xml.inject_terrain(root, 'dem', './dem.tif', scale=3.0)
         text = ET.tostring(root, encoding='unicode')
         reparsed = ET.fromstring(text)
-        provider = reparsed.find('ElevationProperties/terrainProvider')
-        self.assertEqual(provider.get('scale'), '3')
+        inner = reparsed.find(
+            'ElevationProperties/terrainProvider/TerrainProvider')
+        self.assertEqual(inner.get('scale'), '3')
 
     def test_number_formatting(self):
         self.assertEqual(terrain_xml._num(1.0), '1')

@@ -17,6 +17,17 @@ Pure stdlib (ElementTree) so it unit-tests headless.
 
 ELEVATION_TAG = "ElevationProperties"
 PROVIDER_TAG = "terrainProvider"
+# The inner element name QgsRasterDemTerrainProvider actually writes and
+# reads. QGIS's schema is NESTED:
+#   <ElevationProperties>
+#     <terrainProvider type="raster">
+#       <TerrainProvider layer=".." offset=".." scale=".." .../>
+#     </terrainProvider>
+#   </ElevationProperties>
+# Putting the attributes flat on <terrainProvider> parses as an empty
+# provider and QField silently shows FLAT terrain - proven against
+# QgsProject.write() output on 3.40.9.
+INNER_TAG = "TerrainProvider"
 
 
 def inject_terrain(root, dem_layer_id, dem_source, dem_layer_name="",
@@ -37,12 +48,13 @@ def inject_terrain(root, dem_layer_id, dem_source, dem_layer_name="",
     elem = ET.SubElement(root, ELEVATION_TAG)
     provider = ET.SubElement(elem, PROVIDER_TAG)
     provider.set("type", "raster")
-    provider.set("offset", _num(offset))
-    provider.set("scale", _num(scale))
-    provider.set("layer", dem_layer_id or "")
-    provider.set("layerName", dem_layer_name or "")
-    provider.set("layerSource", dem_source or "")
-    provider.set("layerProvider", dem_provider)
+    inner = ET.SubElement(provider, INNER_TAG)
+    inner.set("offset", _num(offset))
+    inner.set("scale", _num(scale))
+    inner.set("layer", dem_layer_id or "")
+    inner.set("layerName", dem_layer_name or "")
+    inner.set("layerSource", dem_source or "")
+    inner.set("layerProvider", dem_provider)
     return elem
 
 

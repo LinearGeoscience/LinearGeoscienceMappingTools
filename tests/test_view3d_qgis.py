@@ -13,6 +13,10 @@ Requires QGIS. Run from the plugin root:
     app.exitQgis()
     EOF
 
+Do NOT run this file directly with python-qgis: without initQgis a
+QgsProject.read() never returns (it spins resolving providers), so the
+suite hangs at the round-trip section with no output. Use the wrapper.
+
 Everything runs against a temp project + synthetic DEM; nothing in the
 repo or the user's profile is touched. The 3D view itself needs the full
 app (iface), so open_view is exercised manually — see the branch memory's
@@ -488,6 +492,57 @@ view.apply_z_factor(qs4, 2.0)
 check(read_quality(qs4)[0] == 1024, 'quality survives the full open chain')
 check(abs(view.current_z_factor(qs4) - 2.0) < 1e-6,
       'z factor survives the full open chain')
+
+section('injected terrain XML must round-trip through the QGIS reader')
+# The exported .qgs gets its terrain provider from terrain_xml.py, but
+# it is QGIS/QField's OWN reader that consumes it. If the injected shape
+# drifts from what QgsProject.write() produces, the reader parses an
+# empty provider and the tablet silently shows FLAT terrain (the
+# 1-second-DEM field failure of 2026-09-02). So: inject, then read back
+# with QgsProject and demand a resolved raster provider and a real
+# height.
+import xml.etree.ElementTree as ET
+from qfield_export.core.terrain_xml import inject_terrain
+
+# Standalone QgsProject instances, NOT QgsProject.instance(): earlier
+# sections leave Qgs3DMapSettings objects wired to the shared project,
+# and clearing it out from under a live terrain generator spins forever
+# on 3.40 (found the hard way - this section hung the whole suite).
+rt_dem_path = os.path.join(TMP, 'roundtrip_dem.tif')
+build_dem(rt_dem_path)
+rt_writer = QgsProject()
+rt_dem = QgsRasterLayer(rt_dem_path, 'roundtrip_dem')
+rt_writer.addMapLayer(rt_dem)
+rt_dem_id = rt_dem.id()
+rt_qgs = os.path.join(TMP, 'roundtrip.qgs')
+rt_writer.write(rt_qgs)
+rt_writer.clear()
+del rt_writer, rt_dem
+
+rt_tree = ET.parse(rt_qgs)
+inject_terrain(rt_tree.getroot(), rt_dem_id, './roundtrip_dem.tif',
+               dem_layer_name='roundtrip_dem', scale=1.5, offset=2.0)
+rt_tree.write(rt_qgs, encoding='UTF-8', xml_declaration=True)
+
+rt_reader = QgsProject()
+check(rt_reader.read(rt_qgs), 'injected project reads back')
+rt_prov = rt_reader.elevationProperties().terrainProvider()
+check(rt_prov is not None and rt_prov.type() == 'raster',
+      'reader sees a raster terrain provider (not flat)')
+rt_layer = rt_prov.layer() if rt_prov and hasattr(rt_prov, 'layer') else None
+check(rt_layer is not None and rt_layer.isValid(),
+      'the DEM layer reference resolves')
+check(rt_prov is not None and abs(rt_prov.scale() - 1.5) < 1e-6,
+      'injected scale survives the reader')
+check(rt_prov is not None and abs(rt_prov.offset() - 2.0) < 1e-6,
+      'injected offset survives the reader')
+if rt_layer is not None:
+    centre = rt_layer.extent().center()
+    rt_h = rt_prov.heightAt(centre.x(), centre.y())
+    check(rt_h == rt_h and rt_h > 0,
+          'terrain provider samples a real height ({0:.1f})'.format(rt_h))
+else:
+    check(False, 'terrain provider samples a real height')
 
 project.clear()
 print('\n{0} passed, {1} failed'.format(_passed, _failed))
