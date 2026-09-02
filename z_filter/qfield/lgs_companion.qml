@@ -3782,6 +3782,28 @@ Item {
         clipLayer !== null ? [clipLayer] : candidateClipLayers(), pos)
   }
 
+  // The tap's tolerance box in a layer's own CRS, or null when that
+  // cannot be established with confidence — in which case the caller
+  // falls back to the expression scan rather than testing a box that
+  // might be in the wrong place.
+  function tapRectForLayer(layer, pt, tol) {
+    try {
+      const rect = GeometryUtils.createRectangleFromPoints(
+          GeometryUtils.point(pt.x - tol, pt.y - tol),
+          GeometryUtils.point(pt.x + tol, pt.y + tol))
+      const mapCrs = scaleSettings.destinationCrs
+      const layerCrs = layer.crs
+      if (mapCrs === undefined || mapCrs === null ||
+          layerCrs === undefined || layerCrs === null)
+        return null
+      if (String(mapCrs.authid) === String(layerCrs.authid))
+        return rect
+      const out = GeometryUtils.reprojectRectangle(rect, mapCrs, layerCrs)
+      return (out === undefined || out === null) ? null : out
+    } catch (error) {}
+    return null
+  }
+
   function findHitInLayers(layers, pos) {
     const pt = canvas.mapSettings.screenToCoordinate(
         Qt.point(pos.x, pos.y))
@@ -3792,11 +3814,32 @@ Item {
       let best = null
       let bestArea = -1
       let iterator = null
+      let boxed = false
       try {
-        iterator = LayerUtils.createFeatureIteratorFromExpression(
-            layer, probe)
+        // Every tap used to read the whole layer and evaluate the probe
+        // per row (a filter expression derives no spatial index), then
+        // ask the expression engine for area() per hit. On a Basemap of
+        // any size that is the very first thing the tool does and it is
+        // the slowest. The tolerance box goes to the provider's index
+        // instead, and the exact test decides among what comes back.
+        const rect = tapRectForLayer(layer, pt, tol)
+        if (rect !== null) {
+          iterator = LayerUtils.createFeatureIteratorFromRectangle(
+              layer, rect)
+          boxed = true
+        }
+      } catch (error) {
+        iterator = null
+        boxed = false
+      }
+      try {
+        if (iterator === null)
+          iterator = LayerUtils.createFeatureIteratorFromExpression(
+              layer, probe)
         while (iterator.hasNext()) {
           const feature = iterator.next()
+          if (boxed && evalExpr(layer, feature, probe) !== 'true')
+            continue
           // Stacked polygons: the small overlying unit is almost always
           // the intent, so the smallest hit wins.
           const area = Number(evalExpr(layer, feature, 'area($geometry)'))
