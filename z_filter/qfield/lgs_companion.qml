@@ -6979,6 +6979,10 @@ Item {
   // scan dies as 'no candidates'); repair decimates at 2 pt; end
   // extension starts at 24 pt on screen and doubles per iteration.
   readonly property int reshapeProbeWktCap: 64000
+  // Map/layer CRS authids, read once per reshape session.
+  property var reshapeCrsCache: null
+  // Segment cache for the repair rung's differently-decimated controls.
+  property var reshapeRepairCache: ({})
   readonly property real reshapeRepairPoints: 2.0
   readonly property real reshapeExtendStartPoints: 24
   readonly property int reshapeExtendMaxIter: 6
@@ -7259,6 +7263,7 @@ Item {
       reshapePicks = []
       reshapeLockedSelection = false
       reshapeResultText = ''
+      reshapeCrsCache = null
       toast(qsTr('Reshape now targets %1').arg(reshapeLayerLabel()))
     } catch (error) {}
   }
@@ -7337,7 +7342,9 @@ Item {
       reshapePicks = []
       reshapeControls = []
       reshapeCache = ({})
+      reshapeRepairCache = ({})
       reshapeLastSeq = null
+      reshapeCrsCache = null
       reshapePlan = []
       reshapeResultText = ''
       reshapeMarkerPositions = []
@@ -7381,7 +7388,9 @@ Item {
     reshapePicks = []
     reshapeControls = []
     reshapeCache = ({})
+    reshapeRepairCache = ({})
     reshapeLastSeq = null
+    reshapeCrsCache = null
     reshapePlan = []
     reshapeResultText = ''
     reshapeMarkerPositions = []
@@ -7879,10 +7888,11 @@ Item {
     updateReshapeSelection()
   }
 
-  function reshapeLineWkt() {
+  function reshapeLineWkt(seq) {
     // XY only — this WKT feeds the 2D intersects probe; the reshape op
     // reads its geometry (with Z) from the rubberband model directly.
-    const seq = reshapeSequence()
+    if (seq === undefined || seq === null)
+      seq = reshapeSequence()
     if (seq.length < 2)
       return ''
     let coords = []
@@ -7891,23 +7901,46 @@ Item {
     return 'LINESTRING (' + coords.join(', ') + ')'
   }
 
+  // The map and layer CRS authids, read ONCE per session. Two expression
+  // evaluations each with their own parse and context build, and
+  // reshapeEndNeedsExtend can ask for them up to fourteen times per
+  // feature that refuses the line.
+  function reshapeCrsPair() {
+    if (reshapeCrsCache !== null)
+      return reshapeCrsCache
+    let pair = { layerCrs: '', mapCrs: '', readable: false }
+    try {
+      pair.layerCrs = evalExpr(reshapeLayer, null,
+                               "layer_property(@layer, 'crs')")
+      pair.mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
+      pair.readable = pair.layerCrs !== '' && pair.mapCrs !== ''
+    } catch (error) {}
+    reshapeCrsCache = pair
+    return pair
+  }
+
   // Wrap a geometry term (in map CRS) with the map→layer transform when
   // the layer disagrees. Unreadable authids skip the transform (LGS
   // exports are single-CRS mine grids) — worst case 0 candidates.
   function reshapeCrsTerm(term) {
-    try {
-      const layerCrs = evalExpr(reshapeLayer, null,
-                                "layer_property(@layer, 'crs')")
-      const mapCrs = evalExpr(reshapeLayer, null, '@project_crs')
-      if (layerCrs !== '' && mapCrs !== '' && layerCrs !== mapCrs)
-        return "transform(" + term + ", '" + mapCrs + "', '" +
-               layerCrs + "')"
-    } catch (error) {}
+    const pair = reshapeCrsPair()
+    if (pair.readable && pair.layerCrs !== pair.mapCrs)
+      return "transform(" + term + ", '" + pair.mapCrs + "', '" +
+             pair.layerCrs + "')"
     return term
   }
 
-  function reshapeProbeExpr() {
-    const wkt = reshapeLineWkt()
+  // The pad the candidate box needs beyond the sequence's own extent.
+  // Zero for the normal probe; on the over-cap branch the probe is the
+  // CONTROL polyline buffered by half its longest chord, which reaches
+  // that far outside the sequence box — and under-padding there would
+  // silently drop legitimate targets on exactly the long lines that
+  // branch exists for.
+  property real reshapeProbePad: 0
+
+  function reshapeProbeExpr(seq) {
+    const wkt = reshapeLineWkt(seq)
+    reshapeProbePad = 0
     if (wkt === '')
       return ''
     let term = "geom_from_wkt('" + wkt + "')"
@@ -7919,7 +7952,7 @@ Item {
       // strays further from its control polygon than that); the extras
       // just come back unchanged from the reshape itself (v32).
       const controls = reshapeConditionSequence(reshapeControls,
-          reshapeConditionEps(), 0)
+          reshapeConditionEps(), reshapeLoopCap)
       if (controls.length >= 2) {
         let coords = []
         let maxChord = 0
@@ -7935,6 +7968,7 @@ Item {
         }
         term = "buffer(geom_from_wkt('LINESTRING (" + coords.join(', ') +
                ")'), " + (maxChord / 2) + ')'
+        reshapeProbePad = maxChord / 2
       }
     }
     return 'intersects($geometry, ' + reshapeCrsTerm(term) + ')'
@@ -7943,12 +7977,54 @@ Item {
   // ----------------------------------------------------------------
   // Target collection + execution
   // ----------------------------------------------------------------
+  // The candidate box: the drawn line's extent, padded, in LAYER CRS.
+  // Returns null when it cannot be built with confidence — including
+  // when the two CRSs disagree and the reprojection is not certain,
+  // because a partly-wrong box returns SOME features, the exact test
+  // then filters them, and the result is a silent partial reshape. That
+  // is worse than being slow, so an uncertain box falls back to the
+  // whole-layer scan instead. (reshapeCrsTerm can degrade quietly
+  // because a wrong transform there yields zero candidates and a loud
+  // failure.)
+  function reshapeSequenceRect(seq, pad) {
+    if (seq.length < 2)
+      return null
+    let minX = seq[0].x, maxX = seq[0].x, minY = seq[0].y, maxY = seq[0].y
+    for (let i = 1; i < seq.length; i++) {
+      const p = seq[i]
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    let d = (maxX - minX + maxY - minY) * 0.01 + reshapeConditionEps()
+    if (pad > d)
+      d = pad
+    try {
+      let rect = GeometryUtils.createRectangleFromPoints(
+          GeometryUtils.point(minX - d, minY - d),
+          GeometryUtils.point(maxX + d, maxY + d))
+      const pair = reshapeCrsPair()
+      if (pair.readable && pair.layerCrs !== pair.mapCrs) {
+        rect = GeometryUtils.reprojectRectangle(
+            rect, scaleSettings.destinationCrs, reshapeLayer.crs)
+        if (rect === null || rect === undefined)
+          return null
+      } else if (!pair.readable) {
+        return null
+      }
+      return rect
+    } catch (error) {}
+    return null
+  }
+
   function collectReshapeTargets() {
     reshapePlan = []
     const layer = reshapeLayer
     if (layer === null || reshapeControls.length < 2)
       return 0
-    const probe = reshapeProbeExpr()
+    const seq = reshapeSequence()
+    const probe = reshapeProbeExpr(seq)
     if (probe === '')
       return 0
     let pickFids = null
@@ -7961,13 +8037,43 @@ Item {
     let failed = 0
     let iterator = null
     let scanFailed = false
+    let boxed = false
     try {
-      // The iterator honours the layer subsetString, so an active Z
-      // filter means only VISIBLE polygons reshape — reshape what you see.
-      iterator = LayerUtils.createFeatureIteratorFromExpression(layer, probe)
+      // A filter EXPRESSION derives no spatial index: the iterator reads
+      // EVERY row in the layer and rebuilds the cut line in GEOS for each
+      // one, so the scan cost the layer size times the line length —
+      // seconds on a real Basemap, paid before anything appeared on
+      // screen. The line's bounding box is a strict superset of what it
+      // can touch, so let the provider's index hand back the handful and
+      // keep the exact test for those. This is also what the desktop tool
+      // has always done (QgsFeatureRequest(reshape_line.boundingBox())).
+      // Feature-detected: a build without the rectangle iterator, or a
+      // CRS pair we cannot trust, falls back to the v32 scan.
+      const rect = reshapeSequenceRect(seq, reshapeProbePad)
+      if (rect !== null) {
+        try {
+          iterator = LayerUtils.createFeatureIteratorFromRectangle(layer, rect)
+          boxed = true
+        } catch (error) {
+          iterator = null
+          boxed = false
+        }
+      }
+      // The iterator honours the layer subsetString either way, so an
+      // active Z filter means only VISIBLE polygons reshape — reshape
+      // what you see.
+      if (iterator === null)
+        iterator = LayerUtils.createFeatureIteratorFromExpression(layer, probe)
       while (iterator.hasNext()) {
         const feature = iterator.next()
         if (pickFids !== null && pickFids[feature.id] !== true)
+          continue
+        // The box is a superset, so the exact test still decides. It is
+        // affordable now precisely because it only ever runs on what the
+        // index returned rather than on every row in the layer, and
+        // running it for picks too keeps "none of the picked polygons
+        // cross the line" an honest message.
+        if (boxed && evalExpr(layer, feature, probe) !== 'true')
           continue
         // Pre-reshape snapshot, for the undo. QgsFeature.geometry is
         // readable straight from QML (QField reads it that way itself),
@@ -8056,10 +8162,11 @@ Item {
     }
   }
 
-  // Attempt 2: decimate the controls at reshapeRepairPoints (harder
-  // than the 8 pt capture gate ever needed), re-spline with a FRESH
-  // cache (different controls must not pollute the session cache), and
-  // condition the result.
+  // Attempt 2: decimate the controls at reshapeRepairPoints, re-spline
+  // and condition the result. Its own cache, kept for the session: the
+  // controls differ from the main line's so they must not pollute
+  // reshapeCache, but a fresh ({}) per call meant every repair paid for
+  // a cold full-density spline.
   function reshapeRepairedSequence() {
     const eps = reshapeConditionEps()
     let minDist = 0
@@ -8073,7 +8180,8 @@ Item {
     let seq = controls
     if (reshapeSplineArmed) {
       const s = splineConfirmSequence(controls, false, splineTightness,
-          splineTolerance, splineMaxSegments, ({}), reshapeDensity())
+          splineTolerance, splineMaxSegments, reshapeRepairCache,
+          reshapeDensity())
       if (s !== null)
         seq = s
     }
@@ -8157,22 +8265,36 @@ Item {
       const layer = reshapeLayer
       if (layer === null || reshapePlan.length === 0)
         return
+      const started = Date.now()
       reshapeResultText = qsTr('Reshaping…')
       const names = attributeNames(layer, reshapePlan[0].feature)
       const uuidField = detectUuidField(names)
       const eps = reshapeConditionEps()
-      // Ladder sequences, built once. The final splined line gets its
-      // own loop pass here — live preview skips it above the cap.
       const seqBase = reshapeConditionSequence(reshapeSequence(), eps,
                                                reshapeLoopCap)
+      // Rung 2 is built on FIRST refusal, not up front. It is a complete
+      // second spline — decimate the controls harder, re-spline, condition
+      // again — and every reshape that worked first time was paying for
+      // it and throwing it away. Its cache is session-scoped rather than
+      // a fresh ({}) per call, which forced a cold full-density build
+      // each time it was asked for.
+      let repairedBuilt = false
       let seqRepaired = null
-      try {
-        seqRepaired = reshapeRepairedSequence()
-        if (seqRepaired.length === seqBase.length &&
-            JSON.stringify(seqRepaired) === JSON.stringify(seqBase))
+      function repairedSeq() {
+        if (repairedBuilt)
+          return seqRepaired
+        repairedBuilt = true
+        try {
+          const seq = reshapeRepairedSequence()
+          // Same line, differently derived, is no second attempt. An
+          // O(n) prefix walk says so without serialising both arrays.
+          if (seq.length !== seqBase.length ||
+              splineCommonPrefixLength(seq, seqBase) !== seqBase.length)
+            seqRepaired = seq
+        } catch (error) {
           seqRepaired = null
-      } catch (error) {
-        seqRepaired = null
+        }
+        return seqRepaired
       }
       let undoEntries = []
       let unchanged = 0
@@ -8205,8 +8327,8 @@ Item {
         writeAttempt('base', seqBase)
         let result = reshapeApplyOnce(layer, target.fid)
         attempts.push(result)
-        if (result === 1000 && seqRepaired !== null) {
-          writeAttempt('repaired', seqRepaired)
+        if (result === 1000 && repairedSeq() !== null) {
+          writeAttempt('repaired', repairedSeq())
           result = reshapeApplyOnce(layer, target.fid)
           attempts.push(result)
         }
@@ -8214,7 +8336,7 @@ Item {
           let seqExt = null
           try {
             seqExt = reshapeExtendedSequence(layer, target.feature,
-                seqRepaired !== null ? seqRepaired : seqBase, eps)
+                repairedSeq() !== null ? repairedSeq() : seqBase, eps)
           } catch (error) {
             seqExt = null
           }
@@ -8314,6 +8436,11 @@ Item {
         message += qsTr(' — %1 unchanged (the line must enter and exit through the boundary)').arg(unchanged)
       if (failed > 0)
         message += qsTr(' — %1 failed').arg(failed)
+      console.log('LGS reshape confirm: ' + (Date.now() - started) +
+                  ' ms, ' + reshapePlan.length + ' target(s), ' +
+                  seqBase.length + ' pts, ' + reshapeControls.length +
+                  ' controls, repaired ' + repaired + ', unchanged ' +
+                  unchanged + ', failed ' + failed)
       reshapeResultText = message
       toast(message)
       // Stay in the draw step with the line cleared, so the next edge is
@@ -8340,6 +8467,7 @@ Item {
     reshapeStrokeRaw.length = 0
     reshapeLastSeq = null
     reshapeCache = ({})
+    reshapeRepairCache = ({})
     reshapePlan = []
     try {
       reshapeModel.reset(true)
