@@ -88,12 +88,35 @@ DD_EXPRESSIONS = {
     "LabelDistance": ring_expr(COMMENT_RING_MM),
     "MaximumDistance": ring_expr(COMMENT_RING_MM * COMMENT_MAX_FACTOR),
 }
+
+# The leader's end gaps and minimum length, held constant ON PAPER. MM takes
+# the referenceScale/mapScale multiplier while the ring above is
+# paper-constant, so the static 0.5 + 1 mm gaps outgrew the whole leader a
+# few zooms in and the callouts vanished (user report, 2 Sep 2026; measured
+# at ZERO leader pixels by 5x). Tiny gaps by the same request. Keep in step
+# with script_setmapping CALLOUT_GAP_*_MM / callout_gap_expression and the
+# twin blocks in inject_dynamic_callouts.py / inject_basemap_label_placement.py.
+GAP_ANCHOR_MM = 0.3
+GAP_LABEL_MM = 0.3
+MIN_CALLOUT_MM = 1.0
+
+
+def gap_expr(mm):
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _REF + " > 0 "
+            "THEN %s * @map_scale / %s ELSE %s END" % (mm, _REF, mm))
+
+
+CALLOUT_DD = {
+    "OffsetFromAnchor": gap_expr(GAP_ANCHOR_MM),
+    "OffsetFromLabel": gap_expr(GAP_LABEL_MM),
+    "MinimumCalloutLength": gap_expr(MIN_CALLOUT_MM),
+}
 CALLOUT_TYPE = "simple"  # straight leader, same as the FieldNotebook callouts
 CALLOUT_OPTS = {
     "enabled": "1",
     "minLength": "1",
-    "offsetFromAnchor": "0.5",
-    "offsetFromLabel": "1",
+    "offsetFromAnchor": "0.3",
+    "offsetFromLabel": "0.3",
     # Leader must terminate at the zone's EDGE nearest the label —
     # pole_of_inaccessibility runs it deep into the polygon interior.
     "anchorPoint": "point_on_exterior",
@@ -107,6 +130,44 @@ CURVED_ONLY_OPTS = ("curvature", "orientation")  # meaningless on a simple callo
 def bail(msg):
     print("ERROR:", msg)
     sys.exit(1)
+
+
+def inject_callout_dd(callout, name, expr):
+    """Set one data-defined property ON THE CALLOUT, leaving siblings alone.
+
+    A callout's dd collection serialises as an Option named "ddProperties"
+    inside the callout's outer Option map (not as a <dd_properties> element
+    the way the label settings' does). Same shape as the twin in
+    inject_dynamic_callouts.py."""
+    outer = callout.find("Option")
+    if outer is None:
+        return False
+    dd = next((o for o in outer.findall("Option")
+               if o.get("name") == "ddProperties"), None)
+    if dd is None:
+        dd = ET.SubElement(outer, "Option",
+                           {"name": "ddProperties", "type": "Map"})
+        ET.SubElement(dd, "Option",
+                      {"name": "name", "type": "QString", "value": ""})
+        ET.SubElement(dd, "Option", {"name": "type", "type": "QString",
+                                     "value": "collection"})
+    props = next((o for o in dd.findall("Option")
+                  if o.get("name") == "properties"), None)
+    if props is None:
+        props = ET.SubElement(dd, "Option",
+                              {"name": "properties", "type": "Map"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
 
 
 def inject_dd(settings, name, expr):
@@ -199,6 +260,11 @@ def main():
             bail(f"no dd_properties block to carry {name}")
         print(f"dd {name} -> paper-constant ring")
 
+    for name, expr in CALLOUT_DD.items():
+        if not inject_callout_dd(callout, name, expr):
+            bail(f"callout has no Option map for {name}")
+        print(f"callout dd {name} -> paper-constant gap")
+
     new_block = ET.tostring(lab, encoding="unicode")
     new_qml = qml[:m.start()] + new_block + qml[m.end():]
 
@@ -254,6 +320,16 @@ def main():
               for o in entry.iter("Option") if o.get("name")}
         assert by.get("active") == "true" and by.get("expression") == expr, \
             f"dd {name} wrong: {by!r}"
+    # ...and so are the paper-constant end gaps on the callout itself.
+    for name, expr in CALLOUT_DD.items():
+        entry = next((o for o in callout.iter("Option")
+                      if o.get("name") == name and o.get("type") == "Map"),
+                     None)
+        assert entry is not None, f"callout dd {name} missing"
+        by = {o.get("name"): o.get("value")
+              for o in entry.iter("Option") if o.get("name")}
+        assert by.get("active") == "true" and by.get("expression") == expr, \
+            f"callout dd {name} wrong: {by!r}"
     # Label expression untouched.
     assert "'Alteration'" in settings.find("text-style").get("fieldName")
     # Renderer untouched: still categorized on SubType1 at reference scale 5000.

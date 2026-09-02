@@ -2,7 +2,7 @@ from qgis.core import (
     QgsProject, QgsSnappingConfig, QgsVectorLayer,
     QgsPalLayerSettings, QgsProperty, QgsVectorLayerSimpleLabeling,
     QgsExpressionContext, QgsExpressionContextUtils, QgsPropertyCollection,
-    QgsTextFormat, QgsSimpleLineCallout, QgsLineSymbol,
+    QgsTextFormat, QgsSimpleLineCallout, QgsLineSymbol, QgsCallout,
     QgsRuleBasedLabeling, QgsMessageLog, Qgis
 )
 from qgis.PyQt.QtWidgets import (
@@ -413,7 +413,19 @@ LINEAR_STRUCTURE_CODES = (
 DIP_OFFSET_LINEAR_PT = 21.5
 DIP_OFFSET_PLANAR_PT = 9.6
 DIP_OFFSET_FALLBACK_PT = 2.3
-SUFFIX_OFFSET_PT = 17.0
+# The SymbolSuffix annotation ("1/2" on a lineation, and anything else a
+# geologist wants pinned to a reading) sits UPRIGHT in the map frame as a
+# subscript to the symbol: below the symbol with its right edge on the
+# symbol's right extent for planar structures, hanging off the bottom-right
+# for linear ones. The symbol's footprint rotates with DipDirection, so the
+# anchor tracks the rotated bounding extent rather than sitting at a fixed
+# ring distance the way it (wrongly) used to - a fixed ring wandered above
+# and below the symbol as the bearing turned.
+SUFFIX_HALF_PLANAR_PT = 15.0    # half-length of the strike line
+SUFFIX_HALF_LINEAR_PT = 15.0    # half-length of the plunge arrow
+SUFFIX_TICK_PT = 7.0            # dip-tick clearance on the planar symbols
+SUFFIX_GAP_PT = 2.0             # the air between symbol and suffix
+SUFFIX_DIP_CLEAR_PT = 10.0      # extra drop past a dip number in the corner
 SUFFIX_OFFSET_FALLBACK_PT = 8.5
 
 # Regolith Notes sit beside their point with no leader (user decision
@@ -458,15 +470,55 @@ def dip_offset_expression(scale):
 
 
 def suffix_offset_expression(scale):
-    """OffsetXY for the SymbolSuffix rule (dip direction + 135), map units."""
-    dist = _mu(SUFFIX_OFFSET_PT, scale)
+    """OffsetXY for the SymbolSuffix rule: the symbol's rotated bounding
+    extent, in map units, screen-down positive.
+
+    The strike line runs along bearing (DipDirection - 90), so its map-frame
+    extents are half_len * |cos(dd)| across and half_len * |sin(dd)| down;
+    the dip tick points along DipDirection and only matters when it points
+    right (adds to the right extent) or down (adds to the drop). A plunge
+    arrow runs along DipDirection itself, so its extents are the transpose.
+    OffsetXY's y is positive DOWNWARD - same screen convention the dip
+    expression leans on.
+    """
+    lp = _mu(SUFFIX_HALF_PLANAR_PT, scale)
+    ll = _mu(SUFFIX_HALF_LINEAR_PT, scale)
+    tk = _mu(SUFFIX_TICK_PT, scale)
+    gap = _mu(SUFFIX_GAP_PT, scale)
+    clear = _mu(SUFFIX_DIP_CLEAR_PT, scale)
     fallback = _mu(SUFFIX_OFFSET_FALLBACK_PT, scale)
+    codes = ",".join("'%s'" % c for c in LINEAR_STRUCTURE_CODES)
+    dd = 'radians("DipDirection")'
+    # When the plunge arrow points into the bottom-right quadrant the dip
+    # number sits past the arrowhead in exactly the corner the suffix wants,
+    # so the suffix drops below it.
+    dip_in_corner = f'(sin({dd}) >= 0 AND cos({dd}) < 0.1)'
     return (
-        f'CASE WHEN "Type" = \'Structure\' THEN '
-        f'to_string(({dist} * cos(radians("DipDirection" - 90 + 135)))) '
+        f'CASE WHEN "Type" = \'Structure\' AND "Subtype1" IN ({codes}) THEN '
+        f'to_string(({ll} * abs(sin({dd})))) '
         f'|| \',\' || '
-        f'to_string(({dist} * sin(radians("DipDirection" - 90 + 135)))) '
+        f'to_string(({ll} * abs(cos({dd})) + {gap} + '
+        f'(CASE WHEN {dip_in_corner} THEN {clear} ELSE 0 END))) '
+        f'WHEN "Type" = \'Structure\' THEN '
+        f'to_string(max({lp} * abs(cos({dd})), {tk} * sin({dd}))) '
+        f'|| \',\' || '
+        f'to_string((max({lp} * abs(sin({dd})), -{tk} * cos({dd})) + {gap})) '
         f'ELSE \'{fallback},{fallback}\' END')
+
+
+def suffix_quadrant_expression():
+    """Data-defined offset quadrant for the SymbolSuffix rule.
+
+    QuadrantBelowLeft (6) hangs the text below-left of its anchor, so its
+    RIGHT edge sits on the anchor - right-aligned to the planar symbol's
+    right extent. QuadrantBelowRight (8) hangs it below-right, growing off
+    the linear symbol's bottom-right corner like a subscript. The integers
+    are QgsPalLayerSettings.QuadrantPosition, the same order quadOffset uses
+    in the QML (AboveLeft 0 ... Over 4 ... BelowRight 8).
+    """
+    codes = ",".join("'%s'" % c for c in LINEAR_STRUCTURE_CODES)
+    return (f'CASE WHEN "Type" = \'Structure\' AND "Subtype1" IN ({codes}) '
+            f'THEN 8 ELSE 6 END')
 
 
 class LayerConfigurator:
@@ -756,7 +808,17 @@ class LayerConfigurator:
         settings.setDataDefinedProperties(props)
 
     def create_comment_callout(self):
-        """Grey dashed leader line for the comment rules (Regolith/Fallback)."""
+        """Grey dashed leader line for the comment rules (Regolith/Fallback).
+
+        The end gaps and minimum length are MM options, and MM takes the
+        referenceScale/mapScale multiplier while the ring the leader spans is
+        held constant on paper - so static gaps eat the whole leader a few
+        zooms in (measured: 0.5+1 mm gaps left ZERO leader pixels at 5x).
+        The data-defined expressions hold them on paper instead; the statics
+        stay as the fallback for an unknown reference scale. Values and
+        expression text mirror the baked template
+        (scripts/inject_dynamic_callouts.py et al.).
+        """
         callout = QgsSimpleLineCallout()
         line_symbol = QgsLineSymbol.createSimple({
             'line_color': '#808080',  # Medium grey
@@ -765,9 +827,17 @@ class LayerConfigurator:
         })
         callout.setLineSymbol(line_symbol)
         callout.setEnabled(True)
-        callout.setOffsetFromAnchor(0.5)  # MM gap at the feature end
-        callout.setOffsetFromLabel(1)  # MM gap at the label end
-        callout.setMinimumLength(1)  # MM; no stub when label sits at its ring
+        callout.setOffsetFromAnchor(CALLOUT_GAP_ANCHOR_MM)
+        callout.setOffsetFromLabel(CALLOUT_GAP_LABEL_MM)
+        callout.setMinimumLength(CALLOUT_MIN_LEN_MM)
+        props = callout.dataDefinedProperties()
+        for prop, mm in (
+                (QgsCallout.Property.OffsetFromAnchor, CALLOUT_GAP_ANCHOR_MM),
+                (QgsCallout.Property.OffsetFromLabel, CALLOUT_GAP_LABEL_MM),
+                (QgsCallout.Property.MinimumCalloutLength, CALLOUT_MIN_LEN_MM)):
+            props.setProperty(prop, QgsProperty.fromExpression(
+                callout_gap_expression(mm)))
+        callout.setDataDefinedProperties(props)
         return callout
 
     def apply_around_point_placement(self, settings, dist, units,
@@ -889,20 +959,26 @@ class LayerConfigurator:
             settings, Qgis.LabelOverlapHandling.PreventOverlap)
         self.set_obstacle_factor(settings, OBSTACLE_FACTOR)
 
-        # Data-defined properties
+        # Data-defined properties. The suffix stays UPRIGHT - it used to
+        # rotate with the symbol, which read fine at some bearings and
+        # upside-down-ish at others as QGIS flipped the text to keep it
+        # legible while the offset stayed put, so the annotation wandered
+        # above and below the symbol as the bearing turned. Upright at the
+        # symbol's bottom-right is what "1/2" is meant to be: a subscript.
         props = QgsPropertyCollection()
 
-        # Bottom-right placement with rotation
+        # The anchor tracks the symbol's rotated bounding extent...
         props.setProperty(
             QgsPalLayerSettings.Property.OffsetXY,
             QgsProperty.fromExpression(suffix_offset_expression(scale_value)))
-
-        # Text rotation to match symbol orientation
-        rotation_expression = (
-            'CASE WHEN "Type" = \'Structure\' THEN "DipDirection" - 90 ELSE 0 END'
-        )
-        props.setProperty(QgsPalLayerSettings.Property.LabelRotation,
-                          QgsProperty.fromExpression(rotation_expression))
+        # ...and the quadrant hangs the text below it: right edge on the
+        # anchor for the planar symbols (right-aligned to the structure),
+        # growing rightward off the corner for the linear ones. Hali/Vali
+        # would say this more directly but are only honoured with
+        # data-defined POSITION, not with an offset - measured, not read.
+        props.setProperty(QgsPalLayerSettings.Property.OffsetQuad,
+                          QgsProperty.fromExpression(
+                              suffix_quadrant_expression()))
 
         settings.setDataDefinedProperties(props)
 
@@ -1021,6 +1097,11 @@ class LayerConfigurator:
                     f"[Label] Installed the zoom-out cutoff on {target.name()} "
                     f"- it predates the label scale gate",
                     'Linear Geoscience', Qgis.MessageLevel.Info)
+            if target and install_callout_gaps(target):
+                QgsMessageLog.logMessage(
+                    f"[Label] Installed paper-constant leader gaps on "
+                    f"{target.name()} - it predates the tiny-gap callouts",
+                    'Linear Geoscience', Qgis.MessageLevel.Info)
 
         linework = self.get_layer(layers_dict.get("Linework"))
         if linework:
@@ -1048,6 +1129,49 @@ class LayerConfigurator:
                 QgsMessageLog.logMessage(f"[Label] Rescaled Basemap label distance to {BASEMAP_DIST_FACTOR * callout_dist_for_scale(scale_value)} map units (1:{scale_value})", 'Linear Geoscience', Qgis.MessageLevel.Info)
             else:
                 QgsMessageLog.logMessage(f"[Label] {basemap.name()} labeling is not the LGS polygon-callout style, leaving untouched", 'Linear Geoscience', Qgis.MessageLevel.Warning)
+
+
+def install_callout_gaps(layer):
+    """Give an existing project's leader the tiny paper-constant end gaps.
+
+    The template ships them (the three callout injectors), but a .qgz
+    carries its own embedded styles - the same reasoning as
+    install_label_scale_gate below. Only ever additive: a callout that
+    already carries a gap dd is left exactly as it is. The statics are
+    updated alongside, since they are the unknown-reference fallback and the
+    old 0.5 + 1 mm is what ate the leader. FieldNotebook needs no retrofit -
+    its labeling is rebuilt wholesale with the gaps in it.
+
+    Returns True if it installed them.
+    """
+    labeling = layer.labeling()
+    if not isinstance(labeling, QgsVectorLayerSimpleLabeling):
+        return False
+    settings = QgsPalLayerSettings(labeling.settings())
+    callout = settings.callout()
+    if callout is None or not callout.enabled():
+        return False
+    existing = callout.dataDefinedProperties().property(
+        QgsCallout.Property.OffsetFromAnchor)
+    if existing.isActive():
+        return False
+    callout = callout.clone()
+    callout.setOffsetFromAnchor(CALLOUT_GAP_ANCHOR_MM)
+    callout.setOffsetFromLabel(CALLOUT_GAP_LABEL_MM)
+    callout.setMinimumLength(CALLOUT_MIN_LEN_MM)
+    props = callout.dataDefinedProperties()
+    for prop, mm in (
+            (QgsCallout.Property.OffsetFromAnchor, CALLOUT_GAP_ANCHOR_MM),
+            (QgsCallout.Property.OffsetFromLabel, CALLOUT_GAP_LABEL_MM),
+            (QgsCallout.Property.MinimumCalloutLength, CALLOUT_MIN_LEN_MM)):
+        props.setProperty(prop, QgsProperty.fromExpression(
+            callout_gap_expression(mm)))
+    callout.setDataDefinedProperties(props)
+    settings.setCallout(callout)
+    # By copy, never a rebuild - the auxiliary-storage bindings for manual
+    # label moves live in the same settings.
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    return True
 
 
 def install_label_scale_gate(layer, persist_major=False):
@@ -1097,6 +1221,34 @@ def install_label_scale_gate(layer, persist_major=False):
 # multiplier, so a static ring drifts as the SQUARE of the zoom ratio
 # (the Basemap leaders had the same disease; see
 # scripts/inject_basemap_label_placement.py RING_MM for the derivation).
+# The air at each end of a leader line, and the shortest leader worth
+# drawing, in MM ON PAPER. Tiny by request (2 Sep 2026): "there should only
+# be a tiny gap between the callouts and the objects / labels" - the old
+# 0.5 / 1.0 ate 40% of the 3.75 mm Basemap ring before any zoom, and being
+# plain MM they inflated with referenceScale/mapScale until, a few zooms
+# in, no leader survived at all. Held on paper by callout_gap_expression;
+# mirrored by the baked values in scripts/inject_dynamic_callouts.py,
+# scripts/inject_overlay_label_placement.py and
+# scripts/inject_basemap_label_placement.py.
+CALLOUT_GAP_ANCHOR_MM = 0.3
+CALLOUT_GAP_LABEL_MM = 0.3
+CALLOUT_MIN_LEN_MM = 1.0
+
+
+def callout_gap_expression(mm):
+    """An MM value that renders as `mm` on the page at any zoom.
+
+    MM is multiplied by referenceScale/mapScale like every unit, so the
+    stored value has to be divided by it: V = mm * mapScale/reference.
+    Unknown reference scale falls back to the plain MM value - the old
+    behaviour. Keep byte-identical with the copies in the three callout
+    injectors; tests/test_label_code_template_qgis.py pins template == this
+    code for the FieldNotebook side."""
+    ref = "coalesce(to_real(@lgs_reference_scale), 0)"
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND %s > 0 "
+            "THEN %s * @map_scale / %s ELSE %s END" % (ref, mm, ref, mm))
+
+
 COMMENT_RING_MM = 5.0
 COMMENT_MAX_FACTOR = 3
 

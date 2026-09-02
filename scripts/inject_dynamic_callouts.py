@@ -91,8 +91,8 @@ CALLOUT_OPTS = {
     FALLBACK: {
         "enabled": "1",
         "minLength": "1",
-        "offsetFromAnchor": "0.5",
-        "offsetFromLabel": "1",
+        "offsetFromAnchor": "0.3",
+        "offsetFromLabel": "0.3",
     },
     REGOLITH: {
         "enabled": "0",
@@ -119,10 +119,71 @@ DD_EXPRESSIONS = {
     "MaximumDistance": ring_expr(COMMENT_RING_MM * COMMENT_MAX_FACTOR),
 }
 
+# The leader's end gaps and minimum length, held constant ON PAPER. They are
+# MM options and MM takes the referenceScale/mapScale multiplier, while the
+# ring above is paper-constant - so the static 0.5 + 1 mm gaps outgrew the
+# whole leader a few zooms in and the callouts vanished (user report,
+# 2 Sep 2026; measured at ZERO leader pixels by 5x). Tiny gaps by the same
+# request. Keep values and expression text byte-identical with
+# script_setmapping (CALLOUT_GAP_*_MM / callout_gap_expression) - Set
+# Mapping Scale rebuilds this labeling wholesale.
+GAP_ANCHOR_MM = 0.3
+GAP_LABEL_MM = 0.3
+MIN_CALLOUT_MM = 1.0
+
+
+def gap_expr(mm):
+    return ("CASE WHEN coalesce(@map_scale, 0) > 0 AND " + _REF + " > 0 "
+            "THEN %s * @map_scale / %s ELSE %s END" % (mm, _REF, mm))
+
+
+CALLOUT_DD = {
+    "OffsetFromAnchor": gap_expr(GAP_ANCHOR_MM),
+    "OffsetFromLabel": gap_expr(GAP_LABEL_MM),
+    "MinimumCalloutLength": gap_expr(MIN_CALLOUT_MM),
+}
+
 
 def bail(msg):
     print("ERROR:", msg)
     sys.exit(1)
+
+
+def inject_callout_dd(callout, name, expr):
+    """Set one data-defined property ON THE CALLOUT, leaving siblings alone.
+
+    A callout's dd collection serialises as an Option named "ddProperties"
+    inside the callout's outer Option map (not as a <dd_properties> element
+    the way the label settings' does)."""
+    outer = callout.find("Option")
+    if outer is None:
+        return False
+    dd = next((o for o in outer.findall("Option")
+               if o.get("name") == "ddProperties"), None)
+    if dd is None:
+        dd = ET.SubElement(outer, "Option",
+                           {"name": "ddProperties", "type": "Map"})
+        ET.SubElement(dd, "Option",
+                      {"name": "name", "type": "QString", "value": ""})
+        ET.SubElement(dd, "Option", {"name": "type", "type": "QString",
+                                     "value": "collection"})
+    props = next((o for o in dd.findall("Option")
+                  if o.get("name") == "properties"), None)
+    if props is None:
+        props = ET.SubElement(dd, "Option",
+                              {"name": "properties", "type": "Map"})
+    props.set("type", "Map")
+    props.attrib.pop("value", None)
+    for o in props.findall("Option"):
+        if o.get("name") == name:
+            props.remove(o)
+    entry = ET.SubElement(props, "Option", {"name": name, "type": "Map"})
+    ET.SubElement(entry, "Option",
+                  {"name": "active", "type": "bool", "value": "true"})
+    ET.SubElement(entry, "Option",
+                  {"name": "expression", "type": "QString", "value": expr})
+    ET.SubElement(entry, "Option", {"name": "type", "type": "int", "value": "3"})
+    return True
 
 
 def inject_dd(settings, name, expr):
@@ -210,6 +271,10 @@ def main():
                 if not inject_dd(settings, name, expr):
                     bail(f"{desc}: no dd_properties block to carry {name}")
                 print(f"{desc}: dd {name} -> paper-constant ring")
+            for name, expr in CALLOUT_DD.items():
+                if not inject_callout_dd(callout, name, expr):
+                    bail(f"{desc}: callout has no Option map for {name}")
+                print(f"{desc}: callout dd {name} -> paper-constant gap")
 
     # Regolith's callout is switched off, not deleted - QGIS always writes
     # one. Keep it byte-identical to the Fallback leader apart from
@@ -292,11 +357,29 @@ def main():
         else:
             assert not found, f"{desc}: unexpected ring dd {sorted(found)}"
 
+    # The paper-constant end gaps on the Fallback leader, verbatim. (The
+    # dormant Regolith copy inherits them by construction; only the live
+    # one is asserted.)
+    for rule in root.iter("rule"):
+        if rule.get("description") != FALLBACK:
+            continue
+        callout = rule.find("settings").find("callout")
+        found = {}
+        for entry in callout.iter("Option"):
+            if entry.get("name") in CALLOUT_DD and entry.get("type") == "Map":
+                by = {o.get("name"): o.get("value")
+                      for o in entry.iter("Option") if o.get("name")}
+                found[entry.get("name")] = (by.get("active"),
+                                            by.get("expression"))
+        for name, expr in CALLOUT_DD.items():
+            assert found.get(name) == ("true", expr), \
+                f"{FALLBACK}: callout dd {name} wrong: {found.get(name)!r}"
+
     # Untouched rules keep their config.
     descs = {r.get("description") for r in root.iter("rule")}
     assert {"Dip Labels", "SymbolSuffix Labels"} <= descs
-    print("round-trip ok: Fallback keeps its leader, Regolith Note sits "
-          "beside its point with none")
+    print("round-trip ok: Fallback keeps its leader with paper-constant "
+          "gaps, Regolith Note sits beside its point with none")
     con.close()
 
 
