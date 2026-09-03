@@ -4975,6 +4975,15 @@ Item {
   // everything on a banner — the freehand DragHandler beneath the
   // reshape catcher has dragThreshold 0, so a pen-jitter pixel on a pill
   // tap must never be allowed to take the grab and cancel the tap.
+  //
+  // A pill is shown or hidden with `show`, NOT `visible`. `visible` and
+  // the visible-children list report EFFECTIVE visibility: while an ancestor is
+  // hidden every descendant reads as hidden, so a row that hides itself
+  // on "no visible children" can never come back — its children stay
+  // effectively hidden BECAUSE it is hidden. Banners start hidden, so
+  // on the device that deadlock removed the action row (Apply, Clip,
+  // Merge, Draw line…) from every tool. `show` is the pill's explicit
+  // state and the row reads that instead.
   // ================================================================
   component LgsBanner: Rectangle {
     default property alias content: bannerColumn.data
@@ -5003,6 +5012,10 @@ Item {
     property bool primary: false
     property bool square: false
     property int padX: 12
+    // Explicit state, readable by LgsActions whatever the ancestors'
+    // visibility is; `visible` follows it (see the kit comment).
+    property bool show: true
+    visible: show
     signal tapped()
     width: pillText.contentWidth + padX * 2
     height: pillText.contentHeight + (square ? 12 : 10)
@@ -5112,15 +5125,31 @@ Item {
   }
 
   // Row 3: secondary actions flow from the left, the primary sits on
-  // the right. Hidden altogether when nothing in it is visible.
+  // the right. Hidden altogether when nothing in it is shown — decided
+  // from the pills' explicit `show`, never from the visible-children list (the
+  // deadlock in the kit comment). A child without `show` counts as
+  // shown.
   component LgsActions: Item {
     id: actions
     default property alias secondary: actionFlow.data
     property alias primary: primaryHolder.data
     width: parent.width
     height: Math.max(actionFlow.height, primaryHolder.height)
-    visible: actionFlow.visibleChildren.length > 0 ||
-             primaryHolder.visibleChildren.length > 0
+    visible: anyShown(actionFlow.children) || anyShown(primaryHolder.children)
+    // A Flow measured while hidden can miss a pill whose text had no
+    // size yet, and it does not re-measure on becoming visible: Reshape
+    // opened onto a 0-tall row with "Draw line" hanging below the frame.
+    onVisibleChanged: {
+      if (visible)
+        actionFlow.forceLayout()
+    }
+
+    function anyShown(kids) {
+      for (let i = 0; i < kids.length; ++i)
+        if (kids[i].show !== false)
+          return true
+      return false
+    }
 
     Flow {
       id: actionFlow
@@ -5134,8 +5163,10 @@ Item {
       id: primaryHolder
       anchors.right: parent.right
       anchors.top: parent.top
-      width: visibleChildren.length > 0 ? visibleChildren[0].width : 0
-      height: visibleChildren.length > 0 ? visibleChildren[0].height : 0
+      readonly property Item pill:
+          children.length > 0 && children[0].show !== false ? children[0] : null
+      width: pill !== null ? pill.width : 0
+      height: pill !== null ? pill.height : 0
     }
   }
 
@@ -5223,7 +5254,7 @@ Item {
       LgsPill {
         id: clipBackButton
         square: true
-        visible: plugin.clipStep === 2
+        show: plugin.clipStep === 2
         label: qsTr('◂ Keep')
         onTapped: {
           plugin.clipStep = 1
@@ -5234,7 +5265,7 @@ Item {
       LgsPill {
         id: clipUndoButton
         square: true
-        visible: plugin.clipUndo !== null
+        show: plugin.clipUndo !== null
         label: qsTr('Undo last clip')
         onTapped: plugin.undoLastClip()
       }
@@ -5242,7 +5273,7 @@ Item {
       primary: LgsPill {
         id: clipExecuteButton
         primary: true
-        visible: plugin.clipStep === 1 || plugin.clipStep === 2
+        show: plugin.clipStep === 1 || plugin.clipStep === 2
         enabled: plugin.clipMode === 'all'
             ? plugin.keepFeatures.length === 1
             : plugin.clipMode === 'smart'
@@ -9303,7 +9334,7 @@ Item {
   // The reshape banner, on the kit (v34). Style pills, one status line
   // that is the hint until there is something to report, actions with
   // Apply on the right. Back only shows in Tap style, where step 1 is
-  // the only way to pick — freehand picks with a finger or a long press.
+  // the only way to pick by tapping — freehand picks with a long press.
   LgsBanner {
     id: reshapeBanner
     visible: plugin.reshapeStep > 0
@@ -9326,7 +9357,7 @@ Item {
       }
 
       LgsPill {
-        visible: plugin.featureSpline
+        show: plugin.featureSpline
         // ASCII on purpose: '∿' (U+223F) is not in Android's fonts.
         label: qsTr('~ Spline')
         active: plugin.reshapeSplineArmed
@@ -9366,7 +9397,7 @@ Item {
     LgsActions {
       LgsPill {
         square: true
-        visible: plugin.reshapeStep === 1
+        show: plugin.reshapeStep === 1
         label: qsTr('Draw line ▸')
         onTapped: {
           plugin.reshapeStep = 2
@@ -9377,8 +9408,8 @@ Item {
       LgsPill {
         id: reshapeUndoPointButton
         square: true
-        visible: plugin.reshapeStep === 2
-        enabled: plugin.reshapeControls.length > 0
+        // Absent, not greyed, until there is a point or stroke to undo.
+        show: plugin.reshapeStep === 2 && plugin.reshapeControls.length > 0
         // One action per press: a tapped point OR a whole stroke.
         label: plugin.reshapeStyle === 'free' ? qsTr('Undo stroke')
                                               : qsTr('Undo point')
@@ -9388,7 +9419,7 @@ Item {
       LgsPill {
         id: reshapeUndoButton
         square: true
-        visible: plugin.reshapeHistory.length > 0
+        show: plugin.reshapeHistory.length > 0
         enabled: !plugin.reshapeBusy
         label: qsTr('Undo reshape (%1)').arg(plugin.reshapeHistory.length)
         // Undoing no longer leaves the tool: a failed undo used to drop
@@ -9403,7 +9434,7 @@ Item {
         // this, releasing cost a long-press per pick.
         id: reshapeClearPicksButton
         square: true
-        visible: plugin.reshapePicks.length > 0
+        show: plugin.reshapePicks.length > 0
         enabled: !plugin.reshapeBusy
         label: qsTr('Clear targets')
         onTapped: {
@@ -9415,10 +9446,12 @@ Item {
       }
 
       LgsPill {
+        // In Tap style a canvas tap places a point, so step 1 is the
+        // only tap-to-pick there is; the way back must always be on the
+        // banner, points drawn or not (freehand picks with a long press).
         id: reshapeBackButton
         square: true
-        visible: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'tap' &&
-                 plugin.reshapeControls.length > 0
+        show: plugin.reshapeStep === 2 && plugin.reshapeStyle === 'tap'
         label: qsTr('◂ Back')
         onTapped: plugin.reshapeBackToPicks()
       }
@@ -9426,7 +9459,7 @@ Item {
       primary: LgsPill {
         id: reshapeExecuteButton
         primary: true
-        visible: plugin.reshapeStep === 2
+        show: plugin.reshapeStep === 2
         enabled: plugin.reshapeControls.length >= 2 && !plugin.reshapeBusy
         label: plugin.reshapeBusy ? qsTr('Reshaping…') : qsTr('Apply ✓')
         // No confirmation dialog (v33). It stood between every line and
@@ -10376,21 +10409,21 @@ Item {
     LgsActions {
       LgsPill {
         square: true
-        visible: plugin.copyStep === 2
+        show: plugin.copyStep === 2
         label: qsTr('Fields…')
         onTapped: plugin.openCopyFieldPanel(null)
       }
 
       LgsPill {
         square: true
-        visible: plugin.copyStep === 2
+        show: plugin.copyStep === 2
         label: qsTr('New source')
         onTapped: plugin.copyRearmSource()
       }
 
       LgsPill {
         square: true
-        visible: plugin.copyUndo !== null
+        show: plugin.copyUndo !== null
         label: qsTr('Undo')
         onTapped: plugin.undoLastCopy()
       }
@@ -10994,14 +11027,14 @@ Item {
     LgsActions {
       LgsPill {
         square: true
-        visible: plugin.mergeUndo !== null
+        show: plugin.mergeUndo !== null
         label: qsTr('Undo last merge')
         onTapped: plugin.undoLastMerge()
       }
 
       primary: LgsPill {
         primary: true
-        visible: plugin.mergeStep === 1
+        show: plugin.mergeStep === 1
         enabled: plugin.mergeFeatures.length >= 2
         label: qsTr('Merge ✓')
         onTapped: plugin.requestMerge()
