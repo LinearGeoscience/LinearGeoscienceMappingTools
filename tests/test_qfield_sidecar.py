@@ -340,8 +340,25 @@ class TestWriteSidecar(unittest.TestCase):
                        # v34 opacity sheet: legend order, filter, non-modal.
                        'opacityTreeRows', 'opacityRowCurrent',
                        'opacityRowApply', 'opacityFilterInput',
-                       'Find a layer'):
+                       'Find a layer',
+                       # v34.1: pills carry an explicit `show`; the action
+                       # row reads that, never effective visibility.
+                       'property bool show: true', 'function anyShown'):
             self.assertIn(needle, text, needle)
+
+    def test_qml_never_hides_a_row_on_its_own_effective_visibility(self):
+        # visible / visibleChildren report EFFECTIVE visibility: a row that
+        # hides itself on 'no visible children' keeps its children hidden
+        # and can never come back (v34 shipped without any action row).
+        with open(SIDECAR_SOURCE, encoding='utf-8') as fh:
+            text = fh.read()
+        self.assertNotIn('visibleChildren', text)
+        banners = re.findall(r'LgsBanner \{.*?\n  \}', text, re.S)
+        self.assertEqual(len(banners), 5)
+        for banner in banners:
+            body = banner.split('\n', 2)[2]
+            self.assertNotRegex(body, r'\n\s+visible: ',
+                                'pills inside a banner must use show:')
 
     def test_qml_never_reads_a_predicate_as_the_string_true(self):
         # QGIS geometry predicates (intersects, ...) and comparison
