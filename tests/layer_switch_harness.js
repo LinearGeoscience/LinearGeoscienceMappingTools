@@ -132,7 +132,9 @@ for (const n of COUNTS) {
 check('at reveal 1 every character is solid', allSolid, solidDetail)
 
 // At rest the head survives and the tail is gone: findable, but not four
-// name plates sitting on the map. This is the ask, pinned.
+// name plates sitting on the map. This is the ask, pinned. The head is
+// measured in characters (v34.1), so a name shorter than the head plus
+// the fade has no tail to lose -- six characters and up must fade out.
 let restOk = true, restDetail = ''
 for (const n of COUNTS) {
   if (n < 2) continue
@@ -140,12 +142,24 @@ for (const n of COUNTS) {
     restOk = false
     restDetail = 'head n=' + n + ' -> ' + alpha(0, n, 0)
   }
-  if (alpha(n - 1, n, 0) !== 0) {
+  if (n >= 6 && alpha(n - 1, n, 0) !== 0) {
     restOk = false
     restDetail = 'tail n=' + n + ' -> ' + alpha(n - 1, n, 0)
   }
 }
 check('at rest the head shows and the tail is gone', restOk, restDetail)
+
+// "FLOB": one letter per pill is not a name. At rest the first three
+// characters of every real layer name are solid and the fourth still
+// reads, for short and long names alike.
+let headOk = true, headDetail = ''
+for (const n of [7, 8, 13]) {
+  if (alpha(2, n, 0) !== 1 || !(alpha(3, n, 0) >= 0.5)) {
+    headOk = false
+    headDetail = 'n=' + n + ' third ' + alpha(2, n, 0) + ' fourth ' + alpha(3, n, 0)
+  }
+}
+check('at rest the same readable head on every name', headOk, headDetail)
 
 // The active pill rests part-revealed, so its name is still identifiable
 // at a glance while the others are ghosts.
@@ -157,10 +171,10 @@ check('the active pill still fades out by its tail',
       alpha(ACTIVE_N - 1, ACTIVE_N, 0.28) === 0,
       String(alpha(ACTIVE_N - 1, ACTIVE_N, 0.28)))
 
-// An idle non-active pill must be fainter than the active one, or the
-// highlight says nothing.
-check('a resting pill is fainter than the active one',
-      alpha(0, ACTIVE_N, 0) < alpha(0, ACTIVE_N, 0.28),
-      alpha(0, ACTIVE_N, 0) + ' vs ' + alpha(0, ACTIVE_N, 0.28))
+// An idle non-active pill must show less of its name than the active
+// one, or the highlight says nothing (the pad colour carries the rest).
+check('a resting pill shows less name than the active one',
+      alpha(5, ACTIVE_N, 0) < alpha(5, ACTIVE_N, 0.28),
+      alpha(5, ACTIVE_N, 0) + ' vs ' + alpha(5, ACTIVE_N, 0.28))
 
 process.exit(failures === 0 ? 0 : 1)
