@@ -137,6 +137,12 @@ class OfflineConverter(QObject):
         """Cancel the export process."""
         self._cancelled = True
 
+    @property
+    def was_cancelled(self):
+        """True once cancel() has been requested — the dialog reads this
+        to tell a user-cancelled export apart from a failed one."""
+        return self._cancelled
+
     def _unique_gpkg_name(self, layer_name: str) -> str:
         """Resolve a per-run unique cleaned name, so two layers whose
         names clean to the same string never overwrite each other's
@@ -234,9 +240,25 @@ class OfflineConverter(QObject):
         """
         Export the project for QField.
 
+        Emits finished(bool) on EVERY exit, exactly once. The dialog's
+        thread teardown hangs off that signal, so an exit path that
+        skips it (as the cancel path once did) leaves the worker thread
+        alive, the UI stuck on "Cancelling...", and the user with no
+        way out but a close that destroys a running QThread — a hard
+        crash.
+
         Returns:
             True if successful, False otherwise
         """
+        try:
+            ok = bool(self._export())
+        except Exception as e:
+            log_message(f"Export failed: {e}", Qgis.MessageLevel.Critical)
+            ok = False
+        self.finished.emit(ok)
+        return ok
+
+    def _export(self) -> bool:
         try:
             self._used_gpkg_names.clear()
 
@@ -362,12 +384,10 @@ class OfflineConverter(QObject):
             # Display export summary with any failures
             self._display_export_summary(total_layers)
 
-            self.finished.emit(True)
             return True
 
         except Exception as e:
             log_message(f"Export failed: {e}", Qgis.MessageLevel.Critical)
-            self.finished.emit(False)
             return False
 
     def _get_layers_to_export(self) -> List[QgsMapLayer]:

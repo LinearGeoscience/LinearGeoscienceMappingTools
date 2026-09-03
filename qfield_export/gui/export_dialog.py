@@ -12,7 +12,7 @@ from typing import List
 from qgis.core import QgsProject, QgsMapLayer, QgsRasterLayer, Qgis
 from qgis.core import QgsSettings
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt, QUrl, pyqtSlot, QThread
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl, pyqtSlot, QThread
 from qgis.PyQt.QtGui import QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -53,6 +53,25 @@ _SETTINGS_BAKE_TERRAIN = 'LGS_QField_Exporter/bakeTerrain'
 
 # Known cloud-sync folder markers
 _CLOUD_SYNC_MARKERS = ('OneDrive', 'Dropbox', 'Google Drive', 'iCloudDrive', 'pCloud')
+
+# Export threads that would not stop in time. Destroying a running
+# QThread aborts the whole of QGIS, so a thread that outlives its dialog
+# is parked here — out of the garbage collector's reach — and released
+# when it finally finishes.
+_ORPHAN_EXPORTS = []
+
+
+def _park_running_export(thread, converter):
+    entry = (thread, converter)
+    _ORPHAN_EXPORTS.append(entry)
+
+    def _release():
+        try:
+            _ORPHAN_EXPORTS.remove(entry)
+        except ValueError:
+            pass
+
+    thread.finished.connect(_release)
 
 # Shared checkbox styling. 'border: none; background: transparent' matters:
 # the QField-plugin checkboxes live inside a CollapsibleSection whose content
@@ -191,6 +210,7 @@ class ExportDialog(QDialog):
         self.converter = None
         self.export_dir = None
         self._export_thread = None
+        self._close_requested = False
 
         self.setWindowTitle("LGS QField Exporter")
         self.setMinimumSize(800, 700)
@@ -757,14 +777,52 @@ class ExportDialog(QDialog):
                 "Could not pin the terrain DEM: {0}".format(e),
                 "Linear Geoscience", Qgis.MessageLevel.Warning)
 
-    def _on_cancel_clicked(self):
-        """Handle cancel button click - cancel export if running, otherwise close."""
-        if self._export_thread is not None and self._export_thread.isRunning():
+    # ------------------------------------------------ cancel / close guard
+    #
+    # A QDialog whose QThread member is destroyed while the thread still
+    # runs takes QGIS down ("QThread: Destroyed while thread is still
+    # running") — and run_qfield_export holds this dialog only in a
+    # local, so the moment exec() returns the dialog IS destroyed. So:
+    # the dialog must never actually close while the worker runs. X,
+    # Esc and the Cancel button all become a cancel request; the close
+    # itself happens in _on_export_finished, once the thread is down.
+
+    def _export_running(self):
+        return (self._export_thread is not None
+                and self._export_thread.isRunning())
+
+    def _request_cancel(self):
+        if self.converter is not None:
             self.converter.cancel()
-            self.cancel_button.setEnabled(False)
-            self.cancel_button.setText("Cancelling...")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Cancelling...")
+        self.status_label.setText(
+            "Cancelling — waiting for the current step to finish...")
+
+    def _on_cancel_clicked(self):
+        """Cancel a running export; close the dialog otherwise."""
+        if self._export_running():
+            self._request_cancel()
         else:
             self.reject()
+
+    def reject(self):
+        """Esc and programmatic close land here. Never close mid-export."""
+        if self._export_running():
+            self._close_requested = True
+            self._request_cancel()
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        """The title-bar X lands here. Same rule: cancel first, close
+        when the worker has stopped."""
+        if self._export_running():
+            self._close_requested = True
+            self._request_cancel()
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def load_layers(self):
         """Load layers from the project into the tree widget, preserving QGIS layer tree structure."""
@@ -1198,11 +1256,19 @@ class ExportDialog(QDialog):
             if self._export_thread.isRunning():
                 self._export_thread.quit()
                 self._export_thread.wait(5000)
+            if self._export_thread.isRunning():
+                # Never destroy a running QThread — that is a hard crash.
+                # Park the pair; it releases itself when the thread ends.
+                _park_running_export(self._export_thread, self.converter)
+                self._export_thread = None
+                self.converter = None
+                return
             self._export_thread.deleteLater()
             self._export_thread = None
-        if self.converter is not None:
-            self.converter.deleteLater()
-            self.converter = None
+        # The worker thread's event loop is gone, so a deleteLater posted
+        # to the converter would never run. Dropping the reference lets
+        # Python delete it directly — safe once the thread has finished.
+        self.converter = None
 
     @pyqtSlot(int, int, str)
     def update_progress(self, current, total, message):
@@ -1230,10 +1296,22 @@ class ExportDialog(QDialog):
     @pyqtSlot(bool)
     def _on_export_finished(self, success):
         """Handle export completion - stop thread and update UI."""
-        # Stop the background thread
+        # Stop the background thread. export() emits finished on its way
+        # out, so by the time this queued slot runs the worker loop is
+        # idle and quit() lands immediately.
         if self._export_thread is not None:
             self._export_thread.quit()
-            self._export_thread.wait(5000)
+            if not self._export_thread.wait(5000):
+                # Never destroy a running QThread — park it out of the
+                # garbage collector's reach instead (hard crash otherwise).
+                _park_running_export(self._export_thread, self.converter)
+            else:
+                self._export_thread.deleteLater()
+            self._export_thread = None
+
+        was_cancelled = bool(
+            self.converter is not None
+            and getattr(self.converter, 'was_cancelled', False))
 
         # Re-enable UI controls
         self._set_export_ui_enabled(True)
@@ -1242,6 +1320,12 @@ class ExportDialog(QDialog):
         self.cancel_button.setText("Close")
         self.cancel_button.setEnabled(True)
 
+        # A close (X/Esc) during the export was deferred until the worker
+        # stopped; honour it now, and skip the message boxes — the user
+        # already said they are leaving.
+        close_requested = self._close_requested
+        self._close_requested = False
+
         if success:
             # Persist the export directory for next time
             QgsSettings().setValue(_SETTINGS_LAST_EXPORT_DIR, str(self.export_dir))
@@ -1249,28 +1333,45 @@ class ExportDialog(QDialog):
             self.status_label.setText("Export completed successfully")
             self.status_label.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 600;")
 
-            # Show success message with option to open folder
-            reply = QMessageBox.information(
-                self,
-                "Export Complete",
-                f"Project exported successfully to:\n{self.export_dir}\n\n"
-                "Would you like to open the export folder?",
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.Ok
-            )
+            if not close_requested:
+                # Show success message with option to open folder
+                reply = QMessageBox.information(
+                    self,
+                    "Export Complete",
+                    f"Project exported successfully to:\n{self.export_dir}\n\n"
+                    "Would you like to open the export folder?",
+                    QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
+                    QMessageBox.StandardButton.Ok
+                )
 
-            if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_dir)))
+                if reply == QMessageBox.StandardButton.Open:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_dir)))
+        elif was_cancelled:
+            # A cancelled export is not a failure — no error dialog.
+            self.status_label.setText("Export cancelled")
+            self.status_label.setStyleSheet(
+                "color: #f59e0b; font-size: 12px; font-weight: 600;")
+            self.add_log(
+                "Export cancelled — the export folder may hold a partial "
+                "export.")
         else:
             self.status_label.setText("Export failed")
             self.status_label.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: 600;")
-            QMessageBox.critical(
-                self,
-                "Export Failed",
-                "The export process failed. Please check the log for details."
-            )
+            if not close_requested:
+                QMessageBox.critical(
+                    self,
+                    "Export Failed",
+                    "The export process failed. Please check the log for details."
+                )
 
-        # Clean up converter (keep thread reference for cleanup later)
-        if self.converter is not None:
-            self.converter.deleteLater()
-            self.converter = None
+        # Drop the converter reference. Its thread's event loop is gone,
+        # so deleteLater would never be processed; a plain Python release
+        # is safe once the thread has finished (the parked case keeps its
+        # own reference).
+        self.converter = None
+
+        if close_requested:
+            # Leave the slot first, then close on a clean turn of the
+            # event loop; reject() now sees no running thread and lets
+            # the dialog go.
+            QTimer.singleShot(0, self.reject)
