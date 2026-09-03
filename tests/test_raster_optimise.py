@@ -18,9 +18,17 @@ core = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(core)
 
 
-def info(width=9177, height=10224, bands=4, size_mb=211.0, overviews=0):
+def info(width=9177, height=10224, bands=4, size_mb=211.0, overviews=0,
+         geotransform=(394000.0, 0.1, 0.0, 6573000.0, 0.0, -0.1)):
     return {'width': width, 'height': height, 'bands': bands,
-            'bytes': int(size_mb * 1e6), 'overviews': overviews}
+            'bytes': int(size_mb * 1e6), 'overviews': overviews,
+            'geotransform': geotransform}
+
+
+def geo_ring(px_ring, gt=(394000.0, 0.1, 0.0, 6573000.0, 0.0, -0.1)):
+    """A pixel-space ring expressed in map coordinates for that gt."""
+    return [(gt[0] + gt[1] * x + gt[2] * y,
+             gt[3] + gt[4] * x + gt[5] * y) for x, y in px_ring]
 
 
 class TestTileWindows(unittest.TestCase):
@@ -188,6 +196,159 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(core.human_mb(211_000_000), "211 MB")
         self.assertEqual(core.human_mb(0), "0 MB")
         self.assertEqual(core.human_mb(None), "0 MB")
+
+
+class TestGeoPixel(unittest.TestCase):
+
+    def _round_trip(self, gt, x, y):
+        gt_inv = core.invert_geotransform(gt)
+        gx = gt[0] + gt[1] * x + gt[2] * y
+        gy = gt[3] + gt[4] * x + gt[5] * y
+        px, py = core.geo_to_pixel(gt_inv, gx, gy)
+        self.assertAlmostEqual(px, x, places=6)
+        self.assertAlmostEqual(py, y, places=6)
+
+    def test_north_up_round_trip(self):
+        self._round_trip((394000.0, 0.1, 0.0, 6573000.0, 0.0, -0.1),
+                         123.25, 456.75)
+
+    def test_rotated_geotransform_round_trip(self):
+        # A sheared/rotated gt must invert too — never assume north-up.
+        self._round_trip((1000.0, 0.9, 0.3, 2000.0, -0.2, -0.8),
+                         321.5, 78.25)
+
+    def test_singular_geotransform_refused(self):
+        with self.assertRaises(ValueError):
+            core.invert_geotransform((0.0, 1.0, 2.0, 0.0, 2.0, 4.0))
+
+
+class TestPolygonIntersection(unittest.TestCase):
+
+    SQUARE = [(10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)]
+
+    def test_ring_vertex_inside_rect(self):
+        self.assertTrue(core.rect_intersects_ring(15, 15, 30, 30,
+                                                  self.SQUARE))
+
+    def test_rect_fully_inside_polygon(self):
+        self.assertTrue(core.rect_intersects_ring(14, 14, 16, 16,
+                                                  self.SQUARE))
+
+    def test_polygon_fully_inside_rect(self):
+        self.assertTrue(core.rect_intersects_ring(0, 0, 100, 100,
+                                                  self.SQUARE))
+
+    def test_edge_crossing_only(self):
+        # A thin diamond straddling the rect edge: no vertex of either
+        # is inside the other, only the edges cross.
+        diamond = [(5.0, 15.0), (12.0, 14.9), (25.0, 15.0), (12.0, 15.1)]
+        self.assertTrue(core.rect_intersects_ring(11, 0, 13, 30, diamond))
+
+    def test_disjoint(self):
+        self.assertFalse(core.rect_intersects_ring(30, 30, 40, 40,
+                                                   self.SQUARE))
+
+    def test_bbox_touch_but_shape_miss(self):
+        # Rect sits in the empty corner of an L-shaped ring: bboxes
+        # overlap, the shapes do not.
+        ell = [(0.0, 0.0), (30.0, 0.0), (30.0, 10.0), (10.0, 10.0),
+               (10.0, 30.0), (0.0, 30.0)]
+        self.assertFalse(core.rect_intersects_ring(15, 15, 25, 25, ell))
+
+
+class TestAoiPlan(unittest.TestCase):
+
+    def test_window_is_clipped_to_the_raster(self):
+        src = info(width=1000, height=1000, bands=3)
+        ring = geo_ring([(-500, -500), (200, -500), (200, 200),
+                         (-500, 200)])
+        rings = core.polygons_to_pixel(src, [ring])
+        xoff, yoff, xs, ys = core.aoi_pixel_window(1000, 1000, rings)
+        self.assertEqual((xoff, yoff), (0, 0))
+        self.assertLessEqual(xs, 1000)
+        self.assertLessEqual(ys, 1000)
+
+    def test_polygons_off_the_raster_are_refused(self):
+        src = info(width=1000, height=1000, bands=3)
+        ring = geo_ring([(5000, 5000), (6000, 5000), (6000, 6000)])
+        with self.assertRaises(ValueError):
+            core.aoi_tile_plan(src, [ring])
+
+    def test_l_shaped_aoi_drops_the_empty_corner(self):
+        src = info(width=10000, height=10000, bands=3)
+        ell = geo_ring([(0, 0), (10000, 0), (10000, 5000), (5000, 5000),
+                        (5000, 10000), (0, 10000)])
+        windows, rows, cols = core.aoi_tile_plan(src, [ell], tile_mb=2.0)
+        self.assertGreater(rows * cols, len(windows),
+                           "the empty corner tiles must be dropped")
+        # ...and every kept window really touches the L.
+        rings = core.polygons_to_pixel(src, [ell])
+        for _r, _c, x, y, xs, ys in windows:
+            self.assertTrue(any(
+                core.rect_intersects_ring(x, y, x + xs, y + ys, ring)
+                for ring in rings))
+
+    def test_grid_is_sized_from_the_aoi_not_the_whole_image(self):
+        src = info(width=20000, height=20000, bands=3)
+        small = geo_ring([(0, 0), (2000, 0), (2000, 2000), (0, 2000)])
+        big = geo_ring([(0, 0), (16000, 0), (16000, 16000), (0, 16000)])
+        w_small, _r, _c = core.aoi_tile_plan(src, [small], tile_mb=5.0)
+        w_big, _r, _c = core.aoi_tile_plan(src, [big], tile_mb=5.0)
+        self.assertLess(len(w_small), len(w_big))
+
+    def test_multiple_polygons_union(self):
+        src = info(width=10000, height=10000, bands=3)
+        a = geo_ring([(0, 0), (1000, 0), (1000, 1000), (0, 1000)])
+        b = geo_ring([(9000, 9000), (10000, 9000), (10000, 10000),
+                      (9000, 10000)])
+        windows, _rows, _cols = core.aoi_tile_plan(src, [a, b],
+                                                   tile_mb=2.0)
+        # Two far-apart corners: tiles at both, nothing in the middle.
+        self.assertTrue(any(x < 2000 and y < 2000
+                            for _r, _c, x, y, _xs, _ys in windows))
+        self.assertTrue(any(x + xs > 8000 and y + ys > 8000
+                            for _r, _c, x, y, xs, ys in windows))
+        covered = sum(xs * ys for _r, _c, _x, _y, xs, ys in windows)
+        self.assertLess(covered, 10000 * 10000 * 0.5,
+                        "the empty middle must not be written")
+
+
+class TestContext(unittest.TestCase):
+
+    def test_context_lands_near_the_target(self):
+        src = info(width=100000, height=100000, bands=3)
+        out_w, out_h, factor = core.context_shape(src, 'cog_jpeg_alpha',
+                                                  target_mb=500.0)
+        est = core._estimate_bytes_for_pixels(out_w * out_h, src,
+                                              'cog_jpeg_alpha')
+        self.assertGreater(est, 250e6)
+        self.assertLess(est, 750e6)
+        self.assertGreater(factor, 1.0)
+
+    def test_small_source_keeps_full_resolution(self):
+        src = info(width=800, height=600, bands=3)
+        out_w, out_h, factor = core.context_shape(src)
+        self.assertEqual((out_w, out_h, factor), (800, 600, 1.0))
+
+    def test_context_and_group_names(self):
+        self.assertEqual(core.context_name("map_qfield"),
+                         "map_qfield_context")
+        src = os.path.join("x", "basemap.ecw")
+        self.assertEqual(core.group_name(src, 12, has_context=True),
+                         "basemap (12 tiles + context)")
+        self.assertEqual(core.group_name(src, 1, has_context=True),
+                         "basemap (1 tile + context)")
+
+    def test_estimate_monotone_in_aoi_area(self):
+        src = info(width=20000, height=20000, bands=3)
+        small = geo_ring([(0, 0), (2000, 0), (2000, 2000), (0, 2000)])
+        big = geo_ring([(0, 0), (8000, 0), (8000, 8000), (0, 8000)])
+        _w, small_bytes, ctx_a = core.estimate_aoi_output_bytes(
+            src, [small])
+        _w, big_bytes, ctx_b = core.estimate_aoi_output_bytes(src, [big])
+        self.assertLess(small_bytes, big_bytes)
+        self.assertEqual(ctx_a, ctx_b,
+                         "context does not depend on the AOI")
 
 
 if __name__ == '__main__':

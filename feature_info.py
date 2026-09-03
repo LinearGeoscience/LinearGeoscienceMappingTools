@@ -653,17 +653,29 @@ full-resolution image at every zoom &mdash; the single biggest cause of a sluggi
        <b>same resolution</b> &mdash; QField handles several moderate tiles far better than one
        enormous image. Tiles are named <code>_r01c02</code> with zero padding so they always
        sort in grid order, and they are added to the project inside a single group.</li>
+   <li><b>Coverage for huge basemaps:</b> for something like a 25&nbsp;GB ECW mapsheet, choose
+       <i>Full detail inside drawn areas</i> and draw one or more polygons over where you are
+       actually mapping. Those areas become full-resolution tiles; the whole extent travels as
+       <b>one small downsampled context layer</b> underneath (auto-sized to roughly 500&nbsp;MB),
+       so zoomed-out views still show imagery everywhere. The estimate turns amber if the
+       result would exceed a ~30&nbsp;GB device budget.</li>
    <li><b>Honest preview:</b> the dialog reports the source size, dimensions, band count and
        overview count, and estimates the output before you commit to it.</li>
 </ul>
 <h2>Workflow:</h2>
 <ol>
-   <li>Pick the raster (loaded project rasters are listed; or Browse).</li>
+   <li>Pick the raster (loaded project rasters are listed; or Browse &mdash; ECW and MrSID
+       are readable here on installs that include those drivers, even though QField cannot
+       read them directly).</li>
+   <li>Either keep <i>Whole image</i>, or pick the drawn-areas mode and click
+       <b>Draw areas on map</b>: left-click adds points, right-click closes each polygon,
+       Esc or <b>Finish drawing</b> when done.</li>
    <li>Accept the default profile, or choose another and read its note.</li>
    <li><b>Optimise</b>, then export to QField as usual.</li>
 </ol>
 <p><b>Note:</b> the original file is never modified &mdash; output is written alongside it. JPEG
-and WEBP are lossy: keep the original as the archive copy.</p>
+and WEBP are lossy: keep the original as the archive copy. The outputs are equally pleasant in
+desktop QGIS &mdash; overview pyramids make them zoomable at any scale.</p>
 """
 
 INFO_PIT_SURFACE_DEM = """

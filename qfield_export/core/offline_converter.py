@@ -20,10 +20,13 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 
 from ..utils.path_utils import normalize_project_file_paths, ensure_relative_to_project, clean_csv_uri_to_path
 from ..utils.qgis_utils import (
+    CONVERT_SIZE_LIMIT_BYTES,
+    UNSUPPORTED_RASTER_EXTENSIONS,
     clean_layer_name,
     convert_to_geopackage,
     copy_raster_layer,
     convert_raster_to_geotiff,
+    estimate_uncompressed_bytes,
     get_raster_format_warning,
     is_layer_exportable,
     log_message
@@ -648,9 +651,41 @@ class OfflineConverter(QObject):
                 # Check for unsupported raster formats
                 format_warning = get_raster_format_warning(layer)
                 if format_warning:
+                    ext = Path(layer.source().split('|')[0]).suffix.lower()
+                    unsupported_format = ext in UNSUPPORTED_RASTER_EXTENSIONS
+                    estimated = estimate_uncompressed_bytes(layer)
+                    if unsupported_format and estimated > CONVERT_SIZE_LIMIT_BYTES:
+                        # Do NOT fall through to copy_raster_layer: that
+                        # would put the whole unreadable source (a 25 GB
+                        # ECW, say) on the tablet verbatim.
+                        self.log_message.emit(
+                            f"  ✗ '{layer.name()}' is too large to convert during export "
+                            f"(~{estimated / 1e9:.0f} GB uncompressed)")
+                        self.warning.emit(
+                            f"'{layer.name()}' is too large to convert during export "
+                            f"(~{estimated / 1e9:.0f} GB uncompressed). Use Field / Pit / UG > "
+                            f"Optimise Imagery for Field first - it produces QField-ready "
+                            f"tiles plus a context layer, then export again."
+                        )
+                        self.failed_layers.append({
+                            'name': layer.name(),
+                            'reason': 'Too large to convert during export - '
+                                      'use Optimise Imagery for Field'
+                        })
+                        return False
                     if self.convert_unsupported:
                         self.log_message.emit(f"  → Converting '{layer.name()}' to GeoTIFF - {format_warning}")
-                        new_path = convert_raster_to_geotiff(layer, self.export_dir)
+                        last_logged = {'pct': -10}
+
+                        def _conversion_progress(pct, _name=layer.name()):
+                            if pct - last_logged['pct'] >= 10:
+                                last_logged['pct'] = pct
+                                self.log_message.emit(
+                                    f"    … converting '{_name}': {pct:.0f}%")
+
+                        new_path = convert_raster_to_geotiff(
+                            layer, self.export_dir,
+                            progress_cb=_conversion_progress)
                         if new_path:
                             self.exported_layers[layer.id()] = {
                                 'original_source': layer.source(),

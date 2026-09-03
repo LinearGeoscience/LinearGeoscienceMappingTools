@@ -511,18 +511,59 @@ def get_raster_performance_warning(layer: QgsRasterLayer) -> Optional[str]:
             f"Imagery for Field before exporting.")
 
 
-def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Optional[Path]:
+# Above this, the export-time lossless conversion is refused outright: a
+# wavelet source (ECW/MrSID) decompresses 20-50x, so a 25 GB ECW would
+# mean hours of conversion and hundreds of GB of GeoTIFF, synchronously,
+# inside the export. The Optimise Imagery tool is the right path there.
+CONVERT_SIZE_LIMIT_BYTES = 2 * 1024 ** 3
+
+
+def estimate_uncompressed_bytes(layer: QgsRasterLayer) -> int:
+    """Uncompressed pixel bytes of a raster layer, from the provider.
+
+    This — not the file size — is what an export-time lossless GeoTIFF
+    conversion scales with.
+    """
+    if not isinstance(layer, QgsRasterLayer):
+        return 0
+    try:
+        sample = 1
+        provider = layer.dataProvider()
+        if provider is not None and hasattr(provider, 'dataTypeSize'):
+            sample = int(provider.dataTypeSize(1)) or 1
+            if sample > 8:  # some builds report bits, not bytes
+                sample //= 8
+        return layer.width() * layer.height() * layer.bandCount() * sample
+    except Exception:
+        return 0
+
+
+def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path,
+                              progress_cb=None) -> Optional[Path]:
     """
     Convert a raster layer to GeoTIFF format with LZW compression.
 
     Args:
         layer: Raster layer to convert
         output_dir: Directory to save the converted raster
+        progress_cb: optional callable(percent 0-100), forwarded to GDAL
+            so a long conversion reports progress instead of freezing
 
     Returns:
         Path to the created GeoTIFF, or None if failed
     """
     if not isinstance(layer, QgsRasterLayer):
+        return None
+
+    estimated = estimate_uncompressed_bytes(layer)
+    if estimated > CONVERT_SIZE_LIMIT_BYTES:
+        QgsMessageLog.logMessage(
+            f"Refusing to convert '{layer.name()}' during export: about "
+            f"{estimated / 1e9:.1f} GB uncompressed. Use Field / Pit / UG "
+            f"> Optimise Imagery for Field instead.",
+            "LGS QField Exporter",
+            Qgis.MessageLevel.Warning
+        )
         return None
 
     try:
@@ -553,10 +594,19 @@ def convert_raster_to_geotiff(layer: QgsRasterLayer, output_dir: Path) -> Option
             )
             return None
 
+        gdal_callback = None
+        if progress_cb is not None:
+            def gdal_callback(fraction, _msg, _data):
+                try:
+                    progress_cb(fraction * 100.0)
+                except Exception:
+                    pass
+                return 1
+
         translate_options = gdal.TranslateOptions(
             format='GTiff',
             creationOptions=['COMPRESS=LZW', 'TILED=YES', 'BIGTIFF=IF_SAFER'],
-            callback=None
+            callback=gdal_callback
         )
 
         dst_ds = gdal.Translate(str(output_path), src_ds, options=translate_options)
