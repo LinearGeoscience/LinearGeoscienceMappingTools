@@ -274,7 +274,6 @@ class LinearGeosciencePluginMain:
         self.recode_wizard = None
         self.reconcile_dialog = None
         self.mining_import_dialog = None
-        self.view3d_panel = None
 
     # ------------------------------------------------------------------
     # Plugin lifecycle
@@ -460,8 +459,7 @@ class LinearGeosciencePluginMain:
                 ('reproject_dialog', '_reproject_dialog', False),
                 ('recode_wizard', '_recode_wizard', False),
                 ('reconcile_dialog', '_reconcile_dialog', False),
-                ('mining_import_dialog', '_mining_import_dialog', False),
-                ('view3d_panel', '_view3d_panel', False)):
+                ('mining_import_dialog', '_mining_import_dialog', False)):
             for holder, attr in ((self, own_attr),
                                  (self.iface, iface_attr)):
                 widget = getattr(holder, attr, None)
@@ -929,9 +927,6 @@ class LinearGeosciencePluginMain:
         page, lay = self._make_page()
 
         grp = FeatureGroup("Terrain", self.plugin_dir, page)
-        grp.addFeature("View in 3D", None,
-                        feature_info.INFO_VIEW_3D, self.run_view_3d)
-        grp.addSeparator()
         grp.addFeature("Pit Surface to DEM", None,
                         feature_info.INFO_PIT_SURFACE_DEM,
                         self.run_pit_surface_dem)
@@ -1146,22 +1141,6 @@ class LinearGeosciencePluginMain:
             self.iface.messageBar().pushCritical(
                 "Linear Geoscience",
                 f"Could not open Generate Contours: {e}"
-            )
-
-    def run_view_3d(self):
-        try:
-            from .view3d.dialog import run
-            run(self.iface, owner=self)
-        except Exception as e:
-            import traceback
-            from qgis.core import QgsMessageLog, Qgis
-            QgsMessageLog.logMessage(
-                f"run_view_3d failed: {e}\n{traceback.format_exc()}",
-                'Linear Geoscience', Qgis.MessageLevel.Critical
-            )
-            self.iface.messageBar().pushCritical(
-                "Linear Geoscience",
-                f"Could not open View in 3D: {e}"
             )
 
     def run_optimise_imagery(self):

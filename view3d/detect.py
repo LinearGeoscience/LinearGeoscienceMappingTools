@@ -1,5 +1,5 @@
 """
-Pure-python DEM choice heuristics for the 3D view.
+Pure-python DEM choice heuristics for the QField terrain export.
 
 No qgis imports. The qgis adapter (view3d/terrain.py) builds plain row
 dicts off the project's rasters and feeds them here, so the preference
@@ -53,7 +53,7 @@ def classify(row):
 
 
 def choose_dem(rows, pinned_id=None):
-    """Pick the DEM the 3D view should use, or explain why it can't.
+    """Pick the DEM the terrain should use, or explain why it can't.
 
     Returns (row_or_None, reason):
       'pinned'     the user's persisted pick still exists
@@ -88,10 +88,3 @@ def choose_dem(rows, pinned_id=None):
     if len(rows) == 1:
         return rows[0], 'single'
     return None, 'ambiguous'
-
-
-def default_mode(chosen_row):
-    """Initial view mode for the chosen DEM: pit surfaces open in Pit."""
-    if chosen_row is not None and classify(chosen_row) == 'pit':
-        return 'pit'
-    return 'surface'

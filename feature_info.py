@@ -635,52 +635,6 @@ pixel stair-stepping.</p>
 the contour layer but leaves any other layers in that file alone.</p>
 """
 
-INFO_VIEW_3D = """
-<h1>View in 3D</h1>
-<p>Open a 3D terrain view with your geological mapping draped on top &mdash; one click,
-no configuration. The DEM is auto-detected (a pit-surface DEM is preferred when one
-exists), becomes the project's terrain, and the native QGIS 3D view opens framed on your
-current map extent.</p>
-<h2>Features:</h2>
-<ul>
-   <li><b>Zero-config DEM choice:</b> a pinned project choice, then a Pit-Surface-to-DEM
-       output, then Z-filter&ndash;tied rasters, then name hints (pit, bench, drone...).
-       Only a genuinely ambiguous project asks you to pick.</li>
-   <li><b>Vertical exaggeration:</b> live on/off toggle and factor (e.g. 2x) in the
-       control panel &mdash; terrain height changes immediately in the open view.</li>
-   <li><b>Shaded relief:</b> eye dome lighting is on by default. QGIS ships it off, and
-       without it our pale cartography draped on evenly-lit terrain reads as a flat white
-       sheet &mdash; the relief renders, but nothing reveals it.</li>
-   <li><b>Detail control:</b> QGIS drapes the map as a texture on terrain tiles, and its
-       default 512&nbsp;px tiles leave pit linework visibly smeared. <i>High</i> (the
-       default here) uses 1024&nbsp;px tiles with tighter subdivision, and a 64&nbsp;px
-       terrain mesh grid in place of QGIS's 16; <i>Ultra</i> doubles both again.
-       Subdivision stops at the DEM's own pixel size automatically.</li>
-   <li><b>Pit mode:</b> frames the pit-surface DEM so mapping drapes onto bench faces
-       and walls. The Z filter's bench subsetting carries into the 3D view
-       automatically.</li>
-   <li><b>Underground mode:</b> terrain is hidden and imported mine survey layers
-       (MineStrings / MineStations) render at their true RL. Desktop only; exaggeration
-       applies to terrain, not to these absolute-elevation layers.</li>
-   <li><b>QField carries the same view:</b> the chosen DEM is written as the project
-       terrain, and the QField export can bake it (with a chosen exaggeration) so
-       QField 4.1+'s 3D map view works fully offline in the field.</li>
-</ul>
-<h2>Workflow:</h2>
-<ol>
-   <li>Load a DEM (or create one with <b>Pit Surface to DEM</b>).</li>
-   <li>Click <b>View in 3D</b> &mdash; the 3D view opens with mapping draped.</li>
-   <li>Adjust exaggeration or switch mode in the control panel as needed.</li>
-</ol>
-<p><b>Note:</b> the 3D view requires QGIS's 3D support (standard in OSGeo4W installs).
-On devices, the 3D map view requires QField 4.1 or newer.</p>
-<p><b>QGIS 3.40 users:</b> terrain mesh detail is the one thing no plugin can set on 3.40
-(the terrain generator is not exposed to Python). If bench faces look rounded, open the 3D
-view's <b>3D Configuration &rarr; Terrain</b> and raise <b>Tile resolution</b> from
-16&nbsp;px to 64&nbsp;px &mdash; once per view, saved with the project. The panel reminds
-you when this applies.</p>
-"""
-
 INFO_OPTIMISE_IMAGERY = """
 <h1>Optimise Imagery for Field</h1>
 <p>Repack a high-resolution orthophoto (or any large raster) so it performs on a tablet,
@@ -716,7 +670,7 @@ INFO_PIT_SURFACE_DEM = """
 <h1>Pit Surface to DEM</h1>
 <p>Rasterize a triangulated pit surface &mdash; a Surpac <code>.str</code>/<code>.dtm</code>
 pair or a DXF with 3DFACE / polyface meshes &mdash; into a GeoTIFF DEM. The result is the
-terrain the 3D view (and QField) drapes your mapping onto when no drone/photogrammetry
+terrain QField's 3D map view drapes your mapping onto when no drone/photogrammetry
 DEM exists.</p>
 <h2>Features:</h2>
 <ul>
@@ -727,7 +681,8 @@ DEM exists.</p>
        0.1&ndash;10&nbsp;m &mdash; override in the dialog.</li>
    <li><b>Self-registering output:</b> written beside the source as
        <code>&lt;name&gt;_dem.tif</code>, added to the project and tagged as a pit
-       surface, so <b>View in 3D</b> and the QField export prefer it automatically.</li>
+       surface, so the QField exporter's terrain selector prefers it
+       automatically.</li>
 </ul>
 <p><b>Note:</b> Surpac and DXF files carry no CRS &mdash; the project CRS is assumed,
 matching the mining survey importer. Sources without a triangulation (strings only)

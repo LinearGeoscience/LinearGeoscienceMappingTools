@@ -136,17 +136,5 @@ class TestChooseDem(unittest.TestCase):
         self.assertEqual(detect.choose_dem(rows), (None, 'ambiguous'))
 
 
-class TestDefaultMode(unittest.TestCase):
-    def test_pit_dem_opens_in_pit(self):
-        self.assertEqual(detect.default_mode(row('a', 'x', role='pit')),
-                         'pit')
-
-    def test_regional_opens_in_surface(self):
-        self.assertEqual(detect.default_mode(row('a', 'topo')), 'surface')
-
-    def test_none_opens_in_surface(self):
-        self.assertEqual(detect.default_mode(None), 'surface')
-
-
 if __name__ == '__main__':
     unittest.main()

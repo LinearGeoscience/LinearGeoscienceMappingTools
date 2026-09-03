@@ -59,7 +59,7 @@ class SurfaceDemDialog(QDialog):
         header = QLabel(
             "<b>Rasterize a triangulated pit surface into a DEM</b><br>"
             "Surpac .str/.dtm and DXF pit shells become a GeoTIFF that "
-            "can serve as the 3D terrain (desktop and QField).")
+            "QField's 3D map view drapes your mapping onto in the field.")
         header.setWordWrap(True)
         layout.addWidget(header)
 

@@ -1,17 +1,14 @@
 """
-Project terrain configuration — the shared substrate for desktop and
-QField 3D.
+Project terrain configuration for QField 3D.
 
-Both the desktop 3D view (via the app's configure-terrain-from-project
-behaviour) and QField 4.1+'s 3D map view read the SAME thing: the
-project's elevation properties terrain provider. This module owns setting
-it and choosing which DEM it points at.
+QField 4.1+'s 3D map view reads the project's elevation-properties
+terrain provider. This module owns setting it and choosing which DEM it
+points at; the QField exporter's terrain selector is the UI on top of it.
 
-The provider's scale stays 1.0 in the live project: the desktop z-factor
-is per-view (Qgs3DMapSettings vertical scale), and baking it into the
-provider would double-apply on view creation and skew elevation-profile
-readings. The QField z-factor is injected only into the exported project
-copy (qfield_export/core/terrain_xml.py).
+The provider's scale stays 1.0 in the live project: baking exaggeration
+into it would skew elevation-profile readings. The QField z-factor is
+injected only into the exported project copy
+(qfield_export/core/terrain_xml.py).
 """
 
 from qgis.core import QgsProject, QgsRasterDemTerrainProvider
@@ -25,8 +22,9 @@ except ImportError:  # loaded outside the plugin package
     from z_filter.auto_layers import detect_raster_layers
     from z_filter.expression import SCOPE, ENTRY_RASTERS, parse_rasters
 
+# Historical key name — the desktop 3D view that coined it is gone, but
+# existing projects carry their pinned DEM under it. Never rename.
 ENTRY_DEM_LAYER = "view3d/demLayerId"
-ENTRY_MODE = "view3d/mode"
 ROLE_PROPERTY = "lgs/dem_role"
 
 
