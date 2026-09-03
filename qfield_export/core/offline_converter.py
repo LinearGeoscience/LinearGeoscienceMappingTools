@@ -20,10 +20,13 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 
 from ..utils.path_utils import normalize_project_file_paths, ensure_relative_to_project, clean_csv_uri_to_path
 from ..utils.qgis_utils import (
+    CONVERT_SIZE_LIMIT_BYTES,
+    UNSUPPORTED_RASTER_EXTENSIONS,
     clean_layer_name,
     convert_to_geopackage,
     copy_raster_layer,
     convert_raster_to_geotiff,
+    estimate_uncompressed_bytes,
     get_raster_format_warning,
     is_layer_exportable,
     log_message
@@ -137,6 +140,12 @@ class OfflineConverter(QObject):
         """Cancel the export process."""
         self._cancelled = True
 
+    @property
+    def was_cancelled(self):
+        """True once cancel() has been requested — the dialog reads this
+        to tell a user-cancelled export apart from a failed one."""
+        return self._cancelled
+
     def _unique_gpkg_name(self, layer_name: str) -> str:
         """Resolve a per-run unique cleaned name, so two layers whose
         names clean to the same string never overwrite each other's
@@ -234,9 +243,25 @@ class OfflineConverter(QObject):
         """
         Export the project for QField.
 
+        Emits finished(bool) on EVERY exit, exactly once. The dialog's
+        thread teardown hangs off that signal, so an exit path that
+        skips it (as the cancel path once did) leaves the worker thread
+        alive, the UI stuck on "Cancelling...", and the user with no
+        way out but a close that destroys a running QThread — a hard
+        crash.
+
         Returns:
             True if successful, False otherwise
         """
+        try:
+            ok = bool(self._export())
+        except Exception as e:
+            log_message(f"Export failed: {e}", Qgis.MessageLevel.Critical)
+            ok = False
+        self.finished.emit(ok)
+        return ok
+
+    def _export(self) -> bool:
         try:
             self._used_gpkg_names.clear()
 
@@ -362,12 +387,10 @@ class OfflineConverter(QObject):
             # Display export summary with any failures
             self._display_export_summary(total_layers)
 
-            self.finished.emit(True)
             return True
 
         except Exception as e:
             log_message(f"Export failed: {e}", Qgis.MessageLevel.Critical)
-            self.finished.emit(False)
             return False
 
     def _get_layers_to_export(self) -> List[QgsMapLayer]:
@@ -628,9 +651,41 @@ class OfflineConverter(QObject):
                 # Check for unsupported raster formats
                 format_warning = get_raster_format_warning(layer)
                 if format_warning:
+                    ext = Path(layer.source().split('|')[0]).suffix.lower()
+                    unsupported_format = ext in UNSUPPORTED_RASTER_EXTENSIONS
+                    estimated = estimate_uncompressed_bytes(layer)
+                    if unsupported_format and estimated > CONVERT_SIZE_LIMIT_BYTES:
+                        # Do NOT fall through to copy_raster_layer: that
+                        # would put the whole unreadable source (a 25 GB
+                        # ECW, say) on the tablet verbatim.
+                        self.log_message.emit(
+                            f"  ✗ '{layer.name()}' is too large to convert during export "
+                            f"(~{estimated / 1e9:.0f} GB uncompressed)")
+                        self.warning.emit(
+                            f"'{layer.name()}' is too large to convert during export "
+                            f"(~{estimated / 1e9:.0f} GB uncompressed). Use Field / Pit / UG > "
+                            f"Optimise Imagery for Field first - it produces QField-ready "
+                            f"tiles plus a context layer, then export again."
+                        )
+                        self.failed_layers.append({
+                            'name': layer.name(),
+                            'reason': 'Too large to convert during export - '
+                                      'use Optimise Imagery for Field'
+                        })
+                        return False
                     if self.convert_unsupported:
                         self.log_message.emit(f"  → Converting '{layer.name()}' to GeoTIFF - {format_warning}")
-                        new_path = convert_raster_to_geotiff(layer, self.export_dir)
+                        last_logged = {'pct': -10}
+
+                        def _conversion_progress(pct, _name=layer.name()):
+                            if pct - last_logged['pct'] >= 10:
+                                last_logged['pct'] = pct
+                                self.log_message.emit(
+                                    f"    … converting '{_name}': {pct:.0f}%")
+
+                        new_path = convert_raster_to_geotiff(
+                            layer, self.export_dir,
+                            progress_cb=_conversion_progress)
                         if new_path:
                             self.exported_layers[layer.id()] = {
                                 'original_source': layer.source(),

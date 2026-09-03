@@ -12,7 +12,7 @@ from typing import List
 from qgis.core import QgsProject, QgsMapLayer, QgsRasterLayer, Qgis
 from qgis.core import QgsSettings
 from qgis.gui import QgisInterface
-from qgis.PyQt.QtCore import Qt, QUrl, pyqtSlot, QThread
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl, pyqtSlot, QThread
 from qgis.PyQt.QtGui import QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (
     QDialog,
@@ -31,6 +31,7 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy,
     QTextEdit,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox
 )
 
@@ -44,9 +45,33 @@ except ImportError:
 
 # QSettings key for persisting last export directory
 _SETTINGS_LAST_EXPORT_DIR = 'LGS_QField_Exporter/lastExportDir'
+# Terrain baking preferences. The exaggeration/bake defaults used to be
+# read from the desktop 3D panel's keys (LinearGeosciencePlugin/View3D/*);
+# that panel is gone, so the exporter owns its own now.
+_SETTINGS_TERRAIN_SCALE = 'LGS_QField_Exporter/terrainScale'
+_SETTINGS_BAKE_TERRAIN = 'LGS_QField_Exporter/bakeTerrain'
 
 # Known cloud-sync folder markers
 _CLOUD_SYNC_MARKERS = ('OneDrive', 'Dropbox', 'Google Drive', 'iCloudDrive', 'pCloud')
+
+# Export threads that would not stop in time. Destroying a running
+# QThread aborts the whole of QGIS, so a thread that outlives its dialog
+# is parked here — out of the garbage collector's reach — and released
+# when it finally finishes.
+_ORPHAN_EXPORTS = []
+
+
+def _park_running_export(thread, converter):
+    entry = (thread, converter)
+    _ORPHAN_EXPORTS.append(entry)
+
+    def _release():
+        try:
+            _ORPHAN_EXPORTS.remove(entry)
+        except ValueError:
+            pass
+
+    thread.finished.connect(_release)
 
 # Shared checkbox styling. 'border: none; background: transparent' matters:
 # the QField-plugin checkboxes live inside a CollapsibleSection whose content
@@ -185,6 +210,7 @@ class ExportDialog(QDialog):
         self.converter = None
         self.export_dir = None
         self._export_thread = None
+        self._close_requested = False
 
         self.setWindowTitle("LGS QField Exporter")
         self.setMinimumSize(800, 700)
@@ -544,6 +570,7 @@ class ExportDialog(QDialog):
         # 3D terrain baking. Data configuration rather than a plugin
         # tool, so it sits outside the collapsed section above.
         self._terrain_layer_id = None
+        self._terrain_available = False
         terrain_row = QHBoxLayout()
         self.bake_terrain_check = QCheckBox("Bake 3D terrain (QField 4.1+)")
         self.bake_terrain_check.setStyleSheet(_CHECKBOX_QSS)
@@ -552,6 +579,18 @@ class ExportDialog(QDialog):
             "3D map view works offline with your mapping draped on it. "
             "Needs QField 4.1 or newer on the device.")
         terrain_row.addWidget(self.bake_terrain_check)
+        self.terrain_dem_label = QLabel("Terrain DEM:")
+        terrain_row.addWidget(self.terrain_dem_label)
+        self.terrain_dem_combo = QComboBox()
+        self.terrain_dem_combo.setMinimumWidth(180)
+        self.terrain_dem_combo.setToolTip(
+            "The elevation raster baked as the exported project's terrain. "
+            "Auto-picked (a pit surface wins); your pick is remembered "
+            "with the project. Imagery and hillshades are not elevation "
+            "and are not listed.")
+        self.terrain_dem_combo.currentIndexChanged.connect(
+            self._terrain_dem_changed)
+        terrain_row.addWidget(self.terrain_dem_combo)
         self.terrain_z_label = QLabel("Exaggeration:")
         terrain_row.addWidget(self.terrain_z_label)
         self.terrain_z_spin = QDoubleSpinBox()
@@ -624,40 +663,85 @@ class ExportDialog(QDialog):
         self._plugin_section.set_status(
             "required", "{} of {} included".format(on, total))
 
-    def _setup_terrain_row(self):
-        """Auto-detect the terrain DEM (same convention as View in 3D)
-        and pre-check baking when one is found; exaggeration defaults to
-        the desktop 3D panel's persisted setting."""
+    @staticmethod
+    def _terrain_modules():
         try:
-            try:
-                from ...view3d import terrain as view3d_terrain
-            except ImportError:  # standalone use outside the plugin package
-                from view3d import terrain as view3d_terrain
+            from ...view3d import detect, terrain
+        except ImportError:  # standalone use outside the plugin package
+            from view3d import detect, terrain
+        return detect, terrain
 
-            layer = view3d_terrain.current_terrain_layer(self.project)
-            reason = 'terrain'
-            if layer is None:
-                layer, reason = view3d_terrain.choose_dem_layer(self.project)
-            if layer is None:
-                self.bake_terrain_check.setText(
-                    "Bake 3D terrain (QField 4.1+) — no DEM found")
+    def _setup_terrain_row(self):
+        """Populate the terrain DEM selector and preset the bake row.
+
+        Candidates follow the zero-config ladder that used to drive the
+        desktop 3D view: orthophotos and hillshades are not elevation and
+        are not listed; a pinned project pick is always listed; pit
+        surfaces carry a "(pit)" tag. The auto-pick (pinned > role-stamped
+        > pit-classified > only raster) lands preselected; a genuinely
+        ambiguous project leaves the placeholder selected and baking off
+        until the user picks — an export must never silently ship without
+        the terrain the user believed was there.
+        """
+        try:
+            detect, terrain = self._terrain_modules()
+            rows = terrain.dem_rows(self.project)
+            pinned = terrain.pinned_dem_id(self.project)
+            candidates = [r for r in rows
+                          if detect.is_dem_candidate(r) or r['id'] == pinned]
+
+            combo = self.terrain_dem_combo
+            combo.blockSignals(True)
+            combo.clear()
+            if not candidates:
+                combo.addItem("No DEM raster in project", None)
+                combo.setToolTip(
+                    "Load a DEM, or run Pit Surface to DEM on a Surpac/DXF "
+                    "pit shell. Imagery and hillshades are not elevation "
+                    "and are not listed.")
+                combo.blockSignals(False)
+                self._terrain_available = False
                 self.bake_terrain_check.setChecked(False)
-                self.bake_terrain_check.setEnabled(False)
-                self.terrain_z_spin.setEnabled(False)
-                self.terrain_z_label.setEnabled(False)
+                for widget in (self.bake_terrain_check, combo,
+                               self.terrain_dem_label,
+                               self.terrain_z_spin, self.terrain_z_label):
+                    widget.setEnabled(False)
                 return
-            self._terrain_layer_id = layer.id()
-            self.bake_terrain_check.setText(
-                "Bake 3D terrain: {0} (QField 4.1+)".format(layer.name()))
-            self.bake_terrain_check.setChecked(True)
+
+            combo.addItem("Select a DEM...", None)
+            for row in candidates:
+                tag = " (pit)" if detect.classify(row) == 'pit' else ""
+                combo.addItem(row['name'] + tag, row['id'])
+            self._terrain_available = True
+
+            # Preselect: an explicit project terrain provider first, then
+            # the ladder.
+            chosen_id = None
+            current = terrain.current_terrain_layer(self.project)
+            if current is not None and combo.findData(current.id()) > 0:
+                chosen_id = current.id()
+            else:
+                row, _reason = detect.choose_dem(rows, pinned)
+                if row is not None:
+                    chosen_id = row['id']
 
             settings = QgsSettings()
-            prefix = "LinearGeosciencePlugin/View3D/"
-            if settings.value(prefix + "zEnabled", False, bool):
-                self.terrain_z_spin.setValue(
-                    settings.value(prefix + "zFactor", 1.0, float))
+            if chosen_id is not None:
+                combo.setCurrentIndex(combo.findData(chosen_id))
+                self._terrain_layer_id = chosen_id
+                self.bake_terrain_check.setEnabled(True)
+                self.bake_terrain_check.setChecked(
+                    settings.value(_SETTINGS_BAKE_TERRAIN, True, bool))
+            else:
+                self._terrain_layer_id = None
+                self.bake_terrain_check.setChecked(False)
+                self.bake_terrain_check.setEnabled(False)
+            combo.blockSignals(False)
+            self.terrain_z_spin.setValue(
+                settings.value(_SETTINGS_TERRAIN_SCALE, 1.0, float))
         except Exception as e:
             # A detection hiccup must never block the export dialog.
+            self._terrain_available = False
             self.bake_terrain_check.setChecked(False)
             self.bake_terrain_check.setEnabled(False)
             from qgis.core import QgsMessageLog
@@ -665,14 +749,80 @@ class ExportDialog(QDialog):
                 "3D terrain detection failed: {0}".format(e),
                 "Linear Geoscience", Qgis.MessageLevel.Warning)
 
-    def _on_cancel_clicked(self):
-        """Handle cancel button click - cancel export if running, otherwise close."""
-        if self._export_thread is not None and self._export_thread.isRunning():
+    def _terrain_dem_changed(self, _index):
+        layer_id = self.terrain_dem_combo.currentData()
+        if not layer_id:
+            self._terrain_layer_id = None
+            self.bake_terrain_check.setChecked(False)
+            self.bake_terrain_check.setEnabled(False)
+            return
+        layer = self.project.mapLayer(layer_id)
+        if layer is None:
+            return
+        self._terrain_layer_id = layer_id
+        self.bake_terrain_check.setEnabled(True)
+        self.bake_terrain_check.setChecked(True)
+        # Persist per project: the pin survives reloads, and setting the
+        # live terrain provider means a project copied to a device WITHOUT
+        # this exporter still carries terrain. Both dirty the project —
+        # start_export's save prompt then writes them into the on-disk
+        # .qgs the converter reads. That interaction is intended.
+        try:
+            _detect, terrain = self._terrain_modules()
+            terrain.pin_dem_layer(layer, self.project)
+            terrain.ensure_project_terrain(layer, self.project)
+        except Exception as e:
+            from qgis.core import QgsMessageLog
+            QgsMessageLog.logMessage(
+                "Could not pin the terrain DEM: {0}".format(e),
+                "Linear Geoscience", Qgis.MessageLevel.Warning)
+
+    # ------------------------------------------------ cancel / close guard
+    #
+    # A QDialog whose QThread member is destroyed while the thread still
+    # runs takes QGIS down ("QThread: Destroyed while thread is still
+    # running") — and run_qfield_export holds this dialog only in a
+    # local, so the moment exec() returns the dialog IS destroyed. So:
+    # the dialog must never actually close while the worker runs. X,
+    # Esc and the Cancel button all become a cancel request; the close
+    # itself happens in _on_export_finished, once the thread is down.
+
+    def _export_running(self):
+        return (self._export_thread is not None
+                and self._export_thread.isRunning())
+
+    def _request_cancel(self):
+        if self.converter is not None:
             self.converter.cancel()
-            self.cancel_button.setEnabled(False)
-            self.cancel_button.setText("Cancelling...")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Cancelling...")
+        self.status_label.setText(
+            "Cancelling — waiting for the current step to finish...")
+
+    def _on_cancel_clicked(self):
+        """Cancel a running export; close the dialog otherwise."""
+        if self._export_running():
+            self._request_cancel()
         else:
             self.reject()
+
+    def reject(self):
+        """Esc and programmatic close land here. Never close mid-export."""
+        if self._export_running():
+            self._close_requested = True
+            self._request_cancel()
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        """The title-bar X lands here. Same rule: cancel first, close
+        when the worker has stopped."""
+        if self._export_running():
+            self._close_requested = True
+            self._request_cancel()
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def load_layers(self):
         """Load layers from the project into the tree widget, preserving QGIS layer tree structure."""
@@ -1022,6 +1172,13 @@ class ExportDialog(QDialog):
         # Clean up any previous converter/thread
         self._cleanup_export()
 
+        # Remember the terrain preferences that produced this export.
+        settings = QgsSettings()
+        settings.setValue(_SETTINGS_TERRAIN_SCALE, self.terrain_z_spin.value())
+        if self._terrain_available and self._terrain_layer_id is not None:
+            settings.setValue(_SETTINGS_BAKE_TERRAIN,
+                              self.bake_terrain_check.isChecked())
+
         # Create converter
         self.export_dir = Path(export_dir)
         self.converter = OfflineConverter(
@@ -1082,6 +1239,16 @@ class ExportDialog(QDialog):
         self.convert_unsupported_check.setEnabled(enabled)
         self._plugin_section.setEnabled(enabled)  # covers all nine checkboxes
         self.layer_tree.setEnabled(enabled)
+        # Terrain row: never resurrect widgets the no-DEM case disabled,
+        # and the bake box additionally needs an actual pick.
+        terrain_on = enabled and self._terrain_available
+        self.terrain_dem_combo.setEnabled(terrain_on)
+        self.terrain_dem_label.setEnabled(terrain_on)
+        self.terrain_z_spin.setEnabled(terrain_on)
+        self.terrain_z_label.setEnabled(terrain_on)
+        self.bake_terrain_check.setEnabled(
+            terrain_on
+            and self.terrain_dem_combo.currentData() is not None)
 
     def _cleanup_export(self):
         """Clean up converter and thread from a previous export."""
@@ -1089,11 +1256,19 @@ class ExportDialog(QDialog):
             if self._export_thread.isRunning():
                 self._export_thread.quit()
                 self._export_thread.wait(5000)
+            if self._export_thread.isRunning():
+                # Never destroy a running QThread — that is a hard crash.
+                # Park the pair; it releases itself when the thread ends.
+                _park_running_export(self._export_thread, self.converter)
+                self._export_thread = None
+                self.converter = None
+                return
             self._export_thread.deleteLater()
             self._export_thread = None
-        if self.converter is not None:
-            self.converter.deleteLater()
-            self.converter = None
+        # The worker thread's event loop is gone, so a deleteLater posted
+        # to the converter would never run. Dropping the reference lets
+        # Python delete it directly — safe once the thread has finished.
+        self.converter = None
 
     @pyqtSlot(int, int, str)
     def update_progress(self, current, total, message):
@@ -1121,10 +1296,22 @@ class ExportDialog(QDialog):
     @pyqtSlot(bool)
     def _on_export_finished(self, success):
         """Handle export completion - stop thread and update UI."""
-        # Stop the background thread
+        # Stop the background thread. export() emits finished on its way
+        # out, so by the time this queued slot runs the worker loop is
+        # idle and quit() lands immediately.
         if self._export_thread is not None:
             self._export_thread.quit()
-            self._export_thread.wait(5000)
+            if not self._export_thread.wait(5000):
+                # Never destroy a running QThread — park it out of the
+                # garbage collector's reach instead (hard crash otherwise).
+                _park_running_export(self._export_thread, self.converter)
+            else:
+                self._export_thread.deleteLater()
+            self._export_thread = None
+
+        was_cancelled = bool(
+            self.converter is not None
+            and getattr(self.converter, 'was_cancelled', False))
 
         # Re-enable UI controls
         self._set_export_ui_enabled(True)
@@ -1133,6 +1320,12 @@ class ExportDialog(QDialog):
         self.cancel_button.setText("Close")
         self.cancel_button.setEnabled(True)
 
+        # A close (X/Esc) during the export was deferred until the worker
+        # stopped; honour it now, and skip the message boxes — the user
+        # already said they are leaving.
+        close_requested = self._close_requested
+        self._close_requested = False
+
         if success:
             # Persist the export directory for next time
             QgsSettings().setValue(_SETTINGS_LAST_EXPORT_DIR, str(self.export_dir))
@@ -1140,28 +1333,45 @@ class ExportDialog(QDialog):
             self.status_label.setText("Export completed successfully")
             self.status_label.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 600;")
 
-            # Show success message with option to open folder
-            reply = QMessageBox.information(
-                self,
-                "Export Complete",
-                f"Project exported successfully to:\n{self.export_dir}\n\n"
-                "Would you like to open the export folder?",
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.Ok
-            )
+            if not close_requested:
+                # Show success message with option to open folder
+                reply = QMessageBox.information(
+                    self,
+                    "Export Complete",
+                    f"Project exported successfully to:\n{self.export_dir}\n\n"
+                    "Would you like to open the export folder?",
+                    QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok,
+                    QMessageBox.StandardButton.Ok
+                )
 
-            if reply == QMessageBox.StandardButton.Open:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_dir)))
+                if reply == QMessageBox.StandardButton.Open:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_dir)))
+        elif was_cancelled:
+            # A cancelled export is not a failure — no error dialog.
+            self.status_label.setText("Export cancelled")
+            self.status_label.setStyleSheet(
+                "color: #f59e0b; font-size: 12px; font-weight: 600;")
+            self.add_log(
+                "Export cancelled — the export folder may hold a partial "
+                "export.")
         else:
             self.status_label.setText("Export failed")
             self.status_label.setStyleSheet("color: #ef4444; font-size: 12px; font-weight: 600;")
-            QMessageBox.critical(
-                self,
-                "Export Failed",
-                "The export process failed. Please check the log for details."
-            )
+            if not close_requested:
+                QMessageBox.critical(
+                    self,
+                    "Export Failed",
+                    "The export process failed. Please check the log for details."
+                )
 
-        # Clean up converter (keep thread reference for cleanup later)
-        if self.converter is not None:
-            self.converter.deleteLater()
-            self.converter = None
+        # Drop the converter reference. Its thread's event loop is gone,
+        # so deleteLater would never be processed; a plain Python release
+        # is safe once the thread has finished (the parked case keeps its
+        # own reference).
+        self.converter = None
+
+        if close_requested:
+            # Leave the slot first, then close on a clean turn of the
+            # event loop; reject() now sees no running thread and lets
+            # the dialog go.
+            QTimer.singleShot(0, self.reject)

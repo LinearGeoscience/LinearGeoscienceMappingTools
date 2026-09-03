@@ -117,7 +117,7 @@ class TestFieldPage(unittest.TestCase):
 
     def test_it_carries_every_moved_tool(self):
         body = self._field_page_source()
-        for handler in ('self.run_view_3d', 'self.run_pit_surface_dem',
+        for handler in ('self.run_pit_surface_dem',
                         'self.run_generate_contours',
                         'self.run_optimise_imagery',
                         'self.run_mining_import',
@@ -131,7 +131,7 @@ class TestFieldPage(unittest.TestCase):
             for node in ast.walk(self.tree):
                 if isinstance(node, ast.FunctionDef) and node.name == name:
                     body = ast.get_source_segment(self.source, node)
-                    for handler in ('run_view_3d', 'run_pit_surface_dem',
+                    for handler in ('run_pit_surface_dem',
                                     'run_generate_contours',
                                     'run_mining_import'):
                         self.assertNotIn(handler, body,

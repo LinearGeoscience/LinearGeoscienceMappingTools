@@ -91,8 +91,17 @@ class TestTerrainWiring(unittest.TestCase):
     def test_dialog_declares_terrain_widgets(self):
         source = _read(_DIALOG)
         for token in ('bake_terrain_check', 'terrain_z_spin',
-                      '_terrain_layer_id', '_setup_terrain_row'):
+                      '_terrain_layer_id', '_setup_terrain_row',
+                      'terrain_dem_combo', '_terrain_dem_changed'):
             self.assertIn(token, source, token)
+
+    def test_dialog_pins_the_users_dem_pick(self):
+        """The selector's contract: a pick persists with the project (pin)
+        and lands in the live terrain provider, so a project copied to a
+        device without this exporter still carries terrain."""
+        source = _read(_DIALOG)
+        self.assertIn('pin_dem_layer', source)
+        self.assertIn('ensure_project_terrain', source)
 
     def test_converter_injects_after_path_normalization(self):
         """Order matters: normalize_project_file_paths would rewrite the

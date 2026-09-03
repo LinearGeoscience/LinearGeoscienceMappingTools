@@ -200,6 +200,73 @@ sds = None
 check(check_tag is not None, 'tiles carry their grid index in metadata')
 check('tiles' in res4['group_name'], 'a tiled run gets a group name')
 
+section('AOI + context')
+# One polygon over the middle-left quadrant, in map coordinates for the
+# known geotransform (394000, 0.1, 0, 6573000, 0, -0.1): pixel window
+# (100,100)-(700,700).
+aoi_ring = [(394010.0, 6572990.0), (394070.0, 6572990.0),
+            (394070.0, 6572930.0), (394010.0, 6572930.0)]
+out_dir_aoi = os.path.join(TMP, 'out_aoi')
+os.makedirs(out_dir_aoi)
+res_aoi = core.optimise_raster(src, out_dir_aoi, profile='cog_jpeg_alpha',
+                               tile_mb=0.05, tiling=True,
+                               aoi_polygons=[aoi_ring],
+                               context_target_mb=0.05)
+check(res_aoi['mode'] == 'aoi', 'result reports AOI mode')
+check(res_aoi['context'] is not None, 'a context layer was written')
+check(res_aoi['outputs'][-1] is res_aoi['context'],
+      'context is LAST in outputs (bottom of the group)')
+aoi_tiles = res_aoi['outputs'][:-1]
+check(len(aoi_tiles) > 1,
+      'a small budget still tiles the AOI ({0})'.format(len(aoi_tiles)))
+check('context' in res_aoi['group_name'],
+      'group name mentions the context')
+
+all_in_window = True
+full_res = True
+for t in aoi_tiles:
+    tds = gdal.Open(t['path'])
+    gt = tds.GetGeoTransform()
+    x0, y0 = gt[0], gt[3]
+    x1 = gt[0] + gt[1] * tds.RasterXSize
+    y1 = gt[3] + gt[5] * tds.RasterYSize
+    if not (x0 >= 394010.0 - 1e-6 and x1 <= 394070.0 + 1e-6
+            and y0 <= 6572990.0 + 1e-6 and y1 >= 6572930.0 - 1e-6):
+        all_in_window = False
+    if abs(gt[1] - 0.1) > 1e-9 or abs(gt[5] + 0.1) > 1e-9:
+        full_res = False
+    role = tds.GetMetadataItem(core.META_ROLE)
+    tds = None
+check(all_in_window, 'every AOI tile stays inside the drawn window')
+check(full_res, 'AOI tiles keep FULL source resolution')
+check(role == 'aoi_tile', 'AOI tiles are stamped LGS_ROLE=aoi_tile')
+
+cds = gdal.Open(res_aoi['context']['path'])
+cgt = cds.GetGeoTransform()
+check(cds.RasterXSize < 1400 and cds.RasterYSize < 1400,
+      'context is downsampled ({0}x{1})'.format(cds.RasterXSize,
+                                                cds.RasterYSize))
+check(abs(cgt[0] - 394000.0) < 1e-6
+      and abs(cgt[3] - 6573000.0) < 1e-6
+      and abs(cgt[0] + cgt[1] * cds.RasterXSize - 394140.0) < 0.5
+      and abs(cgt[3] + cgt[5] * cds.RasterYSize - 6572860.0) < 0.5,
+      'context covers the WHOLE source extent')
+ccomp = (cds.GetMetadata('IMAGE_STRUCTURE') or {}).get('COMPRESSION', '')
+check('JPEG' in ccomp.upper(), 'context is JPEG compressed')
+check(cds.GetRasterBand(1).GetOverviewCount() > 0
+      or max(cds.RasterXSize, cds.RasterYSize) < 512,
+      'context has overviews (or is below one block)')
+check(cds.GetMetadataItem(core.META_ROLE) == 'context',
+      'context is stamped LGS_ROLE=context')
+cds = None
+
+try:
+    core.optimise_raster(src, out_dir_aoi, aoi_polygons=[[
+        (900000.0, 900000.0), (900010.0, 900000.0), (900010.0, 900010.0)]])
+    check(False, 'polygons off the raster are refused')
+except ValueError:
+    check(True, 'polygons off the raster are refused')
+
 section('cancellation')
 try:
     from lgs_tasks import TaskCancelled
@@ -225,6 +292,20 @@ except TaskCancelled:
     check(True, 'cancelling actually stops the run')
 except Exception as exc:
     check(False, 'cancelling raised {0} instead'.format(type(exc).__name__))
+
+state['n'] = 0
+out_dir5b = os.path.join(TMP, 'out_cancel_aoi')
+os.makedirs(out_dir5b)
+try:
+    core.optimise_raster(src, out_dir5b, profile='cog_jpeg_alpha',
+                         tile_mb=0.05, aoi_polygons=[aoi_ring],
+                         context_target_mb=0.05,
+                         progress_cb=cancel_after_a_moment)
+    check(False, 'cancelling stops an AOI run too')
+except TaskCancelled:
+    check(True, 'cancelling stops an AOI run too')
+except Exception as exc:
+    check(False, 'AOI cancel raised {0} instead'.format(type(exc).__name__))
 
 section('the real drone ortho')
 if os.path.isfile(REAL_ORTHO):

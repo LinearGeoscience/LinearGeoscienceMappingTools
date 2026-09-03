@@ -1,7 +1,9 @@
 """Dialog for repacking large imagery so it performs in the field."""
 
 import os
+import shutil
 
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -15,21 +17,28 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
 )
 from qgis.core import (
     Qgis,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsGeometry,
     QgsMessageLog,
     QgsProject,
     QgsRasterLayer,
     QgsSettings,
 )
+from qgis.gui import QgsRubberBand
 
 try:
     from . import core
+    from .aoi_draw import AoiDrawTool
     from ..lgs_tasks import run_in_task
 except ImportError:  # loaded outside the plugin package
     from raster_optimise import core
+    from raster_optimise.aoi_draw import AoiDrawTool
     from lgs_tasks import run_in_task
 
 try:
@@ -41,7 +50,11 @@ SETTINGS_PREFIX = "LinearGeosciencePlugin/RasterOptimise/"
 SETTING_PROFILE = SETTINGS_PREFIX + "profile"
 SETTING_TILING = SETTINGS_PREFIX + "tiling"
 SETTING_TILE_MB = SETTINGS_PREFIX + "tileMb"
+SETTING_COVERAGE = SETTINGS_PREFIX + "coverage"
 SETTING_GEOMETRY = SETTINGS_PREFIX + "dialogGeometry"
+
+# The user's stated device budget; the estimate turns amber past this.
+BUDGET_WARN_BYTES = 30e9
 
 SOURCE_FILTER = ("Rasters (*.tif *.tiff *.img *.vrt *.jp2 *.png *.ecw "
                  "*.sid);;All files (*.*)")
@@ -58,6 +71,10 @@ class OptimiseImageryDialog(QDialog):
         self._info = None
         self._source = None
         self._output_touched = False
+        self._aoi_geoms = []      # QgsGeometry, in canvas CRS at draw time
+        self._aoi_band = None     # persistent band showing finished areas
+        self._draw_tool = None
+        self._prev_tool = None
 
         layout = QVBoxLayout()
 
@@ -88,6 +105,38 @@ class OptimiseImageryDialog(QDialog):
         src_layout.addWidget(self.source_caption)
         src_group.setLayout(src_layout)
         layout.addWidget(src_group)
+
+        # --- coverage ------------------------------------------------
+        cov_group = QGroupBox("Coverage")
+        cov_group.setStyleSheet(theme.group_box_style())
+        cov_layout = QVBoxLayout()
+        self.whole_radio = QRadioButton("Whole image")
+        self.whole_radio.setChecked(True)
+        self.whole_radio.toggled.connect(self._coverage_changed)
+        cov_layout.addWidget(self.whole_radio)
+        self.aoi_radio = QRadioButton(
+            "Full detail inside drawn areas + whole-image context")
+        self.aoi_radio.setToolTip(
+            "Draw one or more polygons on the map. Those areas keep full "
+            "resolution; the rest of the image travels as one small "
+            "downsampled context layer, so zoomed-out views still show "
+            "imagery everywhere.")
+        cov_layout.addWidget(self.aoi_radio)
+        aoi_row = QHBoxLayout()
+        self.draw_button = QPushButton("Draw areas on map")
+        self.draw_button.clicked.connect(self._toggle_drawing)
+        aoi_row.addWidget(self.draw_button)
+        self.clear_aoi_button = QPushButton("Clear")
+        self.clear_aoi_button.clicked.connect(self._clear_aoi)
+        aoi_row.addWidget(self.clear_aoi_button)
+        aoi_row.addStretch()
+        cov_layout.addLayout(aoi_row)
+        self.aoi_caption = QLabel("")
+        self.aoi_caption.setWordWrap(True)
+        self.aoi_caption.setStyleSheet("color: #666; padding: 2px;")
+        cov_layout.addWidget(self.aoi_caption)
+        cov_group.setLayout(cov_layout)
+        layout.addWidget(cov_group)
 
         # --- how -----------------------------------------------------
         opt_group = QGroupBox("Compression")
@@ -181,6 +230,7 @@ class OptimiseImageryDialog(QDialog):
         self._restore_settings()
         self._populate_sources()
         self._profile_changed()
+        self._coverage_changed()
 
     # -------------------------------------------------------- settings
 
@@ -203,6 +253,10 @@ class OptimiseImageryDialog(QDialog):
         self.tile_spin.setValue(
             settings.value(SETTING_TILE_MB, core.DEFAULT_TILE_MB, float))
         self.tile_spin.blockSignals(False)
+        if settings.value(SETTING_COVERAGE, 'whole', str) == 'aoi':
+            self.aoi_radio.blockSignals(True)
+            self.aoi_radio.setChecked(True)
+            self.aoi_radio.blockSignals(False)
 
     def _save_settings(self):
         settings = QgsSettings()
@@ -210,8 +264,16 @@ class OptimiseImageryDialog(QDialog):
         settings.setValue(SETTING_PROFILE, self.profile_combo.currentData())
         settings.setValue(SETTING_TILING, self.tile_check.isChecked())
         settings.setValue(SETTING_TILE_MB, self.tile_spin.value())
+        settings.setValue(
+            SETTING_COVERAGE,
+            'aoi' if self.aoi_radio.isChecked() else 'whole')
 
     def closeEvent(self, event):
+        # The dialog survives close() (non-modal, re-shown on reopen),
+        # so drop the drawn areas too — a hidden dialog must not leave
+        # rubber bands on the canvas or claim areas it no longer shows.
+        self._stop_drawing()
+        self._clear_aoi()
         self._save_settings()
         super().closeEvent(event)
 
@@ -266,7 +328,15 @@ class OptimiseImageryDialog(QDialog):
         try:
             self._info = core.raster_info(self._source)
         except Exception as exc:
-            self.source_caption.setText("Could not read: {0}".format(exc))
+            message = "Could not read: {0}".format(exc)
+            ext = os.path.splitext(self._source)[1].lower()
+            if ext in ('.ecw', '.sid'):
+                message += (
+                    "  This QGIS install may have no {0} driver — open "
+                    "the file in a build that includes it (the OSGeo4W "
+                    "LTR install does).".format(
+                        "ECW" if ext == '.ecw' else "MrSID"))
+            self.source_caption.setText(message)
             self.preview_label.setText("")
             return
         info = self._info
@@ -280,7 +350,134 @@ class OptimiseImageryDialog(QDialog):
                 info['compression'], info['overviews'], warn))
         if not self._output_touched:
             self.output_edit.setText(core.default_output_dir(self._source))
+        self._refresh_aoi_caption()
         self._update_preview()
+
+    # ---------------------------------------------------------- AOI
+
+    def _canvas(self):
+        return self.iface.mapCanvas() if self.iface else None
+
+    def _coverage_changed(self, _checked=None):
+        aoi = self.aoi_radio.isChecked()
+        for widget in (self.draw_button, self.clear_aoi_button,
+                       self.aoi_caption):
+            widget.setEnabled(aoi)
+        if not aoi:
+            self._stop_drawing()
+        self._refresh_aoi_caption()
+        self._update_preview()
+
+    def _toggle_drawing(self):
+        if self._draw_tool is not None:
+            self._stop_drawing()
+        else:
+            self._start_drawing()
+
+    def _start_drawing(self):
+        canvas = self._canvas()
+        if canvas is None:
+            return
+        self._prev_tool = canvas.mapTool()
+        self._draw_tool = AoiDrawTool(canvas)
+        self._draw_tool.polygon_completed.connect(self._polygon_drawn)
+        self._draw_tool.finished.connect(self._stop_drawing)
+        canvas.setMapTool(self._draw_tool)
+        self.draw_button.setText("Finish drawing")
+        self.aoi_caption.setText(
+            "Left-click to add points, right-click to close each area; "
+            "Esc or Finish when done.")
+
+    def _stop_drawing(self):
+        canvas = self._canvas()
+        if self._draw_tool is not None and canvas is not None:
+            if canvas.mapTool() is self._draw_tool:
+                if self._prev_tool is not None:
+                    canvas.setMapTool(self._prev_tool)
+                else:
+                    canvas.unsetMapTool(self._draw_tool)
+            self._draw_tool.deactivate()
+        self._draw_tool = None
+        self._prev_tool = None
+        self.draw_button.setText("Draw areas on map")
+        self._refresh_aoi_caption()
+
+    def _polygon_drawn(self, geometry):
+        canvas = self._canvas()
+        if canvas is None:
+            return
+        self._aoi_geoms.append(geometry)
+        if self._aoi_band is None:
+            self._aoi_band = QgsRubberBand(canvas,
+                                           Qgis.GeometryType.Polygon)
+            self._aoi_band.setFillColor(QColor(207, 157, 40, 40))
+            self._aoi_band.setStrokeColor(QColor(207, 157, 40, 200))
+            self._aoi_band.setWidth(2)
+        self._aoi_band.addGeometry(geometry)
+        self._refresh_aoi_caption()
+        self._update_preview()
+
+    def _clear_aoi(self):
+        self._aoi_geoms = []
+        self._discard_aoi_band()
+        self._refresh_aoi_caption()
+        self._update_preview()
+
+    def _discard_aoi_band(self):
+        if self._aoi_band is not None:
+            # Reset before discarding: a band removed while holding
+            # geometry can reappear on the next canvas refresh.
+            self._aoi_band.reset(Qgis.GeometryType.Polygon)
+            canvas = self._canvas()
+            if canvas is not None:
+                canvas.scene().removeItem(self._aoi_band)
+            self._aoi_band = None
+
+    def _refresh_aoi_caption(self):
+        if self._draw_tool is not None:
+            return  # the drawing hint is showing
+        if not self.aoi_radio.isChecked():
+            self.aoi_caption.setText("")
+            return
+        count = len(self._aoi_geoms)
+        if not count:
+            self.aoi_caption.setText("No areas drawn yet.")
+            return
+        text = "{0} area{1} drawn".format(count, "" if count == 1 else "s")
+        if self._info:
+            _w, _h, factor = core.context_shape(
+                self._info, self.profile_combo.currentData())
+            pixel = abs(self._info['geotransform'][1]) * factor
+            text += " · context pixel ≈ {0:.2g} m".format(pixel)
+        self.aoi_caption.setText(text)
+
+    def _aoi_rings(self):
+        """Drawn polygons as plain ring lists in the raster's CRS."""
+        if not self._info or not self._aoi_geoms:
+            return []
+        canvas = self._canvas()
+        rings = []
+        transform = None
+        if canvas is not None and self._info.get('crs_wkt'):
+            src_crs = canvas.mapSettings().destinationCrs()
+            dst_crs = QgsCoordinateReferenceSystem.fromWkt(
+                self._info['crs_wkt'])
+            if (src_crs.isValid() and dst_crs.isValid()
+                    and src_crs != dst_crs):
+                transform = QgsCoordinateTransform(
+                    src_crs, dst_crs, QgsProject.instance())
+        for geometry in self._aoi_geoms:
+            geom = QgsGeometry(geometry)
+            if transform is not None:
+                # 0 on older QGIS, a Qgis.GeometryOperationResult on
+                # newer; never int() a Qt6 enum (it raises).
+                result = geom.transform(transform)
+                if result not in (0, Qgis.GeometryOperationResult.Success):
+                    continue
+            for part in geom.asMultiPolygon() or [geom.asPolygon()]:
+                if part and part[0]:
+                    rings.append([(p.x(), p.y()) for p in part[0]])
+        return rings
 
     # ------------------------------------------------------- preview
 
@@ -294,6 +491,9 @@ class OptimiseImageryDialog(QDialog):
             self.preview_label.setText("")
             return
         profile = self.profile_combo.currentData()
+        if self.aoi_radio.isChecked():
+            self._update_aoi_preview(profile)
+            return
         rows, cols = core.tile_grid(
             self._info, profile, self.tile_spin.value(),
             self.tile_check.isChecked())
@@ -305,9 +505,40 @@ class OptimiseImageryDialog(QDialog):
         factor = (" · about {0:.0f}× smaller".format(
             source_bytes / float(estimate))
             if estimate and source_bytes > estimate else "")
-        self.preview_label.setText(
+        self._set_preview(
             "Estimate: about {0} as {1}{2}".format(
-                core.human_mb(estimate), shape, factor))
+                core.human_mb(estimate), shape, factor),
+            over_budget=estimate > BUDGET_WARN_BYTES)
+
+    def _update_aoi_preview(self, profile):
+        rings = self._aoi_rings()
+        if not rings:
+            self._set_preview("Draw at least one area on the map to see "
+                              "an estimate.", over_budget=False)
+            return
+        try:
+            windows, tile_bytes, context_bytes = (
+                core.estimate_aoi_output_bytes(
+                    self._info, rings, profile, self.tile_spin.value(),
+                    self.tile_check.isChecked()))
+        except ValueError as exc:
+            self._set_preview(str(exc), over_budget=True)
+            return
+        total = tile_bytes + context_bytes
+        text = ("Estimate: {0} full-res tile{1} ≈ {2} + context ≈ {3} "
+                "(total ≈ {4})".format(
+                    len(windows), "" if len(windows) == 1 else "s",
+                    core.human_mb(tile_bytes),
+                    core.human_mb(context_bytes), core.human_mb(total)))
+        if total > BUDGET_WARN_BYTES:
+            text += " — over the 30 GB device budget; draw smaller areas"
+        self._set_preview(text, over_budget=total > BUDGET_WARN_BYTES)
+
+    def _set_preview(self, text, over_budget=False):
+        self.preview_label.setStyleSheet(
+            "color: {0}; padding: 4px; font-weight: bold;".format(
+                "#a15c00" if over_budget else "#1a6b3c"))
+        self.preview_label.setText(text)
 
     def _output_edited(self, _text):
         self._output_touched = True
@@ -324,9 +555,12 @@ class OptimiseImageryDialog(QDialog):
     def _set_running(self, running):
         for widget in (self.source_combo, self.profile_combo,
                        self.tile_check, self.tile_spin, self.output_edit,
-                       self.run_button):
+                       self.run_button, self.whole_radio, self.aoi_radio,
+                       self.draw_button, self.clear_aoi_button):
             widget.setEnabled(not running)
         self.cancel_button.setEnabled(running)
+        if not running:
+            self._coverage_changed()  # re-apply the AOI enable states
 
     def _run(self):
         if not self._source or not os.path.isfile(self._source):
@@ -344,17 +578,62 @@ class OptimiseImageryDialog(QDialog):
         tile_mb = self.tile_spin.value()
         tiling = self.tile_check.isChecked()
 
+        aoi_rings = None
+        estimate = core.estimate_output_bytes(self._info, profile)
+        if self.aoi_radio.isChecked():
+            self._stop_drawing()
+            aoi_rings = self._aoi_rings()
+            if not aoi_rings:
+                QMessageBox.warning(
+                    self, "Optimise Imagery",
+                    "Draw at least one area on the map first.")
+                return
+            try:
+                _w, tile_bytes, context_bytes = (
+                    core.estimate_aoi_output_bytes(
+                        self._info, aoi_rings, profile, tile_mb, tiling))
+                estimate = tile_bytes + context_bytes
+            except ValueError as exc:
+                QMessageBox.warning(self, "Optimise Imagery", str(exc))
+                return
+
+        if not self._enough_disk(out_dir, estimate, tile_mb):
+            return
+
         self._set_running(True)
         self.status_label.setText("Starting...")
         self._task = run_in_task(
             "Optimising imagery",
             lambda cb: core.optimise_raster(
                 src, out_dir, profile=profile, tile_mb=tile_mb,
-                tiling=tiling, progress_cb=cb),
+                tiling=tiling, progress_cb=cb, aoi_polygons=aoi_rings,
+                context_target_mb=core.CONTEXT_TARGET_MB),
             on_finished=self._on_done,
             on_error=self._on_error,
             on_cancelled=self._on_cancelled,
             owner=self, bar=self.progress_bar, label=self.status_label)
+
+    def _enough_disk(self, out_dir, estimate, tile_mb):
+        """Warn (not block) when the output folder looks too small.
+
+        The COG driver writes a temporary copy per file, so the peak is
+        roughly the running total plus two of the largest tile.
+        """
+        try:
+            free = shutil.disk_usage(out_dir).free
+        except OSError:
+            return True
+        needed = estimate * 1.2 + tile_mb * 2e6
+        if free >= needed:
+            return True
+        answer = QMessageBox.question(
+            self, "Optimise Imagery",
+            "The output folder has {0} free but this run may need about "
+            "{1}. Continue anyway?".format(
+                core.human_mb(free), core.human_mb(needed)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return answer == QMessageBox.StandardButton.Yes
 
     def _cancel(self):
         if self._task is not None:
@@ -419,6 +698,26 @@ class OptimiseImageryDialog(QDialog):
         self.status_label.setText("Cancelled")
 
 
+_dialog = None
+
+
 def run(iface):
-    dialog = OptimiseImageryDialog(iface.mainWindow(), iface)
-    dialog.exec()
+    # Non-modal, so the canvas still takes clicks while the user draws
+    # areas of interest (a modal exec() would swallow them).
+    global _dialog
+    if _dialog is not None:
+        try:
+            _dialog.show()
+            _dialog.raise_()
+            _dialog.activateWindow()
+            return
+        except RuntimeError:  # underlying C++ object deleted
+            _dialog = None
+    _dialog = OptimiseImageryDialog(iface.mainWindow(), iface)
+    _dialog.destroyed.connect(_forget_dialog)
+    _dialog.show()
+
+
+def _forget_dialog(*_args):
+    global _dialog
+    _dialog = None

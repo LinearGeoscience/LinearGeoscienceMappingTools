@@ -2452,15 +2452,18 @@ Item {
   // instead of sitting on the map as a solid plate. index 0 is the
   // leftmost character; reveal is 0 at rest and 1 just after a tap.
   //
-  // At rest only the head of the name survives — enough to show the
-  // control is there — and by reveal 1 every character is solid. The
-  // clamp is what makes both of those exact rather than merely close.
+  // Measured in CHARACTERS, not as a fraction of the name (v34.1): the
+  // fraction gave every name a different head — one letter of Basemap,
+  // none of Linework — and at rest the four pills read "FLOB". Now the
+  // first head characters are solid for every name and the next two
+  // carry the fade, so at rest you read Base·, Line·, Over·, Fiel·;
+  // the active pill's head grows with its part-reveal, and by reveal 1
+  // the head has passed the last character of any name. The clamp is
+  // what makes both ends exact rather than merely close.
   // Kept pure JS — the test harness runs this verbatim.
   function layerSwitchCharAlpha(index, count, reveal) {
-    // A one-character name has nowhere to fade to; t stays at the head.
-    const t = count <= 1 ? 0 : index / (count - 1)
-    const edge = 0.10 + 1.30 * reveal
-    const alpha = (edge - t) / 0.35
+    const head = 4.0 + reveal * (count + 1)
+    const alpha = (head - index) / 2.0
     return alpha < 0 ? 0 : (alpha > 1 ? 1 : alpha)
   }
 
@@ -2672,7 +2675,9 @@ Item {
           }
 
           GradientStop {
-            position: 0.18 + 0.62 * layerSwitchButton.reveal
+            // Solid under the readable head (v34.1: 0.18 sat under one
+            // letter), then the fade carries the rest of the width.
+            position: 0.30 + 0.55 * layerSwitchButton.reveal
             color: layerSwitchButton.pad
           }
 
