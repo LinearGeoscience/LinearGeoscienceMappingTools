@@ -19,7 +19,8 @@ Nothing here may call Qgs3DMapSettings.writeXml(): it SEGFAULTS on
 3.40.9, taking QGIS with it. See _ensure_dem_terrain.
 """
 
-from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsRectangle
+from qgis.core import (Qgis, QgsMessageLog, QgsProject, QgsRectangle,
+                       QgsSettings)
 
 # Import the 3D module up front so SIP has the Qgs3DMapCanvas wrapper
 # registered before anything hands us one back. Guarded: a QGIS built
@@ -205,7 +206,7 @@ def apply_lighting(settings, eye_dome=True, background=BACKGROUND):
 
 def open_view(iface, dem_layer, z_factor=1.0, extent=None,
               terrain_enabled=True, quality=DEFAULT_QUALITY,
-              eye_dome=True):
+              eye_dome=True, guard_key=None):
     """Open (or refocus) the LGS 3D view over dem_layer.
 
     Sets the project terrain provider, then lets QGIS build the view and
@@ -277,10 +278,30 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
     # Order matters on 4.x: _ensure_dem_terrain may install a fresh
     # terrain-settings object, which would discard quality set before it.
     _ensure_dem_terrain(settings, dem_layer, project)
-    apply_quality(settings, quality, dem_layer)
-    apply_lighting(settings, eye_dome)
-    apply_z_factor(settings, z_factor)
-    set_terrain_enabled(settings, terrain_enabled)
+    if hasattr(settings, 'setTerrainSettings'):   # 4.x
+        # The scene is built lazily on first show, so none of this races
+        # a job queue — configure everything up front as before.
+        apply_quality(settings, quality, dem_layer)
+        apply_lighting(settings, eye_dome)
+        apply_z_factor(settings, z_factor)
+        set_terrain_enabled(settings, terrain_enabled)
+    else:
+        # 3.40: the scene already exists (built in the constructor) and
+        # heightmap futures may be in flight; every terrain setter would
+        # delete the generator out from under them — the 2026-09-03
+        # access violation. Lighting and background touch only the
+        # framegraph and are safe now; everything terrain-affecting
+        # waits its turn on a quiet scene. The view therefore opens at
+        # QGIS-default detail — exactly what the native menu action
+        # does, which is the one path known stable — and sharpens a few
+        # seconds later.
+        apply_lighting(settings, eye_dome)
+        apply_when_quiet(
+            canvas,
+            _flat_quality_steps(settings, quality, dem_layer)
+            + _flat_z_steps(settings, z_factor)
+            + _flat_terrain_steps(settings, terrain_enabled),
+            guard_key=guard_key)
 
     # Aim the camera LAST, and for a new view as well as a reused one:
     # left to itself QGIS put it 101 km above a 1.2 km pit, which reads
@@ -687,6 +708,7 @@ def close_view(iface):
     so close the dock widget the canvas lives in instead.
     """
     global _open_canvas
+    _cancel_quiet_queue()
     canvas = find_lgs_canvas(iface)
     if canvas is None:
         return False
@@ -745,6 +767,240 @@ def _focus(canvas):
             return
         except Exception:
             continue
+
+
+# ------------------------------------------------ 3.40 quiet-scene queue
+#
+# On 3.40 every terrain-affecting setter — tile resolution, screen and
+# ground error, vertical scale, terrain on/off — makes the scene delete
+# and rebuild its terrain generator. The generator renders DEM heightmaps
+# on QtConcurrent futures; a future still running inside the deleted
+# generation fires its QFutureWatcher::finished into freed memory. That
+# is a hard access violation (crash of 2026-09-03: QFutureWatcherBase::
+# event -> terrain-generator frames -> QObject::connectImpl), it cannot
+# be caught from Python, and it lands seconds later on whatever the user
+# happens to be doing. QGIS's own menu action never crashes because it
+# opens with defaults and touches nothing afterwards.
+#
+# So on 3.40 nothing may touch terrain settings while the scene has jobs
+# in flight. Changes go through this queue: wait until the scene reports
+# zero pending jobs several polls in a row (right after creation the
+# count is 0 only because loading has not STARTED, hence the streak),
+# apply ONE change, let the rebuild's own jobs drain, repeat.
+#
+# 4.x is untouched: its scene is built lazily on first show, so open-time
+# configuration happens before any job exists, and later changes go
+# through setTerrainSettings which replaces terrain in one step.
+
+QUIET_POLL_MS = 400
+QUIET_CONSECUTIVE = 3   # quiet polls in a row before a change may land
+QUIET_TRIES = 150       # give up after ~60 s; better dull than dead
+
+_quiet_state = None     # the single active queue (one LGS view at a time)
+
+
+def _scene_pending_jobs(canvas):
+    """The scene's pending 3D job count, or None when there is no scene
+    or no way to ask it (then there is nothing to race against).
+    A RuntimeError from a deleted canvas widget propagates."""
+    try:
+        scene = canvas.scene()
+    except RuntimeError:
+        raise
+    except Exception:
+        return None
+    if scene is None or not hasattr(scene, 'totalPendingJobsCount'):
+        return None
+    try:
+        return int(scene.totalPendingJobsCount())
+    except RuntimeError:
+        raise
+    except Exception:
+        return None
+
+
+def quiet_queue_active():
+    """Is a quiet-scene queue still applying changes?"""
+    return _quiet_state is not None and _quiet_state['alive']
+
+
+def _cancel_quiet_queue():
+    """Stop the queue (view closing); clears its crash guard, since an
+    abandoned queue is not a crash."""
+    global _quiet_state
+    if _quiet_state is None:
+        return
+    _quiet_state['alive'] = False
+    guard = _quiet_state.get('guard')
+    if guard:
+        try:
+            QgsSettings().setValue(guard, False)
+        except Exception:
+            pass
+    _quiet_state = None
+
+
+def apply_when_quiet(canvas, steps, guard_key=None):
+    """Apply terrain-affecting (key, label, fn) steps without racing the
+    scene's job queue. Returns True when everything was applied now.
+
+    A step whose key matches a queued one replaces it (last request
+    wins). With no scene to race against the steps run immediately.
+    When guard_key is given, that QgsSettings flag is held True until
+    the queue drains, so a crash mid-apply is seen by the next session.
+    """
+    global _quiet_state
+    steps = list(steps)
+    if not steps:
+        return True
+    try:
+        pending = _scene_pending_jobs(canvas)
+    except RuntimeError:   # view already gone
+        return True
+    if pending is None:
+        for _key, label, fn in steps:
+            try:
+                fn()
+            except Exception as exc:
+                _log(f"3D view: could not apply {label}: {exc}",
+                     Qgis.MessageLevel.Warning)
+        return True
+
+    if quiet_queue_active() and _quiet_state['canvas'] is canvas:
+        for step in steps:
+            _quiet_state['steps'] = [
+                s for s in _quiet_state['steps'] if s[0] != step[0]]
+            _quiet_state['steps'].append(step)
+        if guard_key:
+            _quiet_state['guard'] = guard_key
+        return False
+
+    from qgis.PyQt.QtCore import QTimer
+
+    state = {'canvas': canvas, 'steps': steps, 'alive': True,
+             'guard': guard_key, 'quiet': 0, 'tries': 0}
+    _quiet_state = state
+    if guard_key:
+        QgsSettings().setValue(guard_key, True)
+
+    def finish(warning=None):
+        state['alive'] = False
+        if state['guard']:
+            try:
+                QgsSettings().setValue(state['guard'], False)
+            except Exception:
+                pass
+        if warning:
+            _log(warning, Qgis.MessageLevel.Warning)
+
+    def tick():
+        if not state['alive']:
+            return
+        try:
+            jobs = _scene_pending_jobs(canvas)
+        except RuntimeError:   # view closed while waiting
+            finish()
+            return
+        state['tries'] += 1
+        state['quiet'] = state['quiet'] + 1 if jobs == 0 else 0
+        if state['quiet'] >= QUIET_CONSECUTIVE:
+            if not state['steps']:
+                finish()   # drained, and the last change's jobs are done
+                return
+            _key, label, fn = state['steps'].pop(0)
+            try:
+                fn()
+                _log("3D view: applied {0} (scene was quiet)".format(label))
+            except RuntimeError:
+                finish()
+                return
+            except Exception as exc:
+                _log(f"3D view: could not apply {label}: {exc}",
+                     Qgis.MessageLevel.Warning)
+            state['quiet'] = 0   # the change spawns its own jobs
+        if state['tries'] >= QUIET_TRIES:
+            left = ", ".join(s[1] for s in state['steps'])
+            finish("3D view: the scene never went quiet; not applied: "
+                   + (left or "(nothing outstanding)"))
+            return
+        QTimer.singleShot(QUIET_POLL_MS, tick)
+
+    QTimer.singleShot(QUIET_POLL_MS, tick)
+    return False
+
+
+def _flat_quality_steps(settings, quality, dem_layer):
+    """The 3.40 quality setters as diff-only steps: a value already in
+    place is not re-set, because even a no-change set rebuilds terrain."""
+    tile_px, screen_error, _terrain_res = QUALITY_LEVELS.get(
+        quality, QUALITY_LEVELS[DEFAULT_QUALITY])
+    ground_error = DEFAULT_GROUND_ERROR
+    pixel = dem_pixel_size(dem_layer) if dem_layer is not None else None
+    if pixel:
+        ground_error = pixel
+    steps = []
+    if settings.mapTileResolution() != tile_px:
+        steps.append(('tile', 'drape tile resolution {0} px'.format(tile_px),
+                      lambda: settings.setMapTileResolution(tile_px)))
+    if abs(settings.maxTerrainScreenError() - screen_error) > 1e-6:
+        steps.append(('screen_err',
+                      'screen error {0} px'.format(screen_error),
+                      lambda: settings.setMaxTerrainScreenError(
+                          screen_error)))
+    if abs(settings.maxTerrainGroundError() - ground_error) > 1e-6:
+        steps.append(('ground_err',
+                      'ground error {0} m'.format(ground_error),
+                      lambda: settings.setMaxTerrainGroundError(
+                          ground_error)))
+    return steps
+
+
+def _flat_z_steps(settings, factor):
+    factor = max(0.1, float(factor))
+    if abs(settings.terrainVerticalScale() - factor) <= 1e-6:
+        return []
+    return [('zscale', 'vertical exaggeration {0}x'.format(factor),
+             lambda: settings.setTerrainVerticalScale(factor))]
+
+
+def _flat_terrain_steps(settings, enabled):
+    if bool(settings.terrainRenderingEnabled()) == bool(enabled):
+        return []
+    return [('terrain_on',
+             'terrain rendering {0}'.format('on' if enabled else 'off'),
+             lambda: settings.setTerrainRenderingEnabled(bool(enabled)))]
+
+
+def request_quality(canvas, quality, dem_layer=None, guard_key=None):
+    """Set render quality on a LIVE view; 3.40 queues it for a quiet
+    scene. Returns True when it was applied immediately."""
+    settings = canvas.mapSettings()
+    if hasattr(settings, 'setTerrainSettings'):   # 4.x
+        apply_quality(settings, quality, dem_layer)
+        return True
+    return apply_when_quiet(
+        canvas, _flat_quality_steps(settings, quality, dem_layer),
+        guard_key)
+
+
+def request_z_factor(canvas, factor, guard_key=None):
+    """Set vertical exaggeration on a LIVE view; 3.40 queues it."""
+    settings = canvas.mapSettings()
+    if hasattr(settings, 'setTerrainSettings'):   # 4.x
+        apply_z_factor(settings, factor)
+        return True
+    return apply_when_quiet(canvas, _flat_z_steps(settings, factor),
+                            guard_key)
+
+
+def request_terrain_enabled(canvas, enabled, guard_key=None):
+    """Toggle terrain on a LIVE view; 3.40 queues it."""
+    settings = canvas.mapSettings()
+    if hasattr(settings, 'setTerrainSettings'):   # 4.x
+        set_terrain_enabled(settings, enabled)
+        return True
+    return apply_when_quiet(canvas, _flat_terrain_steps(settings, enabled),
+                            guard_key)
 
 
 # ---------------------------------------------------------- z / terrain

@@ -293,19 +293,30 @@ class View3DPanel(QDialog):
 
     def _z_changed(self, _value=None):
         canvas = view.find_lgs_canvas(self.iface)
-        if canvas is not None:
-            view.apply_z_factor(canvas.mapSettings(), self._z_factor())
+        if canvas is None:
+            return
+        # On 3.40 a terrain setter fired while the scene is loading
+        # deletes the generator under its own heightmap jobs — access
+        # violation. request_* queues the change for a quiet scene there.
+        if not view.request_z_factor(canvas, self._z_factor(),
+                                     guard_key=SETTING_OPENING):
+            self.status_label.setText(
+                "Exaggeration queued — it applies once the 3D view "
+                "finishes its current loading.")
 
     def _quality_changed(self, _index):
         canvas = view.find_lgs_canvas(self.iface)
         if canvas is None:
             return
-        settings = canvas.mapSettings()
-        view.apply_quality(settings, self.quality_combo.currentData(),
-                           self._selected_dem_layer())
+        applied = view.request_quality(
+            canvas, self.quality_combo.currentData(),
+            self._selected_dem_layer(), guard_key=SETTING_OPENING)
         self.status_label.setText(
-            "Detail set to {0}.".format(self.quality_combo.currentText()))
-        self._update_terrain_note(settings)
+            "Detail set to {0}.".format(self.quality_combo.currentText())
+            if applied else
+            "Detail queued — it applies once the 3D view finishes its "
+            "current loading.")
+        self._update_terrain_note(canvas.mapSettings())
         self._save_settings()
 
     def _edl_changed(self, checked):
@@ -342,7 +353,7 @@ class View3DPanel(QDialog):
         mode = self.mode_combo.currentData()
         settings = canvas.mapSettings()
         if mode == 'underground':
-            self._underground.enter(settings)
+            self._underground.enter(settings, canvas=canvas)
             self.status_label.setText(
                 "Underground: terrain hidden, mine survey layers at true "
                 "RL. Exaggeration applies to terrain only.")
@@ -370,7 +381,7 @@ class View3DPanel(QDialog):
             return
         canvas = view.find_lgs_canvas(self.iface)
         if canvas is not None:
-            self._underground.exit(canvas.mapSettings())
+            self._underground.exit(canvas.mapSettings(), canvas=canvas)
         else:
             # View already gone; still restore subsets/renderers.
             self._underground.exit(_NullSettings())
@@ -408,7 +419,8 @@ class View3DPanel(QDialog):
                 extent=extent,
                 terrain_enabled=(mode != 'underground'),
                 quality=self.quality_combo.currentData(),
-                eye_dome=self.edl_check.isChecked())
+                eye_dome=self.edl_check.isChecked(),
+                guard_key=SETTING_OPENING)
         except Exception as exc:
             import traceback
             QgsMessageLog.logMessage(
@@ -430,9 +442,16 @@ class View3DPanel(QDialog):
             self._apply_mode(canvas)
             self._update_terrain_note(canvas.mapSettings())
             mode_note = self.status_label.text()
-            self.status_label.setText(
-                ("3D view open. " + mode_note).strip() if mode_note
-                else "3D view open — mapping is draped on the terrain.")
+            message = (("3D view open. " + mode_note).strip() if mode_note
+                       else "3D view open — mapping is draped on the "
+                            "terrain.")
+            if view.quiet_queue_active():
+                # 3.40 opens at QGIS-default detail and sharpens once
+                # the first terrain load settles; say so or the first
+                # look reads as a regression.
+                message += (" Detail settings apply as the terrain "
+                            "finishes loading.")
+            self.status_label.setText(message)
             QgsMessageLog.logMessage(
                 "View in 3D: view created. "
                 + view.describe(self.iface, layer, probe_scene=False),
@@ -444,11 +463,18 @@ class View3DPanel(QDialog):
             # (view._reframe_when_ready) can still poke the scene for a
             # couple of seconds after this method exits, and that is
             # exactly where a settling scene can take QGIS down. Keep the
-            # flag set until that window has passed.
+            # flag set until that window has passed. When the 3.40
+            # quiet-scene queue is still applying terrain changes, the
+            # flag is ITS crash guard — it clears it when it drains, so
+            # keep hands off here.
             grace = (view.REFRAME_TRIES * view.REFRAME_INTERVAL_MS) + 1000
-            QTimer.singleShot(
-                grace,
-                lambda: QgsSettings().setValue(SETTING_OPENING, False))
+
+            def _clear_guard():
+                if view.quiet_queue_active():
+                    return
+                QgsSettings().setValue(SETTING_OPENING, False)
+
+            QTimer.singleShot(grace, _clear_guard)
 
     def _zoom_full(self):
         canvas = view.find_lgs_canvas(self.iface)

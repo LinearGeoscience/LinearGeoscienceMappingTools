@@ -449,6 +449,134 @@ check('RuntimeError' in reframe_src,
       'a view closed while waiting does not raise')
 check('remaining' in reframe_src, 'the retry gives up rather than looping')
 
+section('terrain changes must wait for a quiet scene (3.40 crash)')
+# On 3.40 every terrain-affecting setter deletes and rebuilds the
+# terrain generator; a heightmap future still running inside the deleted
+# generation fires QFutureWatcher::finished into freed memory — the
+# access violation of 2026-09-03 (crash stack: QFutureWatcherBase::event
+# -> terrain generator -> QObject::connectImpl). So terrain changes on a
+# live 3.40 view go through view.apply_when_quiet, one per quiet scene.
+
+open_src3 = inspect.getsource(view.open_view)
+check('apply_when_quiet' in open_src3,
+      'open_view routes 3.40 terrain config through the quiet queue')
+check('_flat_quality_steps' in open_src3,
+      'the 3.40 branch builds diff-steps, never calls the setters direct')
+close_src = inspect.getsource(view.close_view)
+check('_cancel_quiet_queue' in close_src,
+      'closing the view abandons the queue instead of poking a dying '
+      'scene')
+
+q_src = inspect.getsource(v3d_dialog.View3DPanel._quality_changed)
+check('request_quality' in q_src,
+      'a live detail change goes through the version-aware request')
+z_src = inspect.getsource(v3d_dialog.View3DPanel._z_changed)
+check('request_z_factor' in z_src,
+      'a live exaggeration change does too')
+
+# Diff-only steps: a value already in place must NOT be re-set, because
+# even a no-change set rebuilds the terrain.
+fq = Qgs3DMapSettings()
+check(view._flat_quality_steps(fq, 'standard', None) == [],
+      'standard quality on default settings needs no terrain rebuilds')
+steps = view._flat_quality_steps(fq, 'high', dem)
+check(len(steps) == 3,
+      'high quality on default settings changes tile, screen and '
+      'ground error ({0} steps)'.format(len(steps)))
+check(view._flat_z_steps(fq, 1.0) == [],
+      'exaggeration 1.0 on default settings is a no-op')
+zsteps = view._flat_z_steps(fq, 2.0)
+check(len(zsteps) == 1, 'a real exaggeration is one step')
+zsteps[0][2]()
+check(abs(fq.terrainVerticalScale() - 2.0) < 1e-6,
+      'the step applies the value')
+check(view._flat_z_steps(fq, 2.0) == [],
+      'and asking again is then a no-op')
+check(view._flat_terrain_steps(fq, True) == [],
+      'terrain already on is a no-op')
+check(len(view._flat_terrain_steps(fq, False)) == 1,
+      'turning terrain off is one step')
+
+
+class _SceneLessCanvas:
+    def scene(self):
+        return None
+
+
+applied = []
+now = view.apply_when_quiet(_SceneLessCanvas(), [
+    ('a', 'step a', lambda: applied.append('a')),
+    ('b', 'step b', lambda: applied.append('b'))])
+check(now is True and applied == ['a', 'b'],
+      'with no scene to race, steps run immediately')
+
+
+class _CountdownScene:
+    """Busy for the first few polls, then quiet forever."""
+
+    def __init__(self, busy_polls):
+        self._left = busy_polls
+
+    def totalPendingJobsCount(self):
+        self._left -= 1
+        return max(0, self._left)
+
+
+class _FakeCanvas:
+    def __init__(self, scene):
+        self._scene = scene
+
+    def scene(self):
+        return self._scene
+
+
+busy = _FakeCanvas(_CountdownScene(100000))
+applied2 = []
+now = view.apply_when_quiet(busy, [
+    ('a', 'step a', lambda: applied2.append('a'))])
+check(now is False and applied2 == [],
+      'a busy scene defers the change instead of racing it')
+check(view.quiet_queue_active(), 'the queue is live')
+view.apply_when_quiet(busy, [
+    ('a', 'step a2', lambda: applied2.append('a2'))])
+check(view._quiet_state is not None
+      and [s[0] for s in view._quiet_state['steps']] == ['a'],
+      'a same-key request replaces the queued one, never duplicates')
+view._cancel_quiet_queue()
+check(not view.quiet_queue_active(), 'cancel stops the queue')
+
+# End-to-end drain against a scene that goes quiet, on the real event
+# loop, holding a crash-guard flag for the duration.
+from qgis.core import QgsApplication, QgsSettings  # noqa: E402
+import time  # noqa: E402
+
+saved_pace = (view.QUIET_POLL_MS, view.QUIET_CONSECUTIVE,
+              view.QUIET_TRIES)
+view.QUIET_POLL_MS, view.QUIET_CONSECUTIVE, view.QUIET_TRIES = 5, 2, 400
+guard = 'LGSTest/view3dQuietGuard'
+order = []
+try:
+    qcanvas = _FakeCanvas(_CountdownScene(4))
+    view.apply_when_quiet(qcanvas, [
+        ('a', 'step a', lambda: order.append('a')),
+        ('b', 'step b', lambda: order.append('b'))], guard_key=guard)
+    check(bool(QgsSettings().value(guard, False, bool)),
+          'the crash guard is held while the queue works')
+    deadline = time.time() + 10
+    while view.quiet_queue_active() and time.time() < deadline:
+        QgsApplication.instance().processEvents()
+        time.sleep(0.002)
+    check(order == ['a', 'b'],
+          'steps drain in order once the scene is quiet')
+    check(not view.quiet_queue_active(), 'the queue retires itself')
+    check(not QgsSettings().value(guard, False, bool),
+          'and releases the crash guard')
+finally:
+    (view.QUIET_POLL_MS, view.QUIET_CONSECUTIVE,
+     view.QUIET_TRIES) = saved_pace
+    QgsSettings().remove(guard)
+    view._cancel_quiet_queue()
+
 section('diagnostics can see the 4.2 sky')
 desc_src = inspect.getsource(view.describe)
 check('backgroundSettings' in desc_src,

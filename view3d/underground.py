@@ -77,12 +77,18 @@ class UndergroundController:
         self._saved = []  # [(layer_id, subset, renderer3D clone or None)]
         self.active = False
 
-    def enter(self, settings, project=None):
+    def enter(self, settings, project=None, canvas=None):
         from qgis._3d import QgsVectorLayer3DRenderer
         if self.active:
             return
         project = project or QgsProject.instance()
-        view.set_terrain_enabled(settings, False)
+        # Through the quiet queue when the live canvas is known: on 3.40
+        # a terrain toggle rebuilds the generator, and doing that while
+        # heightmap jobs are in flight is the access-violation class.
+        if canvas is not None:
+            view.request_terrain_enabled(canvas, False)
+        else:
+            view.set_terrain_enabled(settings, False)
         for layer in mine_layers(project):
             previous_subset = layer.subsetString() or ""
             previous_renderer = None
@@ -112,11 +118,14 @@ class UndergroundController:
                                 previous_renderer))
         self.active = True
 
-    def exit(self, settings, project=None):
+    def exit(self, settings, project=None, canvas=None):
         if not self.active:
             return
         project = project or QgsProject.instance()
-        view.set_terrain_enabled(settings, True)
+        if canvas is not None:
+            view.request_terrain_enabled(canvas, True)
+        else:
+            view.set_terrain_enabled(settings, True)
         for layer_id, subset, renderer in self._saved:
             layer = project.mapLayer(layer_id)
             if layer is None:
