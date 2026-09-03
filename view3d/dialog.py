@@ -2,9 +2,11 @@
 View in 3D — control panel.
 
 Non-modal so the 2D canvas and the 3D view stay usable while it is open.
-One-click path: run() auto-picks the DEM (view3d/detect.py ladder), opens
-the native 3D view immediately and shows this panel for overrides. Only
-an ambiguous DEM choice makes the user pick first (fuzzy-never-decides).
+run() auto-picks the DEM (view3d/detect.py ladder) and shows this panel;
+the 3D view itself opens only from the Open 3D View button. It used to
+open automatically, which meant a crash inside QGIS's 3D creation was
+walked into on every press with no way to decline — never reintroduce
+the auto-open.
 """
 
 from qgis.PyQt.QtCore import QTimer
@@ -418,23 +420,35 @@ class View3DPanel(QDialog):
                     "View in 3D", f"Could not open 3D view: {exc}")
             except Exception:
                 pass
-            return
-        finally:
             settings_store.setValue(SETTING_OPENING, False)
+            return
         # _apply_mode leaves a mode-specific note (or clears it for
         # Surface); keep that and say plainly that a view now exists —
         # a stale "Opening..." is how a view that never appeared went
         # unnoticed.
-        self._apply_mode(canvas)
-        self._update_terrain_note(canvas.mapSettings())
-        mode_note = self.status_label.text()
-        self.status_label.setText(
-            ("3D view open. " + mode_note).strip() if mode_note
-            else "3D view open — mapping is draped on the terrain.")
-        QgsMessageLog.logMessage(
-            "View in 3D: view created. " + view.describe(self.iface, layer),
-            'Linear Geoscience', Qgis.MessageLevel.Info)
-        self._save_settings()
+        try:
+            self._apply_mode(canvas)
+            self._update_terrain_note(canvas.mapSettings())
+            mode_note = self.status_label.text()
+            self.status_label.setText(
+                ("3D view open. " + mode_note).strip() if mode_note
+                else "3D view open — mapping is draped on the terrain.")
+            QgsMessageLog.logMessage(
+                "View in 3D: view created. "
+                + view.describe(self.iface, layer, probe_scene=False),
+                'Linear Geoscience', Qgis.MessageLevel.Info)
+            self._save_settings()
+        finally:
+            # A crash used to escape the breadcrumb: it was cleared the
+            # moment open_view returned, but the deferred re-aim
+            # (view._reframe_when_ready) can still poke the scene for a
+            # couple of seconds after this method exits, and that is
+            # exactly where a settling scene can take QGIS down. Keep the
+            # flag set until that window has passed.
+            grace = (view.REFRAME_TRIES * view.REFRAME_INTERVAL_MS) + 1000
+            QTimer.singleShot(
+                grace,
+                lambda: QgsSettings().setValue(SETTING_OPENING, False))
 
     def _zoom_full(self):
         canvas = view.find_lgs_canvas(self.iface)
@@ -498,12 +512,13 @@ class _NullSettings:
 
 
 def run(iface, owner=None):
-    """One-click: show the panel and open the 3D view.
+    """Show the panel. The 3D view opens ONLY from Open 3D View.
 
     The panel is cached on the plugin, so most presses of "View in 3D"
-    land on an existing one. That path used to just re-show the panel and
-    return, which meant every press after the first opened nothing at
-    all — the decision to open has to be made for both paths alike.
+    land on an existing one; both paths end in the same state hints.
+    Opening the view here used to be automatic — with a crash inside
+    QGIS's 3D creation on some setups, that meant pressing the feature
+    button at all took QGIS down. The user decides when to open.
     """
     panel = None
     existing = getattr(owner, 'view3d_panel', None) if owner else None
@@ -530,21 +545,20 @@ def run(iface, owner=None):
 
     if view.find_lgs_canvas(iface) is not None:
         panel.status_label.setText("3D view is already open.")
-        _decided("a view is already open; nothing to do")
+        _decided("panel shown; a view is already open")
         return panel
 
     settings = QgsSettings()
     if settings.value(SETTING_OPENING, False, bool):
-        # Last attempt never returned — almost certainly it took QGIS
-        # down. Say so where it cannot be missed, and open nothing.
+        # The last attempt never finished — almost certainly it took QGIS
+        # down. Say so where it cannot be missed.
         settings.setValue(SETTING_OPENING, False)
-        message = ("The last attempt to open a 3D view did not finish, so "
-                   "nothing was opened automatically. Press Open 3D View "
-                   "to try again (Standard detail is the safest).")
+        message = ("The last attempt to open a 3D view did not finish — "
+                   "it probably crashed QGIS. Press Open 3D View to try "
+                   "again (Standard detail is the safest).")
         panel.status_label.setText(message)
-        _decided("SUPPRESSED - the previous attempt never returned "
-                 "(crash guard). The flag is now cleared; pressing again "
-                 "will open a view.")
+        _decided("panel shown; the previous open attempt never returned "
+                 "(crash guard). The flag is now cleared.")
         try:
             iface.messageBar().pushWarning("View in 3D", message)
         except Exception:
@@ -554,14 +568,13 @@ def run(iface, owner=None):
     if panel._selected_dem_layer() is None:
         panel.status_label.setText(
             "Choose a terrain DEM, then press Open 3D View.")
-        _decided("no DEM selected in the panel, so nothing was opened "
+        _decided("panel shown; no DEM selected "
                  "({0} candidate rows)".format(len(panel._rows)))
         return panel
 
-    # Deferred for the same reason as _open_clicked: this call is still
-    # inside the click dispatch of the button that got us here.
-    panel.status_label.setText("Opening 3D view...")
-    _decided("opening a view over '{0}'".format(
+    panel.status_label.setText(
+        "Press Open 3D View to open the view over '{0}'.".format(
+            panel._selected_dem_layer().name()))
+    _decided("panel shown; DEM '{0}' ready, waiting for Open 3D View".format(
         panel._selected_dem_layer().name()))
-    QTimer.singleShot(0, panel._open_view)
     return panel

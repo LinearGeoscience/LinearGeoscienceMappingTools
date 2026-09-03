@@ -301,8 +301,17 @@ def open_view(iface, dem_layer, z_factor=1.0, extent=None,
         # constructor. Aiming now therefore always takes the fallback
         # path and never the scene's own setViewFrom2DExtent, which is
         # the better one because it knows the terrain's elevation range.
-        # Re-aim once the event loop has let the view appear.
-        _reframe_when_ready(canvas, target, ground_z)
+        # Re-aim once the event loop has let the view appear — but ONLY
+        # when the scene is still missing: on 3.40 it already exists and
+        # the aim above went through it, so a second setViewFrom2DExtent
+        # fired into a scene whose terrain jobs are mid-flight buys
+        # nothing and is a crash risk.
+        try:
+            scene_ready = canvas.scene() is not None
+        except Exception:
+            scene_ready = False
+        if not scene_ready:
+            _reframe_when_ready(canvas, target, ground_z)
 
     if not created:
         _focus(canvas)
@@ -511,12 +520,17 @@ def mid_elevation(dem_layer):
     return 0.0
 
 
-def describe(iface, dem_layer=None):
+def describe(iface, dem_layer=None, probe_scene=True):
     """Everything worth knowing about the open 3D view, as text.
 
     An empty 3D window looks the same whether the camera is in the wrong
     place, the terrain never built, or nothing is draped on it. This
     reports which, into the Linear Geoscience log panel.
+
+    probe_scene=False skips the live-scene queries (state, elevation
+    range, frustum): they are for the user-triggered Diagnose button,
+    where the scene has had time to settle. The automatic post-open log
+    must not interrogate a scene created milliseconds ago.
     """
     project = QgsProject.instance()
     out = []
@@ -620,7 +634,7 @@ def describe(iface, dem_layer=None):
     except Exception:
         pass
     add("scene", "present" if scene is not None else "NONE")
-    if scene is not None:
+    if scene is not None and probe_scene:
         # These say whether anything is actually THERE, as opposed to
         # merely configured: an elevation range of real numbers means the
         # terrain loaded and has data.

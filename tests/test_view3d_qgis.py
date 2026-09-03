@@ -276,10 +276,11 @@ check(view.frame_extent(_NoController(), None) is False,
 check(view.frame_extent(_NoController(), QgsRectangle()) is False,
       'empty extent -> refuses')
 
-section('the panel must always be able to open a view')
-# The panel is cached on the plugin, so most presses of "View in 3D"
-# take the re-show path. That path once just re-showed the panel and
-# returned, so every press after the first silently opened nothing.
+section('the panel must never open a view by itself')
+# run() used to auto-open the 3D view on every press of "View in 3D".
+# With a crash inside QGIS's 3D creation on some setups (seen on 3.40),
+# that meant pressing the feature button at all took QGIS down, with no
+# way to decline. The view now opens ONLY from the Open 3D View button.
 import inspect  # noqa: E402
 
 from view3d import dialog as v3d_dialog  # noqa: E402
@@ -287,19 +288,27 @@ from view3d import dialog as v3d_dialog  # noqa: E402
 run_src = inspect.getsource(v3d_dialog.run)
 check('panel = existing' in run_src,
       're-show path falls through instead of returning early')
-check(run_src.count('return panel') >= 3,
-      're-show and fresh paths share one open decision')
 check('find_lgs_canvas' in run_src,
-      'run checks whether a view is already open before opening one')
-check('_open_view' in run_src, 'run can still open a view')
-check('QTimer.singleShot' in run_src,
-      'the open stays deferred out of the click dispatch')
+      'run still reports when a view is already open')
+check('_open_view' not in run_src,
+      'run never opens a view — auto-open must stay dead')
+check('QTimer.singleShot' not in run_src,
+      'run schedules no deferred open either')
 check('pushWarning' in run_src,
-      'a suppressed auto-open is reported where it cannot be missed')
+      'a previous crashed attempt is reported where it cannot be missed')
+
+clicked_src = inspect.getsource(v3d_dialog.View3DPanel._open_clicked)
+check('QTimer.singleShot' in clicked_src,
+      'the explicit open stays deferred out of the click dispatch')
 
 open_src = inspect.getsource(v3d_dialog.View3DPanel._open_view)
 check('SETTING_OPENING' in open_src, 'the crash breadcrumb is still set')
-check('finally' in open_src, 'and always cleared')
+check('finally' in open_src, 'and always dealt with')
+check('REFRAME_TRIES' in open_src,
+      'the breadcrumb outlives the deferred re-aim window: a crash in '
+      'the settling scene must be caught, not cleared away in advance')
+check('probe_scene=False' in open_src,
+      'the automatic post-open log does not interrogate the fresh scene')
 check('3D view open' in open_src,
       'success is stated, never left on "Opening..."')
 
@@ -428,6 +437,10 @@ check('_reframe_when_ready' in open_src2,
 check(open_src2.index('frame_extent') < open_src2.index(
     '_reframe_when_ready'),
     'it aims once immediately, then again when the scene is ready')
+check('scene_ready' in open_src2,
+      'the re-aim is skipped when the scene already exists (3.40): the '
+      'first aim went through it, and a second poke at a settling scene '
+      'is a crash risk')
 
 reframe_src = inspect.getsource(view._reframe_when_ready)
 check('canvas.scene()' in reframe_src,
