@@ -564,6 +564,21 @@ class ExportDialog(QDialog):
             setattr(self, attr, check)
             self._plugin_checks.append(check)
             self._plugin_section.content_layout().addWidget(check)
+        # Reconcile registration: on by default (zero-config); the checkbox
+        # exists only as the escape hatch for exporting reference data that
+        # will never come back.
+        self.register_reconcile_check = QCheckBox(
+            "Register mapping layers for Reconcile (recommended)")
+        self.register_reconcile_check.setChecked(True)
+        self.register_reconcile_check.setToolTip(
+            "Stamp each exported mapping GeoPackage with a checkout "
+            "identity and base snapshot so it merges back through "
+            "Reconcile / Merge with full delete and split/merge "
+            "detection. Needs the master to be migrated (one-off, via "
+            "Reconcile / Merge > Verify / migrate master).")
+        self.register_reconcile_check.setStyleSheet(_CHECKBOX_QSS)
+        self._plugin_section.content_layout().addWidget(
+            self.register_reconcile_check)
         self._update_plugin_badge()
         layout.addWidget(self._plugin_section)
 
@@ -1198,7 +1213,8 @@ class ExportDialog(QDialog):
             bake_terrain=(self.bake_terrain_check.isChecked()
                           and self._terrain_layer_id is not None),
             terrain_layer_id=self._terrain_layer_id,
-            terrain_scale=self.terrain_z_spin.value()
+            terrain_scale=self.terrain_z_spin.value(),
+            register_reconcile=self.register_reconcile_check.isChecked()
         )
 
         try:

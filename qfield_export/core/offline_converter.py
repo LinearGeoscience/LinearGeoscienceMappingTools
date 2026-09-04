@@ -47,6 +47,11 @@ except ImportError:  # standalone use outside the plugin package
 
 from .default_stamp import stamp_elevation_defaults
 
+try:
+    from ...lgs_layers import is_canonical
+except ImportError:  # standalone use outside the plugin package
+    from lgs_layers import is_canonical
+
 
 class OfflineConverter(QObject):
     """
@@ -72,7 +77,8 @@ class OfflineConverter(QObject):
                  include_layerswitch_plugin: bool = True,
                  bake_terrain: bool = False,
                  terrain_layer_id: str = None,
-                 terrain_scale: float = 1.0):
+                 terrain_scale: float = 1.0,
+                 register_reconcile: bool = True):
         """
         Initialize the offline converter.
 
@@ -109,6 +115,12 @@ class OfflineConverter(QObject):
             terrain_layer_id: Layer id of the DEM to bake as terrain
             terrain_scale: Vertical exaggeration baked into the exported
                 terrain provider (1.0 = true scale)
+            register_reconcile: If True (default), an exported copy of a
+                mapping GeoPackage (the four canonical LGS layers) is
+                stamped with an embedded reconcile checkout + base snapshot
+                so it merges back through Reconcile / Merge with full
+                delete and split/merge detection. Zero-config: the layer's
+                own source path IS the master it came from.
         """
         super().__init__()
         self.project = project
@@ -128,6 +140,18 @@ class OfflineConverter(QObject):
         self.bake_terrain = bake_terrain
         self.terrain_layer_id = terrain_layer_id
         self.terrain_scale = terrain_scale
+        self.register_reconcile = register_reconcile
+        # source master gpkg -> exported gpkg, for reconcile stamping AFTER
+        # the layer loop (the four canonical layers usually share one source
+        # file, so copy2 hits the same output up to four times - stamping
+        # inside the copy would be clobbered by the next copy).
+        self._lgs_mapping_copies = {}
+        # Captured on the main thread (we are constructed there); the worker
+        # must not touch QgsProject.instance().
+        try:
+            self._transform_context = project.transformContext()
+        except Exception:
+            self._transform_context = None
         self._raster_layer_names = []  # names the opacity panel acts on
         self._vector_layer_names = []  # spatial vectors for the same panel
         self.exported_layers = {}
@@ -306,6 +330,12 @@ class OfflineConverter(QObject):
                 success = self._export_layer(layer)
                 if not success:
                     self.warning.emit(f"Failed to export layer: {layer.name()}")
+
+            # Register exported mapping gpkgs for reconcile. Runs AFTER the
+            # layer loop: the four canonical layers usually share one source
+            # gpkg, and each copy2 of it would clobber tables stamped
+            # mid-loop.
+            self._stamp_mapping_checkouts()
 
             # Save the project file
             self.progress_updated.emit(
@@ -624,6 +654,17 @@ class OfflineConverter(QObject):
                         self.log_message.emit(f"  ✓ Copied to: {new_path.name}")
                         if layer.isSpatial():
                             self._vector_layer_names.append(layer.name())
+                        # Record (don't stamp yet - see _export) mapping
+                        # gpkgs so the copy gets its reconcile checkout.
+                        try:
+                            src = layer.source().split('|')[0]
+                            if (self.register_reconcile
+                                    and src.lower().endswith('.gpkg')
+                                    and new_path.suffix.lower() == '.gpkg'
+                                    and is_canonical(layer.name())):
+                                self._lgs_mapping_copies[src] = str(new_path)
+                        except Exception:
+                            pass
                         return True
                     else:
                         self.log_message.emit(f"  ✗ Copy failed - file not found or inaccessible")
@@ -866,6 +907,69 @@ class OfflineConverter(QObject):
         except Exception as e:
             log_message(f"Failed to copy vector layer {layer.name()}: {e}", Qgis.MessageLevel.Critical)
             return None
+
+    def _stamp_mapping_checkouts(self):
+        """Stamp exported mapping gpkgs with their reconcile checkout + base.
+
+        Zero-config: the exported layer's own source path IS the master the
+        copy came from. Skipped (with a loud warning) when that master has
+        not been migrated - a base captured without UUIDs would poison
+        every future sync. Never fails the export; problems are warnings.
+
+        Worker-thread-safe: engine.stamp_checkout opens its own path-based
+        layers and writes via sqlite/JSON; the transform context was
+        captured at construction on the main thread (and issued copies
+        share the master CRS anyway, so it is normally unused).
+        """
+        if not self.register_reconcile or not self._lgs_mapping_copies:
+            return
+        try:
+            try:
+                from ...script_adddata.reconcile import (engine as rc_engine,
+                                                         migrate as rc_migrate,
+                                                         basestore)
+            except ImportError:  # standalone use outside the plugin package
+                from script_adddata.reconcile import (engine as rc_engine,
+                                                      migrate as rc_migrate,
+                                                      basestore)
+        except Exception as e:  # pragma: no cover - reconcile not deployed
+            self.warning.emit(
+                f"Reconcile registration unavailable ({e}) - the exported "
+                "mapping data was NOT registered for reconcile.")
+            return
+
+        for master_src, exported in self._lgs_mapping_copies.items():
+            name = Path(exported).name
+            try:
+                status = rc_migrate.migration_status(master_src)
+                if not status.get("migrated"):
+                    self.warning.emit(
+                        f"'{name}' exported WITHOUT reconcile tracking: the "
+                        f"master ({Path(master_src).name}) has not been "
+                        "migrated. Run 'Verify / migrate master' in "
+                        "Reconcile / Merge, then export again.")
+                    continue
+                stamped = rc_engine.stamp_checkout(
+                    master_src, exported, mapper="",
+                    source_mode=basestore.MODE_EXPORT,
+                    transform_context=self._transform_context)
+                if stamped.get("checkout_id"):
+                    self.log_message.emit(
+                        f"  ✓ Registered '{name}' for reconcile "
+                        f"(checkout {stamped['checkout_id'][:8]}…)")
+                    skipped = stamped.get("skipped_no_uuid") or {}
+                    if skipped:
+                        self.warning.emit(
+                            f"'{name}': {sum(skipped.values())} feature(s) "
+                            "have no UUID and are not in the reconcile base "
+                            "- run Verify/migrate master and export again.")
+                else:
+                    self.warning.emit(
+                        f"Could not register '{name}' for reconcile: "
+                        + "; ".join(stamped.get("errors", []) or ["unknown"]))
+            except Exception as e:
+                self.warning.emit(
+                    f"Could not register '{name}' for reconcile: {e}")
 
     def _inject_terrain(self, project_file: Path):
         """Write the raster terrain provider into the exported .qgs so
