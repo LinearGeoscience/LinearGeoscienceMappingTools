@@ -869,6 +869,9 @@ class LinearGeosciencePluginMain:
         grp.addFeature("Import Mapping Data", None,
                         feature_info.INFO_IMPORT_DATA, self.run_importdata)
         grp.addSeparator()
+        grp.addFeature("Reconcile / Merge Field Data", None,
+                        feature_info.INFO_RECONCILE, self.run_reconcile)
+        grp.addSeparator()
         grp.addFeature("Mapping Export", None,
                         feature_info.INFO_STATIC_MAPPING_EXPORT, self.run_static_mapping_export)
         lay.addWidget(grp)

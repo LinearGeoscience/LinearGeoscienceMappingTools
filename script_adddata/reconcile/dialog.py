@@ -151,6 +151,12 @@ class ReconcileDialog(QDialog):
         self.issue_btn.clicked.connect(self._open_issue_dialog)
         self._style(self.issue_btn, primary=False)
         mapper_row.addWidget(self.issue_btn)
+        self.checkouts_btn = QPushButton("View checkouts…")
+        self.checkouts_btn.setToolTip(
+            "Who has a working copy out, and who has merged back.")
+        self.checkouts_btn.clicked.connect(self._open_checkouts_dialog)
+        self._style(self.checkouts_btn, primary=False)
+        mapper_row.addWidget(self.checkouts_btn)
         gpl.addLayout(mapper_row)
         layout.addWidget(gp)
 
@@ -502,6 +508,19 @@ class ReconcileDialog(QDialog):
         run_issue_dialog(self.iface, owner=self,
                          master=self.master_gpkg,
                          mapper=self.mapper_edit.text().strip())
+
+    def _open_checkouts_dialog(self):
+        if not self.master_gpkg or not os.path.exists(self.master_gpkg):
+            QMessageBox.warning(self, "Reconcile",
+                                "Select a master GeoPackage first.")
+            return
+        try:
+            from .checkouts_dialog import run_checkouts_dialog
+        except ImportError:  # pragma: no cover
+            from script_adddata.reconcile.checkouts_dialog import (
+                run_checkouts_dialog)
+        run_checkouts_dialog(self.iface, self.master_gpkg, owner=self,
+                             reconcile_dialog=self)
 
     def _run_migrate(self):
         if not self.master_gpkg or not os.path.exists(self.master_gpkg):

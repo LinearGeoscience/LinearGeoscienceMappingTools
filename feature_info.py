@@ -206,17 +206,24 @@ INFO_RECONCILE = """
    <li><b>Safe deletes:</b> every propagated delete is saved as a recoverable <b>tombstone</b> beside the master.</li>
    <li><b>Two people at once:</b> an advisory lock plus a master-version check stop two simultaneous reconciles from clashing; if the master moved since your preview you are asked to rebuild it.</li>
 </ul>
+<h2>Where the base snapshot lives:</h2>
+<p>Every properly issued working copy carries its own <b>embedded checkout identity and base snapshot</b> in hidden tables inside the GeoPackage. The copy can be renamed, moved or edited on any platform and still reconciles correctly. Copies get stamped automatically by <b>Export for QField</b>, by the <b>Issue field copy</b> tool, and by the template loader's change-tracking option; after each successful reconcile the base advances inside the copy so the same tablet file keeps working sync after sync. A plain Windows file-copy of the master carries no stamp — the preview then shows a loud <b>NO RECORDED BASE</b> warning because deletes and split/merge lineage cannot be detected in that state.</p>
 <h2>One-off setup:</h2>
-<p>Click <b>Verify / migrate master</b> once per master GeoPackage. This adds the <code>lgs_*</code> tracking columns, backfills any missing UUIDs, verifies the UUID default expressions and records a baseline. It is safe to re-run.</p>
+<p>Click <b>Verify / migrate master</b> once per master GeoPackage. This adds the <code>lgs_*</code> tracking columns, backfills any missing UUIDs, verifies the UUID default expressions and stamps a stable master identity (so a copy issued from a <i>different</i> master is refused instead of merged). The dialog will not build a preview until the master is migrated. Safe to re-run.</p>
+<h2>Issuing copies &amp; the dashboard:</h2>
+<ul>
+   <li><b>Issue field copy…</b> creates a stamped hand-out from the master: a <b>full copy</b>, a <b>blank template</b>, or a <b>clipped area</b> (from the canvas extent or selected features). Use it to hand out work and to <b>re-issue</b> a fresh copy after the master has been cleaned up.</li>
+   <li><b>View checkouts…</b> lists every copy issued against the master — mapper, issue date, last sync, out / reconciled — with shortcuts to reconcile or re-issue one.</li>
+</ul>
 <h2>Usage:</h2>
 <ol>
-   <li>Select the <b>master GeoPackage</b> and the <b>working template</b>, and enter the <b>Mapper ID</b> (who collected the data).</li>
-   <li>Click <b>Build preview</b> and review the adds / updates / deletes / auto-merged / conflicts / splits / merges per layer.</li>
+   <li>Select the <b>master GeoPackage</b> and the <b>working copy</b>, and enter the <b>Mapper ID</b> (who collected the data).</li>
+   <li>Click <b>Build preview</b> and review the adds / updates / deletes / auto-merged / conflicts / splits / merges per layer. The summary states which base was used (embedded / legacy sidecar / none).</li>
    <li><b>Click any feature</b> in the preview to zoom and flash it on the map — <b>amber = template version</b>, <b>grey = master version</b> — so you can see exactly which feature it is and what changed.</li>
-   <li>Pick a resolution for any conflict and tick the splits / merges you want to accept.</li>
+   <li>Pick a resolution for any conflict and tick the splits / merges you want to accept. Red warning rows flag setup problems (no base, features the master never held, features with no UUID) with their remedy.</li>
    <li>Click <b>Apply reconcile</b> to commit. Each layer is written in a single transaction; on any error that layer rolls back and keeps its previous base for a clean retry.</li>
 </ol>
-<p><b>Tip:</b> run <b>Hardcode Data & Update Legends</b> before reconciling, as you would before appending.</p>
+<p><b>Tip:</b> the dialog offers to <b>prepare</b> (hardcode) the working copy before previewing — say yes so blank UUIDs and legends are filled first.</p>
 """
 
 INFO_DECLINATION_ADJUSTER = """

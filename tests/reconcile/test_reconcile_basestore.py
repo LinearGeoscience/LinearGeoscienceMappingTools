@@ -245,6 +245,36 @@ def test_registry_checkout_ids(d):
     check(all("key" in r for r in rows), "every row carries its key")
 
 
+def test_describe_entry(d):
+    # Live file whose stamp matches -> ok.
+    wc = os.path.join(d, "desc_a.gpkg")
+    make_gpkg(wc)
+    row_stamp = basestore.write_checkout(wc, {"mapper": "HW"})
+    row = checkout.describe_entry({
+        "key": "k1", "checkout_id": row_stamp["checkout_id"],
+        "template_id": "desc_a", "template_path": wc, "mapper": "HW",
+        "source_mode": "full", "base": "embedded",
+        "created_utc": "2026-09-04T01:00:00+00:00",
+        "last_sync_utc": None, "status": "out"})
+    check(row["file_state"] == "ok", "matching stamp -> ok")
+    check(row["issued"] == "2026-09-04" and row["last_sync"] == "—",
+          "dates shortened, blank sync dashed")
+
+    # Restamped file (new identity at the same path) -> historical entry.
+    basestore.write_checkout(wc, {"mapper": "JS"})
+    row2 = checkout.describe_entry({
+        "checkout_id": row_stamp["checkout_id"], "template_path": wc})
+    check(row2["file_state"] == "restamped", "old entry reads restamped")
+
+    # Missing file -> moved; legacy entry (no checkout_id) with a live file -> ok.
+    row3 = checkout.describe_entry({
+        "checkout_id": "x", "template_path": os.path.join(d, "gone.gpkg")})
+    check(row3["file_state"] == "moved", "missing file -> moved")
+    row4 = checkout.describe_entry({"template_id": "old", "template_path": wc})
+    check(row4["file_state"] == "ok" and row4["source"] == "legacy"
+          and row4["base"] == "sidecar", "legacy entry defaults")
+
+
 def test_migration_status(d):
     lgs_cols = ["UUID"] + list(LGS_META_FIELDS)
     layers = [("1 - FieldNotebook", lgs_cols), ("2 - Linework", lgs_cols),
@@ -286,7 +316,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         for t in (test_checkout_roundtrip, test_base_roundtrip,
                   test_master_uid, test_registry_checkout_ids,
-                  test_migration_status):
+                  test_describe_entry, test_migration_status):
             print(f"- {t.__name__}")
             t(d)
         print("- test_newest_base")

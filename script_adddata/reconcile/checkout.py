@@ -289,3 +289,50 @@ class CheckoutRegistry:
             rows.append(row)
         rows.sort(key=lambda r: r.get("created_utc") or "", reverse=True)
         return rows
+
+
+def _short_date(ts) -> str:
+    """'2026-09-04T07:11:22+00:00' -> '2026-09-04'; tolerant of blanks."""
+    return (ts or "")[:10] or "—"
+
+
+def describe_entry(entry: dict) -> dict:
+    """Display row for one registry entry (pure; used by the dashboard).
+
+    Returns display strings plus a ``file_state`` in
+    {"ok", "moved", "restamped", "unknown"} — "restamped" means the file at
+    the recorded path carries a DIFFERENT checkout_id now (e.g. it was
+    re-issued under the same name), so this entry is historical.
+    """
+    try:  # lazy: only needed when the entry has a live file to probe
+        from . import basestore
+    except ImportError:  # standalone (headless tests)
+        import basestore
+
+    path = entry.get("template_path") or ""
+    row = {
+        "name": entry.get("template_id") or os.path.basename(path)
+                or entry.get("key", ""),
+        "mapper": entry.get("mapper") or "—",
+        "issued": _short_date(entry.get("created_utc")),
+        "source": entry.get("source_mode") or "legacy",
+        "last_sync": _short_date(entry.get("last_sync_utc")),
+        "status": entry.get("status") or "?",
+        "base": entry.get("base") or "sidecar",
+        "path": path,
+        "file_state": "unknown",
+    }
+    if path:
+        if not os.path.exists(path):
+            row["file_state"] = "moved"
+        elif entry.get("checkout_id"):
+            try:
+                ck = basestore.read_checkout(path)
+                row["file_state"] = (
+                    "ok" if ck and ck.get("checkout_id") ==
+                    entry["checkout_id"] else "restamped")
+            except Exception:
+                row["file_state"] = "unknown"
+        else:
+            row["file_state"] = "ok"
+    return row

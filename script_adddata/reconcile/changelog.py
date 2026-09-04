@@ -45,6 +45,10 @@ class ReconcileChangelog:
         self.master_gpkg = master_gpkg
         self.path = changelog_path(master_gpkg)
         self.data = self._load()
+        # Breadcrumb for the last failed in-gpkg mirror write (the JSON
+        # sidecar is the source of truth, so mirror failures are swallowed;
+        # callers with a UI can log this instead of losing it entirely).
+        self.last_mirror_error = None
 
     def _load(self) -> dict:
         if os.path.exists(self.path):
@@ -122,8 +126,8 @@ class ReconcileChangelog:
                 con.commit()
             except sqlite3.Error:
                 pass
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            self.last_mirror_error = str(exc)
         finally:
             if con is not None:
                 con.close()
