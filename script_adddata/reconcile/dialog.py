@@ -144,6 +144,13 @@ class ReconcileDialog(QDialog):
         self.mapper_edit = QLineEdit()
         self.mapper_edit.setPlaceholderText("e.g. HW (who collected this data)")
         mapper_row.addWidget(self.mapper_edit)
+        self.issue_btn = QPushButton("Issue field copy…")
+        self.issue_btn.setToolTip(
+            "Create a stamped working copy of the master (full / blank / "
+            "clipped) for hand-out or re-issue after a clean-up.")
+        self.issue_btn.clicked.connect(self._open_issue_dialog)
+        self._style(self.issue_btn, primary=False)
+        mapper_row.addWidget(self.issue_btn)
         gpl.addLayout(mapper_row)
         layout.addWidget(gp)
 
@@ -487,6 +494,15 @@ class ReconcileDialog(QDialog):
         return True
 
     # ----------------------------------------------------------------- actions
+    def _open_issue_dialog(self):
+        try:
+            from .issue_dialog import run_issue_dialog
+        except ImportError:  # pragma: no cover
+            from script_adddata.reconcile.issue_dialog import run_issue_dialog
+        run_issue_dialog(self.iface, owner=self,
+                         master=self.master_gpkg,
+                         mapper=self.mapper_edit.text().strip())
+
     def _run_migrate(self):
         if not self.master_gpkg or not os.path.exists(self.master_gpkg):
             QMessageBox.warning(self, "Reconcile", "Select a master GeoPackage first.")
