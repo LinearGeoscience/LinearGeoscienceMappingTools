@@ -35,6 +35,7 @@ for p in (REPO_ROOT, RECONCILE_DIR):
 import engine            # noqa: E402
 import migrate           # noqa: E402
 import checkout          # noqa: E402
+import basestore         # noqa: E402
 import reconcile         # noqa: E402
 import tombstones        # noqa: E402
 
@@ -185,16 +186,35 @@ def main():
     check(not reg.get("errors"), "register_and_snapshot ok")
     tid = checkout.template_id_from_path(working)
     check(checkout.load_base(master, tid) is not None, "base snapshot stored")
+    # Embedded identity: registering now also stamps the working copy itself.
+    check(basestore.has_checkout(working), "working copy carries lgs_checkout")
+    ck = basestore.read_checkout(working)
+    check(ck and ck["checkout_id"] == reg.get("checkout_id"),
+          "embedded checkout_id matches registration")
+    check(ck and ck["master_id"] == basestore.read_master_uid(master),
+          "checkout is paired to this master's uid")
+    check(checkout.CheckoutRegistry(master).get(ck["checkout_id"]) is not None,
+          "registry entry keyed by checkout_id")
 
     # --- first sync: two inserts ---
     print("\n[insert]")
     _add_point(working, "U1", 10)
     _add_point(working, "U2", 20)
     build, res = _reconcile(master, working)
+    check(build["base_source"] == "embedded",
+          "build reads the EMBEDDED base")
+    check(build["checkout_id"] == ck["checkout_id"],
+          "build carries the checkout_id")
+    check(not build["master_mismatch"], "no master mismatch for the pair")
     plan = next(p for p in build["plans"] if p.layer == LAYER)
     check(sorted(o.uuid for o in plan.clean_inserts) == ["U1", "U2"],
           "two clean inserts detected")
     check(res["ok"] and res["totals"]["inserted"] == 2, "applied 2 inserts")
+    check(res.get("embedded_base_refreshed") is True,
+          "apply refreshed the embedded base in the working copy")
+    emb = basestore.read_base(working)
+    check(emb and set(emb["layers"].get(LAYER, {})) >= {"U1", "U2"},
+          "embedded base advanced to include the new features")
     _, mfeat = _master_by_uuid(master)
     check(set(mfeat) >= {"U1", "U2"}, "master has U1, U2")
     check(str(mfeat["U1"]["lgs_version"]) == "1", "U1 lgs_version=1")
@@ -261,6 +281,12 @@ def main():
         # working never set Geologist -> a re-sync must NOT silently wipe it.
         build = engine.build_plans(master, working)
         plan = next(p for p in build["plans"] if p.layer == LAYER)
+        # Regression (merged-payload wkb fix): the auto-merge must not have
+        # poisoned the advanced base with geom_hash=None.
+        fp_u1 = (basestore.read_base(working) or {}
+                 ).get("layers", {}).get(LAYER, {}).get("U1")
+        check(fp_u1 is not None and fp_u1.geom_hash is not None,
+              "auto-merged feature keeps its geom_hash in the advanced base")
         check(any(c.uuid == "U1" and c.type == reconcile.CONFLICT_BLANKING
                   for c in plan.conflicts),
               "blank template would wipe Geologist -> held as blanking conflict")
@@ -303,6 +329,31 @@ def main():
             check(False, f"lineage section raised: {exc}")
     else:
         print("  skipped: no polygon layer found")
+
+    # --- setup guards: wrong master / unstamped copy / late registration ---
+    print("\n[guards]")
+    master2 = os.path.join(tmp, "LGS_Other_28350.gpkg")
+    shutil.copy(template, master2)
+    migrate.run_migration(master2)
+    b2 = engine.build_plans(master2, working)
+    check(b2["master_mismatch"] and b2["errors"],
+          "reconciling against the WRONG master is blocked (uid mismatch)")
+
+    w3 = os.path.join(tmp, "LGS_Unregistered_28350.gpkg")
+    shutil.copy(template, w3)
+    b3 = engine.build_plans(master, w3)
+    check(b3["base_source"] is None, "unstamped copy has no base source")
+    check(all(p.base_was_synthesized for p in b3["plans"]),
+          "unstamped copy -> every plan flags a synthesized base")
+
+    # Registering AFTER an edit bakes the un-synced feature into the base;
+    # it then reads as a master-side delete and would be stranded forever.
+    _add_point(working, "LATE", 5)
+    engine.register_and_snapshot(master, working, mapper="HW")
+    b4 = engine.build_plans(master, working)
+    guard = b4["guards"]["missing_from_master"].get(LAYER)
+    check(guard and "LATE" in guard["uuids"],
+          "late-registered feature flagged by missing_from_master guard")
 
     print(f"\n{_passed} checks passed, {_failed} failed   (fixtures: {tmp})")
     return 1 if _failed else 0

@@ -241,6 +241,33 @@ def test_auto_merge_disjoint():
     check(plan.has_applicable_changes(), "auto-merge is applicable")
 
 
+def test_auto_merge_keeps_geom_hash():
+    """Regression: an attrs-only auto-merge must keep geometry in its payload.
+
+    compute_next_base fingerprints the merged payload into the NEW base; a
+    None wkb there recorded geom_hash=None, and the next sync then saw
+    "geometry changed on both sides", converged it, and could silently
+    auto-merge a blanking the guard should have caught.
+    """
+    wkb = b"\x01\x02\x03fake-wkb"
+    base = {"x": payload("x", A=1, B=1, _wkb=wkb).fingerprint()}
+    working = {"x": payload("x", A=2, B=1, _wkb=wkb)}   # attr edit only
+    master = {"x": payload("x", A=1, B=2, _wkb=wkb)}    # attr edit only
+    plan = rc.classify("L", "UUID", base, working, master)
+    check(len(plan.auto_merges) == 1, "disjoint attr edits auto-merge")
+    op = plan.auto_merges[0]
+    check(op.payload.wkb == wkb,
+          "merged payload carries the unchanged (master) geometry")
+    check(op.payload.fingerprint().geom_hash == geom_hash(wkb),
+          "next-base fingerprint keeps the real geom_hash")
+    nb = rc.compute_next_base(
+        plan, base,
+        {u: p.fingerprint() for u, p in working.items()},
+        {u: p.fingerprint() for u, p in master.items()})
+    check(nb["x"].geom_hash == geom_hash(wkb),
+          "advanced base entry keeps geom_hash after an auto-merge")
+
+
 def test_hard_conflict_field_detail_and_resolutions():
     """Same field edited differently on both sides -> conflict with field detail."""
     base = {"x": basefp("x", A=1, B=1)}
@@ -368,6 +395,7 @@ def main():
         test_synthesize_base_legacy_first_sync,
         test_field_hash_decomposition,
         test_auto_merge_disjoint,
+        test_auto_merge_keeps_geom_hash,
         test_hard_conflict_field_detail_and_resolutions,
         test_fingerprint_only_master_falls_back,
         test_compute_next_base_partial,

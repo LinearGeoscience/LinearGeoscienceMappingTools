@@ -74,9 +74,19 @@ class FieldMerge:
 
         geom_choice overrides which geometry wins (used by the UI when a human
         picks take-master geometry); defaults to this merge's geom_from.
+
+        The payload always carries the winning WKB - master's when working
+        didn't change geometry. Commit only writes it when geom_changed, but
+        compute_next_base fingerprints this payload into the NEW BASE: a None
+        wkb there records geom_hash=None, and the next sync then mis-reads
+        "geometry changed on both sides", which can silently auto-merge a
+        blanking that the guard should have caught.
         """
         choice = geom_choice or self.geom_from
-        wkb = self.working_wkb if choice == GEOM_WORKING else None
+        if choice == GEOM_WORKING:
+            wkb = self.working_wkb
+        else:
+            wkb = self.master_payload.wkb if self.master_payload else None
         return FeaturePayload(
             uuid=self.uuid,
             attrs=dict(self.merged_attrs),

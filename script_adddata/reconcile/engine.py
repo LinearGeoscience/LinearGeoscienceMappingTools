@@ -18,12 +18,14 @@ geometry is transformed at capture) so base/working/master are comparable.
 QGIS imports are guarded so the module imports headlessly.
 """
 
+import os
 import uuid as uuid_module
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 try:  # package context
     from . import checkout
+    from . import basestore
     from .snapshot import (capture_layer, snapshot_from_payloads,
                            LayerSnapshot, FeatureFingerprint)
     from .reconcile import classify, compute_next_base, ReconcilePlan, RES_SKIP
@@ -35,6 +37,7 @@ try:  # package context
     from .migrate import LGS_LAYERS
 except ImportError:  # standalone
     import checkout
+    import basestore
     from snapshot import (capture_layer, snapshot_from_payloads,
                           LayerSnapshot, FeatureFingerprint)
     from reconcile import classify, compute_next_base, ReconcilePlan, RES_SKIP
@@ -117,6 +120,30 @@ def _master_fingerprints(master_layer, uuid_field) -> Dict[str, FeatureFingerpri
     return {u: p.fingerprint() for u, p in payloads.items()}
 
 
+def _resolve_base(master_gpkg: str, template_path: str,
+                  template_id: str) -> dict:
+    """Find the common ancestor for a working copy.
+
+    Embedded (inside the working file) is the primary store; the legacy
+    filename-keyed sidecar is the fallback and the apply-time recovery
+    mirror. When both exist the newer capture wins (basestore.newest_base) -
+    that heals the case where one of the two post-apply writes failed.
+
+    Returns {"layers": {name: {uuid: fp}} | None, "source":
+    "embedded"|"sidecar"|None, "checkout": dict|None, "captured_utc": ...}.
+    layers None means no base anywhere -> classify() will synthesize.
+    """
+    embedded = basestore.read_base(template_path)
+    sidecar = checkout.load_base(master_gpkg, template_id)
+    base, source = basestore.newest_base(embedded, sidecar)
+    return {
+        "layers": base["layers"] if base else None,
+        "source": source,
+        "checkout": basestore.read_checkout(template_path),
+        "captured_utc": (base or {}).get("captured_utc"),
+    }
+
+
 def build_plans(master_gpkg: str, template_path: str,
                 layer_names: Optional[List[str]] = None,
                 progress_cb=None, transform_context=None) -> dict:
@@ -129,7 +156,10 @@ def build_plans(master_gpkg: str, template_path: str,
     template_id = checkout.template_id_from_path(template_path)
     out = {"template_id": template_id, "plans": [], "captures": {},
            "master_captures": {}, "reports": {}, "uuid_fields": {},
-           "missing_layers": [], "errors": [], "master_version_at_build": None}
+           "missing_layers": [], "errors": [], "master_version_at_build": None,
+           "checkout": None, "checkout_id": template_id, "base_source": None,
+           "base_captured_utc": None, "master_mismatch": False,
+           "guards": {"missing_from_master": {}}}
 
     if QgsVectorLayer is None:
         out["errors"].append("QGIS not available")
@@ -142,6 +172,46 @@ def build_plans(master_gpkg: str, template_path: str,
             master_gpkg).current_version()
     except Exception:
         pass
+
+    # Resolve the common ancestor once: embedded (in the working file) first,
+    # legacy sidecar second, newest capture wins.
+    resolved = _resolve_base(master_gpkg, template_path, template_id)
+    base_layers = resolved["layers"]
+    ck = resolved["checkout"]
+    out["checkout"] = ck
+    out["base_source"] = resolved["source"]
+    out["base_captured_utc"] = resolved["captured_utc"]
+    if ck and ck.get("checkout_id"):
+        out["checkout_id"] = ck["checkout_id"]
+
+    # Pairing guard: a stamped working copy knows which master it was issued
+    # from. Applying it to a DIFFERENT master would merge two unrelated maps,
+    # so a uid mismatch is blocking. When either uid is unavailable (legacy
+    # master, locked file) fall back to a warn-only basename comparison.
+    if ck and ck.get("master_id"):
+        master_uid = basestore.read_master_uid(master_gpkg)
+        if master_uid and master_uid != ck["master_id"]:
+            out["master_mismatch"] = True
+            out["errors"].append(
+                f"This working copy was issued from a different master "
+                f"({ck.get('master_name') or 'unknown'}), not "
+                f"{os.path.basename(master_gpkg)}. Applying would merge "
+                f"unrelated maps - pick the right master.")
+        elif not master_uid and ck.get("master_name") and \
+                ck["master_name"] != os.path.basename(master_gpkg):
+            out["errors"].append(
+                f"warning: working copy was issued from "
+                f"'{ck['master_name']}' but is being reconciled against "
+                f"'{os.path.basename(master_gpkg)}' (master has no uid to "
+                f"verify - continue only if the master was renamed).")
+
+    # UUIDs already deleted through reconcile (tombstoned) are known-intended
+    # deletes; subtract them from the missing-from-master guard below.
+    try:
+        tombstoned_uuids = {r.get("uuid")
+                            for r in tombstones_mod.load_tombstones(master_gpkg)}
+    except Exception:
+        tombstoned_uuids = set()
 
     for i, name in enumerate(layer_names):
         if progress_cb:
@@ -166,10 +236,28 @@ def build_plans(master_gpkg: str, template_path: str,
         # three-way merge and conflict resolution have master's actual values.
         master_payloads, _ = capture_layer(
             master_layer, uuid_field=master_uuid_field, transform=None)
-        base_fp = checkout.load_base_layer(master_gpkg, template_id, name)
+        base_fp = (None if base_layers is None
+                   else base_layers.get(name, {}))
 
         plan = classify(name, uuid_field, base_fp,
                         working_payloads, master_payloads)
+
+        # Guard: base UUIDs the master doesn't hold, unchanged in the working
+        # copy - classify() skips them as "master-only delete". For a properly
+        # issued copy that IS the intent (office cleanup wins); for a base
+        # registered AFTER field edits it silently strands the mapper's work
+        # forever. The dialog words the warning by base_source; tombstoned
+        # UUIDs (deletes applied through reconcile) are known-intended noise.
+        if base_fp:
+            missing = [
+                u for u, reason in plan.skipped
+                if reason.startswith("master-only delete")
+                and u in working_payloads
+                and u not in tombstoned_uuids
+            ]
+            if missing:
+                out["guards"]["missing_from_master"][name] = {
+                    "count": len(missing), "uuids": missing[:50]}
 
         # Split/merge proposals from the residual (children = working inserts;
         # parents = master geometry of the just-deleted features). Polygons only.
@@ -345,21 +433,41 @@ def apply_plans(master_gpkg: str, template_path: str, build: dict,
             except Exception:
                 pass  # too late to stop: the base advance must complete
         master_version = log.current_version() + 1
+        # The advanced base is written to BOTH stores. The embedded copy (in
+        # the working file) is the primary - it travels with the file and is
+        # what the next sync reads; the sidecar is the recovery mirror for
+        # the case where the working file is locked right now (newest capture
+        # wins at the next build, so double-writing is safe).
+        captured_utc = _utc_now()
         try:
             checkout.update_base(master_gpkg, template_id, new_base_layers,
                                  master_version=master_version, mapper=mapper)
         except Exception as exc:  # I/O failure: surface, don't crash the caller
             result["errors"].append(f"base update failed: {exc}")
+        ck = build.get("checkout")
+        if ck:
+            try:
+                basestore.write_base(template_path, new_base_layers,
+                                     master_version=master_version,
+                                     captured_utc=captured_utc)
+                result["embedded_base_refreshed"] = True
+            except Exception as exc:
+                result["embedded_base_refreshed"] = False
+                result["errors"].append(
+                    f"working-copy base refresh failed ({exc}); the sidecar "
+                    f"carries the advanced base, the next sync will use it")
         try:
             checkout.CheckoutRegistry(master_gpkg).mark_reconciled(
-                template_id, master_version=master_version)
+                build.get("checkout_id") or template_id,
+                master_version=master_version, mapper=mapper)
         except Exception:
             pass
         notes = (f"partial: {len(result['errors'])} layer error(s)"
                  if result["errors"] else "")
         try:
             log.log_reconcile(batch_id, template_id, mapper, plans,
-                              applied=result["totals"], notes=notes)
+                              applied=result["totals"], notes=notes,
+                              checkout_id=(ck or {}).get("checkout_id", ""))
         except Exception as exc:  # base already advanced; changelog is non-fatal
             result["errors"].append(f"changelog write failed: {exc}")
         result["ok"] = not result["errors"]
@@ -386,14 +494,113 @@ def _apply_resolutions(plans, resolutions: dict):
                 c.resolution = resolutions[key]
 
 
+def _capture_snapshots(master_gpkg: str, working_gpkg: str,
+                       layer_names: List[str],
+                       transform_context=None) -> tuple:
+    """Capture the working copy's canonical layers as LayerSnapshots.
+
+    Geometry is hashed in the MASTER CRS (issued copies share it, so the
+    transform is normally a no-op; the template loader may reproject).
+    Returns (snapshots, counts, skipped_no_uuid).
+    """
+    snapshots: Dict[str, LayerSnapshot] = {}
+    counts: Dict[str, int] = {}
+    skipped: Dict[str, int] = {}
+    for name in layer_names:
+        wc_layer = _open(working_gpkg, name)
+        if wc_layer is None:
+            continue
+        uuid_field = _uuid_field(wc_layer)
+        master_layer = _open(master_gpkg, name)
+        transform = (_transform(wc_layer, master_layer, transform_context)
+                     if master_layer else None)
+        payloads, report = capture_layer(wc_layer, uuid_field=uuid_field,
+                                         transform=transform)
+        snapshots[name] = snapshot_from_payloads(name, uuid_field, payloads)
+        counts[name] = len(payloads)
+        if report.get("skipped_no_uuid"):
+            skipped[name] = report["skipped_no_uuid"]
+    return snapshots, counts, skipped
+
+
+def stamp_checkout(master_gpkg: str, working_gpkg: str, mapper: str = "",
+                   source_mode: str = basestore.MODE_FULL, area_wkt: str = "",
+                   layer_names: Optional[List[str]] = None,
+                   transform_context=None, register: bool = True,
+                   snapshots: Optional[Dict[str, LayerSnapshot]] = None
+                   ) -> dict:
+    """Stamp a working copy with its embedded checkout identity + base.
+
+    THE moment the whole reconcile system depends on: runs when (and only
+    when) a copy is created - the issue tool, the QField exporter, the
+    template loader - so the base can never be recorded late. Drops any
+    stale lgs_ tables first (a copy-of-a-copy must not inherit an identity),
+    writes lgs_checkout + lgs_base, and registers the checkout with the
+    master keyed by the fresh checkout_id.
+
+    `snapshots` lets a caller that already captured the layers skip the
+    re-capture. Returns {checkout_id, snapshotted:{layer:n},
+    skipped_no_uuid:{layer:n}, errors:[]}; a failed stamp reports in errors
+    and leaves the file unstamped (legacy behaviour) rather than half-done.
+    """
+    layer_names = layer_names or LGS_LAYERS
+    out = {"checkout_id": None, "snapshotted": {}, "skipped_no_uuid": {},
+           "errors": []}
+    if QgsVectorLayer is None:
+        out["errors"].append("QGIS not available")
+        return out
+
+    try:
+        if snapshots is None:
+            snapshots, counts, skipped = _capture_snapshots(
+                master_gpkg, working_gpkg, layer_names, transform_context)
+        else:
+            counts = {n: len(s.features) for n, s in snapshots.items()}
+            skipped = {n: s.skipped_no_uuid for n, s in snapshots.items()
+                       if s.skipped_no_uuid}
+        out["snapshotted"] = counts
+        out["skipped_no_uuid"] = skipped
+
+        master_version = ReconcileChangelog(master_gpkg).current_version()
+        basestore.drop_embedded_tables(working_gpkg)
+        row = basestore.write_checkout(working_gpkg, {
+            "master_id": basestore.ensure_master_uid(master_gpkg),
+            "master_name": os.path.basename(master_gpkg),
+            "mapper": mapper,
+            "master_version": master_version,
+            "source_mode": source_mode,
+            "area_wkt": area_wkt,
+        })
+        out["checkout_id"] = row["checkout_id"]
+        basestore.write_base(working_gpkg, snapshots,
+                             master_version=master_version)
+
+        if register:
+            checkout.CheckoutRegistry(master_gpkg).register_checkout({
+                "checkout_id": row["checkout_id"],
+                "template_id": checkout.template_id_from_path(working_gpkg),
+                "template_path": working_gpkg,
+                "mapper": mapper,
+                "source_mode": source_mode,
+                "area_wkt": area_wkt,
+                "master_version": master_version,
+                "issued_utc": row["issued_utc"],
+            })
+    except Exception as exc:
+        out["errors"].append(str(exc))
+    return out
+
+
 def register_and_snapshot(master_gpkg: str, template_path: str,
                           mapper: str = "",
                           layer_names: Optional[List[str]] = None,
                           transform_context=None) -> dict:
-    """Record a template handout and store its base snapshot.
+    """Record a template handout: embedded stamp + legacy sidecar base.
 
     For a blank template the base is empty (all future features classify as
-    inserts on first sync). Called from the template-loader hook.
+    inserts on first sync). Called from the template-loader hook. The
+    embedded stamp is the primary identity; the sidecar base is still
+    written for one release so an older plugin can read the same template.
     """
     layer_names = layer_names or LGS_LAYERS
     template_id = checkout.template_id_from_path(template_path)
@@ -403,26 +610,33 @@ def register_and_snapshot(master_gpkg: str, template_path: str,
         out["errors"].append("QGIS not available")
         return out
 
-    snapshots = {}
-    for name in layer_names:
-        tpl_layer = _open(template_path, name)
-        if tpl_layer is None:
-            continue
-        uuid_field = _uuid_field(tpl_layer)
-        master_layer = _open(master_gpkg, name)
-        transform = (_transform(tpl_layer, master_layer, transform_context)
-                     if master_layer else None)
-        payloads, _ = capture_layer(tpl_layer, uuid_field=uuid_field,
-                                    transform=transform)
-        snapshots[name] = snapshot_from_payloads(name, uuid_field, payloads)
-        out["snapshotted"][name] = len(payloads)
+    snapshots, out["snapshotted"], _skipped = _capture_snapshots(
+        master_gpkg, template_path, layer_names, transform_context)
 
+    # Sidecar FIRST, embedded stamp second: base resolution is newest-wins,
+    # and the embedded store must never lose to its own back-compat mirror.
     try:
         master_version = ReconcileChangelog(master_gpkg).current_version()
         checkout.save_base(master_gpkg, template_id, snapshots,
                            master_version=master_version, mapper=mapper)
-        checkout.CheckoutRegistry(master_gpkg).register(
-            template_id, template_path, mapper, master_version=master_version)
     except Exception as exc:
         out["errors"].append(str(exc))
+
+    stamped = stamp_checkout(
+        master_gpkg, template_path, mapper=mapper,
+        source_mode=basestore.MODE_TEMPLATE, layer_names=layer_names,
+        transform_context=transform_context, register=True,
+        snapshots=snapshots)
+    out["checkout_id"] = stamped.get("checkout_id")
+    out["errors"].extend(stamped.get("errors", []))
+
+    if not stamped.get("checkout_id"):
+        # Embedded stamp failed -> keep the legacy registration so the
+        # handout is at least tracked the old way.
+        try:
+            checkout.CheckoutRegistry(master_gpkg).register(
+                template_id, template_path, mapper,
+                master_version=master_version)
+        except Exception as exc:
+            out["errors"].append(str(exc))
     return out

@@ -137,8 +137,13 @@ class ReconcileChangelog:
     def log_reconcile(self, batch_id: str, template_id: str, mapper: str,
                       plans: List[ReconcilePlan],
                       applied: Optional[dict] = None,
-                      notes: str = "") -> dict:
-        """Record one accepted reconcile across all its layers."""
+                      notes: str = "", checkout_id: str = "") -> dict:
+        """Record one accepted reconcile across all its layers.
+
+        `checkout_id` ties the entry to the embedded checkout identity of the
+        working copy (blank for legacy sidecar-era syncs). Additive key: old
+        readers ignore it, old entries simply lack it.
+        """
         layers = []
         for plan in plans:
             layers.append({
@@ -160,6 +165,7 @@ class ReconcileChangelog:
             "kind": "reconcile",
             "batch_id": batch_id,
             "template_id": template_id,
+            "checkout_id": checkout_id,
             "mapper": mapper,
             "notes": notes,
             "applied": applied or {},
