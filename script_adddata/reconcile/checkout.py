@@ -2,14 +2,24 @@
 # -*- coding: utf-8 -*-
 
 """
-Checkout registry + base-snapshot store.
+Checkout registry + LEGACY sidecar base-snapshot store.
 
-When a template is handed out (and after every accepted reconcile) we store a
-per-(master, template) BASE snapshot: the common ancestor for the three-way
-merge. The registry records who has which template out.
+The registry records who has which working copy out and whether it has been
+merged back. Entries are keyed by ``checkout_id`` (the uuid stamped inside
+the working copy by basestore.write_checkout) for embedded checkouts, or by
+the filename-stem ``template_id`` for legacy sidecar-era entries; both kinds
+coexist in one file.
 
-All artifacts live beside the master in the existing ``adddata_metadata``
-folder, exactly like UUIDTracker / MetadataManager:
+The base-snapshot JSON sidecar functions below are the LEGACY store: the
+primary ancestor now lives inside the working copy itself (see basestore.py).
+They are kept for (a) reading bases recorded before the embedded store
+existed and (b) the apply-time recovery mirror - engine.apply_plans writes
+the advanced base to BOTH stores, so if the working file is locked at
+refresh time the sidecar still carries the truth (newest capture wins on
+the next build, basestore.newest_base).
+
+All sidecar artifacts live beside the master in the existing
+``adddata_metadata`` folder, exactly like UUIDTracker / MetadataManager:
     <master_dir>/adddata_metadata/<master_stem>_checkouts.json
     <master_dir>/adddata_metadata/<master_stem>_<template_id>_base.json
 
@@ -20,7 +30,7 @@ done by the QGIS-bound engine, which then calls save_base() here.
 import os
 import json
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 try:  # package context
     from .snapshot import LayerSnapshot, FeatureFingerprint
@@ -197,6 +207,12 @@ class CheckoutRegistry:
     def register(self, template_id: str, template_path: str, mapper: str,
                  master_version: int = 0, base_filename: str = "",
                  area_wkt: str = "") -> dict:
+        """LEGACY registration keyed by filename-stem template_id.
+
+        Kept for sidecar-era callers; overwrites an existing entry with the
+        same stem (the flaw that motivated checkout_id keying). New code
+        should stamp via basestore + register_checkout instead.
+        """
         entry = {
             "template_id": template_id,
             "template_path": template_path,
@@ -213,16 +229,63 @@ class CheckoutRegistry:
         self.save()
         return entry
 
-    def get(self, template_id: str) -> Optional[dict]:
-        return self.data["checkouts"].get(template_id)
+    def register_checkout(self, entry: dict) -> dict:
+        """Register an embedded checkout, keyed by its checkout_id (uuid) -
+        collisions are impossible, so nothing can be silently clobbered.
 
-    def mark_reconciled(self, template_id: str, master_version: int = 0):
-        entry = self.data["checkouts"].get(template_id)
+        ``entry`` must carry checkout_id; template_id/template_path/mapper/
+        source_mode/area_wkt/master_version are stored as given. Re-registering
+        the same checkout_id (e.g. a re-stamp) replaces its own entry only.
+        """
+        checkout_id = entry["checkout_id"]
+        stored = {
+            "checkout_id": checkout_id,
+            "template_id": entry.get("template_id", ""),
+            "template_path": entry.get("template_path", ""),
+            "mapper": entry.get("mapper", ""),
+            "source_mode": entry.get("source_mode", ""),
+            "area_wkt": entry.get("area_wkt", ""),
+            "master_version": entry.get("master_version", 0),
+            "base": "embedded",
+            "created_utc": entry.get("issued_utc") or _utc_now(),
+            "last_sync_utc": None,
+            "status": self.STATUS_OUT,
+        }
+        self.data["checkouts"][checkout_id] = stored
+        self.save()
+        return stored
+
+    def get(self, key: str) -> Optional[dict]:
+        """Look up by checkout_id or legacy template_id (both are keys)."""
+        return self.data["checkouts"].get(key)
+
+    def mark_reconciled(self, key: str, master_version: int = 0,
+                        mapper: str = ""):
+        """Mark an entry merged. ``key`` is a checkout_id or a legacy
+        template_id. A non-empty ``mapper`` backfills a blank one (export-time
+        stamps don't know the mapper yet; the first reconcile does)."""
+        entry = self.data["checkouts"].get(key)
         if entry:
             entry["status"] = self.STATUS_RECONCILED
             entry["last_sync_utc"] = _utc_now()
             entry["master_version"] = master_version
+            if mapper and not entry.get("mapper"):
+                entry["mapper"] = mapper
             self.save()
 
     def list(self) -> Dict[str, dict]:
         return dict(self.data["checkouts"])
+
+    def entries(self) -> List[dict]:
+        """Normalized rows for the dashboard: every entry gains a ``key``
+        (its dict key) and a ``base`` kind ("embedded" | "sidecar"), sorted
+        newest-issued first so current hand-outs top the list."""
+        rows = []
+        for key, entry in self.data["checkouts"].items():
+            row = dict(entry)
+            row["key"] = key
+            row.setdefault("base", "sidecar")
+            row.setdefault("source_mode", "legacy")
+            rows.append(row)
+        rows.sort(key=lambda r: r.get("created_utc") or "", reverse=True)
+        return rows

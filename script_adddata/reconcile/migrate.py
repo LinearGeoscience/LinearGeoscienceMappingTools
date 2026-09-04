@@ -13,9 +13,12 @@ Steps (all safe to re-run):
 3. Defensively verify each layer's QML carries the uuid('WithoutBraces')
    default on its UUID field, and inject it only if a layer is missing it
    (all four currently have it — normally a no-op).
-4. Seed a master baseline snapshot (fingerprints of the current master) so the
-   first reconcile of a legacy template has a reference, and record a
-   migration entry (the lgs_migrated marker) in the changelog.
+4. Stamp a stable master_uid (basestore.ensure_master_uid) so working copies
+   can prove which master they were issued from, and record a migration
+   entry (the lgs_migrated marker) in the changelog.
+
+`migration_status` is the pure (sqlite-only) preflight the dialogs use to
+gate preview/apply/issue on an unmigrated master without opening layers.
 
 QGIS imports are guarded so the module imports headlessly.
 """
@@ -29,15 +32,15 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 try:  # package context
-    from .snapshot import capture_layer, snapshot_from_payloads, is_empty
-    from .checkout import metadata_folder, master_stem
-    from .changelog import ReconcileChangelog
+    from .snapshot import is_empty
+    from .changelog import ReconcileChangelog, changelog_path
     from .commit import LGS_META_FIELDS
+    from . import basestore
 except ImportError:  # standalone
-    from snapshot import capture_layer, snapshot_from_payloads, is_empty
-    from checkout import metadata_folder, master_stem
-    from changelog import ReconcileChangelog
+    from snapshot import is_empty
+    from changelog import ReconcileChangelog, changelog_path
     from commit import LGS_META_FIELDS
+    import basestore
 
 try:  # pragma: no cover - only inside QGIS
     from qgis.core import QgsVectorLayer, QgsField, QgsMessageLog, Qgis
@@ -203,33 +206,80 @@ def verify_uuid_defaults(master_gpkg: str) -> dict:
         con.close()
 
 
-def seed_master_baseline(master_gpkg: str, layer_names=None) -> str:
-    """Capture current master fingerprints into <master>_master_baseline.json."""
-    layer_names = layer_names or LGS_LAYERS
-    layers = {}
-    for name in layer_names:
-        lyr = _open(master_gpkg, name)
-        if lyr is None:
-            continue
-        uuid_field = "UUID"
-        if detect_uuid_field:
-            uuid_field = detect_uuid_field([f.name() for f in lyr.fields()]) or "UUID"
-        payloads, _ = capture_layer(lyr, uuid_field=uuid_field, transform=None)
-        layers[name] = snapshot_from_payloads(name, uuid_field, payloads).to_dict()
+def migration_status(master_gpkg: str, layer_names=None) -> dict:
+    """Pure (sqlite-only) preflight: has this master been migrated?
 
-    data = {
-        "version": "1.0", "schema": "lgs-snapshot",
-        "master_gpkg": os.path.basename(master_gpkg),
-        "template_id": "__master_baseline__",
-        "captured_utc": _utc_now(),
-        "master_version_at_capture": 0,
-        "layers": layers,
-    }
-    path = os.path.join(metadata_folder(master_gpkg),
-                        f"{master_stem(master_gpkg)}_master_baseline.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    return path
+    Cheap enough to run on every master pick — PRAGMA table_info per layer,
+    no QGIS, no feature scans. A master counts as migrated when every
+    canonical layer present in the file has the lgs_* columns and a UUID
+    column, and a migration marker exists (lgs_changelog table row or the
+    JSON changelog sidecar).
+
+    Returns {"migrated": bool, "layers": {name: {"present", "has_lgs_columns",
+    "has_uuid"}}, "has_migration_marker": bool, "master_uid": str|None,
+    "error": str (only on failure to open)}.
+    """
+    layer_names = layer_names or LGS_LAYERS
+    out = {"migrated": False, "layers": {}, "has_migration_marker": False,
+           "master_uid": None}
+    if not os.path.exists(master_gpkg):
+        out["error"] = "file not found"
+        return out
+    try:
+        con = sqlite3.connect(master_gpkg, timeout=5)
+    except sqlite3.Error as exc:
+        out["error"] = str(exc)
+        return out
+    try:
+        cur = con.cursor()
+        layers_ok = True
+        any_present = False
+        for name in layer_names:
+            actual = gpkg_layer_name(master_gpkg, name)
+            info = {"present": actual is not None,
+                    "has_lgs_columns": False, "has_uuid": False}
+            if actual:
+                any_present = True
+                # Table names may contain spaces/dashes: quote them.
+                cur.execute(f'PRAGMA table_info("{actual}")')
+                cols = {row[1] for row in cur.fetchall()}
+                info["has_lgs_columns"] = all(
+                    f in cols for f in LGS_META_FIELDS)
+                if detect_uuid_field:
+                    info["has_uuid"] = bool(detect_uuid_field(sorted(cols)))
+                else:  # pragma: no cover - headless fallback
+                    info["has_uuid"] = any("uuid" in c.lower() for c in cols)
+                if not (info["has_lgs_columns"] and info["has_uuid"]):
+                    layers_ok = False
+            out["layers"][name] = info
+
+        # Migration marker: the mirrored table, or the JSON sidecar.
+        try:
+            cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='lgs_changelog'")
+            if cur.fetchone():
+                cur.execute("SELECT 1 FROM lgs_changelog "
+                            "WHERE kind='migration' LIMIT 1")
+                out["has_migration_marker"] = cur.fetchone() is not None
+        except sqlite3.Error:
+            pass
+        if not out["has_migration_marker"]:
+            try:
+                path = changelog_path(master_gpkg)
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        entries = (json.load(f) or {}).get("entries", [])
+                    out["has_migration_marker"] = any(
+                        e.get("kind") == "migration" for e in entries)
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        out["master_uid"] = basestore.read_master_uid(master_gpkg)
+        out["migrated"] = bool(any_present and layers_ok
+                               and out["has_migration_marker"])
+        return out
+    finally:
+        con.close()
 
 
 def run_migration(master_gpkg: str, layer_names=None, progress_cb=None) -> dict:
@@ -264,11 +314,11 @@ def run_migration(master_gpkg: str, layer_names=None, progress_cb=None) -> dict:
     emit(80, "Verifying UUID defaults")
     report["uuid_defaults"] = verify_uuid_defaults(master_gpkg)
 
-    emit(90, "Seeding master baseline snapshot")
-    try:
-        report["baseline_path"] = seed_master_baseline(master_gpkg, layer_names)
-    except Exception as exc:
-        report["errors"].append(f"baseline: {exc}")
+    emit(90, "Stamping master identity")
+    report["master_uid"] = basestore.ensure_master_uid(master_gpkg)
+    if not report["master_uid"]:
+        # Best-effort: pairing guard falls back to basename matching.
+        report["errors"].append("could not stamp master_uid (file locked?)")
 
     emit(95, "Recording migration")
     try:
