@@ -6,20 +6,23 @@ Three-way classification: base (common ancestor) x working (template) x
 master, all keyed by UUID, producing a ReconcilePlan.
 
 Pure module (no QGIS). Inputs:
-- base_fp:           {uuid: FeatureFingerprint}     ancestor (from JSON)
+- base_fp:           {uuid: FeatureFingerprint}     ancestor (embedded lgs_base
+                                                    or legacy JSON sidecar)
 - working_payloads:  {uuid: FeaturePayload}         current template (with data)
-- master_fp:         {uuid: FeatureFingerprint}     current master
+- master_fp:         {uuid: FeatureFingerprint | FeaturePayload}  current master
 
 The working side carries full payloads so inserts/updates can be applied to
-master at commit; the master side only needs fingerprints (commit operates on
-the live master layer by UUID).
+master at commit. When the master side is passed as payloads too (the engine
+does), features edited on BOTH sides go through the field-level three-way
+merge (merge3.py): disjoint edits auto-merge with no human decision, and
+same-field clashes surface as conflicts carrying per-field detail and a
+default resolution (field-merge / take-working / take-master / skip) that the
+dialog lets a human override per conflict. Master passed as bare fingerprints
+degrades those cases to whole-feature conflicts (legacy callers/tests).
 
-MVP scope (Phase 1): clean insert / update / delete are planned for
-application. Anything where BOTH sides touched the same feature (update/update,
-update/delete, delete/update, insert/insert with differing content) is recorded
-as a conflict and NOT auto-applied — surfaced for manual handling until the
-Phase 2 resolution UI lands. Field-level auto-merge of disjoint edits needs
-master+base attribute values (not captured in the MVP) and is deferred.
+A "blanking" safety rule holds back a clean update whose only effect is
+emptying fields that hold values in master (CONFLICT_BLANKING) — it protects
+carried lineage attributes and master data from a still-blank template.
 """
 
 from dataclasses import dataclass, field

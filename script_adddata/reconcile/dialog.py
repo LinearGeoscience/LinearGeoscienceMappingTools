@@ -2,17 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Reconcile / Merge Field Data dialog (the MVP UI).
+Reconcile / Merge Field Data dialog.
 
 A self-contained, preview-then-apply tool:
-- pick the master GeoPackage and a working QField template,
-- (one-off) verify/migrate the master for reconcile,
+- pick the master GeoPackage and a working copy (QField template / handout),
+- (one-off) verify/migrate the master for reconcile — the dialog gates the
+  preview on this and says so in red until it has run,
 - Build Preview -> three-way classification grouped per layer/operation,
-- Apply -> commit clean inserts/updates/deletes in one transaction per layer,
-  advance the base snapshot (so re-syncing applies further edits), and log it.
+  with a per-conflict resolution combo (field-merge / take-working /
+  take-master / skip) and accept checkboxes on split/merge proposals,
+- Apply -> commit clean ops + auto-merges + resolved conflicts in one
+  transaction per layer, advance the base snapshot in BOTH stores (the
+  embedded lgs_base inside the working copy and the legacy sidecar), and
+  log it.
 
-Conflicts (a feature changed on both sides) are shown but NOT applied in the
-MVP — they are left for the Phase 2 resolution UI.
+Setup guards surfaced here (see engine.build_plans):
+- a working copy stamped for a DIFFERENT master is blocked outright,
+- a missing base (never-stamped copy) gets a loud banner + warning rows —
+  deletes and split/merge lineage cannot be detected in that state,
+- base features the master never held (the signature of a base registered
+  AFTER field edits) are called out per layer with a remedy,
+- features with no UUID (invisible to reconcile) are counted per layer.
 
 Preview, apply, migrate and prepare all run as background QgsTasks (see
 lgs_tasks.run_in_task): the engine is path-based and opens its own layer
@@ -43,10 +53,18 @@ try:
     from . import engine
     from . import migrate
     from . import checkout
+    from . import basestore
     from . import reconcile as rc
 except ImportError:  # pragma: no cover
-    from script_adddata.reconcile import engine, migrate, checkout
+    from script_adddata.reconcile import engine, migrate, checkout, basestore
     from script_adddata.reconcile import reconcile as rc
+
+# Styles for the setup-guard banners (kept inline so they survive theme
+# fallback; colours read fine on both light and dark QGIS themes).
+_BANNER_ERROR = ("QLabel { background: #7a1f1f; color: white; padding: 6px; "
+                 "border-radius: 3px; }")
+_BANNER_WARN = ("QLabel { background: #8a6d1a; color: white; padding: 6px; "
+                "border-radius: 3px; }")
 
 
 # Resolution choices offered per conflict, in display order. The field-merge
@@ -87,6 +105,7 @@ class ReconcileDialog(QDialog):
         self.template_gpkg = None
         self.build = None
         self._template_prepared = False
+        self._master_migrated = None   # None = no master picked yet
         self._task = None
 
         self.setWindowTitle("Reconcile / Merge Field Data")
@@ -140,10 +159,17 @@ class ReconcileDialog(QDialog):
         self._style(self.migrate_btn, primary=False)
         sl.addWidget(self.migrate_btn)
         self.setup_status = QLabel("Adds lgs_* columns, backfills UUIDs, "
-                                   "seeds a baseline. Safe to re-run.")
+                                   "stamps the master identity. Safe to re-run.")
         self.setup_status.setWordWrap(True)
         sl.addWidget(self.setup_status, 1)
         layout.addWidget(setup)
+
+        # Red gate shown while the picked master has not been migrated.
+        self.migrate_banner = QLabel()
+        self.migrate_banner.setWordWrap(True)
+        self.migrate_banner.setStyleSheet(_BANNER_ERROR)
+        self.migrate_banner.setVisible(False)
+        layout.addWidget(self.migrate_banner)
 
         # --- Prepare field data (hardcode the working template) ---
         prep = QGroupBox("Prepare field data")
@@ -193,6 +219,13 @@ class ReconcileDialog(QDialog):
         btn_row.addWidget(self.preview_btn)
         btn_row.addStretch()
         pvl.addLayout(btn_row)
+
+        # Amber/red banner for base problems found by the preview (no
+        # recorded base, base features the master never held, wrong master).
+        self.base_banner = QLabel()
+        self.base_banner.setWordWrap(True)
+        self.base_banner.setVisible(False)
+        pvl.addWidget(self.base_banner)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Layer / operation", "Count / resolution",
@@ -274,9 +307,33 @@ class ReconcileDialog(QDialog):
         if path:
             self.master_gpkg = path
             self.master_edit.setText(path)
+            self._check_migration()
             self._prefill_mapper()
             self._prefill_metadata()
             self._reset_preview()
+
+    def _check_migration(self):
+        """Pure sqlite preflight on the picked master; gates the preview."""
+        try:
+            status = migrate.migration_status(self.master_gpkg)
+            self._master_migrated = bool(status.get("migrated"))
+        except Exception:
+            self._master_migrated = None  # can't tell -> don't block
+        self._refresh_migrate_gate()
+
+    def _refresh_migrate_gate(self):
+        blocked = self._master_migrated is False
+        self.migrate_banner.setVisible(blocked)
+        if blocked:
+            self.migrate_banner.setText(
+                "⚠ This master has NOT been migrated for reconcile. Without "
+                "the lgs_* columns and backfilled UUIDs, features cannot be "
+                "identified across syncs. Run 'Verify / migrate master' "
+                "above (one-off, safe to re-run) before building a preview.")
+        if not self.cancel_btn.isVisible():   # don't fight the busy state
+            self.preview_btn.setEnabled(not blocked)
+            self.preview_btn.setToolTip(
+                "Run 'Verify / migrate master' first." if blocked else "")
 
     def _pick_template(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -290,14 +347,29 @@ class ReconcileDialog(QDialog):
             self._reset_preview()
 
     def _prefill_mapper(self):
-        """Pull the recorded mapper for this template, if any."""
-        if not (self.master_gpkg and self.template_gpkg):
-            return
+        """Pull the recorded mapper: the embedded stamp knows best, then the
+        master's registry (embedded checkout_id first, legacy stem second)."""
         if self.mapper_edit.text().strip():
             return
+        ck = None
+        if self.template_gpkg:
+            try:
+                ck = basestore.read_checkout(self.template_gpkg)
+                if ck and ck.get("mapper"):
+                    self.mapper_edit.setText(ck["mapper"])
+                    return
+            except Exception:
+                ck = None
+        if not (self.master_gpkg and self.template_gpkg):
+            return
         try:
-            tid = checkout.template_id_from_path(self.template_gpkg)
-            entry = checkout.CheckoutRegistry(self.master_gpkg).get(tid)
+            reg = checkout.CheckoutRegistry(self.master_gpkg)
+            entry = None
+            if ck and ck.get("checkout_id"):
+                entry = reg.get(ck["checkout_id"])
+            if entry is None:
+                entry = reg.get(
+                    checkout.template_id_from_path(self.template_gpkg))
             if entry and entry.get("mapper"):
                 self.mapper_edit.setText(entry["mapper"])
         except Exception:
@@ -357,6 +429,7 @@ class ReconcileDialog(QDialog):
         self.build = None
         self.tree.clear()
         self.summary.setText("No preview yet.")
+        self.base_banner.setVisible(False)
         self.apply_btn.setEnabled(False)
 
     # --------------------------------------------------------- task plumbing
@@ -367,6 +440,7 @@ class ReconcileDialog(QDialog):
         self.cancel_btn.setVisible(busy)
         if not busy:
             self._refresh_apply_enabled()
+            self._refresh_migrate_gate()
             self.progress.setValue(0)
             self.status.setText(note or "Ready")
 
@@ -438,6 +512,7 @@ class ReconcileDialog(QDialog):
             self.setup_status.setText(
                 "Migration finished with issues: "
                 + "; ".join(report.get("errors", [])))
+        self._check_migration()
 
     def _run_hardcode(self, then=None):
         """Hardcode the working template in place (empty-only) before preview.
@@ -587,14 +662,57 @@ class ReconcileDialog(QDialog):
         tot = {"inserts": 0, "updates": 0, "deletes": 0, "auto_merges": 0,
                "conflicts": 0, "splits": 0, "merges": 0, "skipped": 0}
 
+        guards = build.get("guards") or {}
+        missing_master = guards.get("missing_from_master") or {}
+        reports = build.get("reports") or {}
+        red = QColor(200, 60, 60)
+        amber = QColor(200, 140, 0)
+
         for plan in plans:
             s = plan.summary()
             for k in tot:
                 tot[k] += s.get(k, 0)
             top = QTreeWidgetItem([plan.layer, "", ""])
-            if plan.base_was_synthesized:
-                top.setText(2, "no recorded base — synthesized")
             self.tree.addTopLevelItem(top)
+
+            if plan.base_was_synthesized:
+                warn = QTreeWidgetItem(
+                    ["⚠ NO RECORDED BASE", "",
+                     "deletes undetectable; split/merge lineage disabled; "
+                     "master-side edits may show as conflicts"])
+                for col in range(3):
+                    warn.setForeground(col, red)
+                f = warn.font(0)
+                f.setBold(True)
+                warn.setFont(0, f)
+                top.addChild(warn)
+
+            mm = missing_master.get(plan.layer)
+            if mm:
+                warn = QTreeWidgetItem(
+                    [f"⚠ {mm['count']} feature(s) the master never held",
+                     "held back",
+                     "base recorded AFTER field edits? They are skipped as "
+                     "'master deletes' every sync. Remedy: re-issue the "
+                     "field copy, or bring them in with Import Mapping Data."])
+                for col in range(3):
+                    warn.setForeground(col, red)
+                top.addChild(warn)
+                for u in mm.get("uuids", [])[:20]:
+                    leaf = QTreeWidgetItem(["", "", u])
+                    leaf.setData(0, Qt.ItemDataRole.UserRole,
+                                 ("feature", plan.layer, u))
+                    warn.addChild(leaf)
+
+            no_uuid = (reports.get(plan.layer) or {}).get("skipped_no_uuid", 0)
+            if no_uuid:
+                warn = QTreeWidgetItem(
+                    [f"⚠ {no_uuid} feature(s) with no UUID", "invisible",
+                     "reconcile cannot see them — run 'Hardcode / prepare "
+                     "working template' first"])
+                for col in range(3):
+                    warn.setForeground(col, amber)
+                top.addChild(warn)
 
             self._op_node(top, "Adds", [o.uuid for o in plan.clean_inserts],
                           layer=plan.layer)
@@ -621,6 +739,7 @@ class ReconcileDialog(QDialog):
                  f"{tot['auto_merges']} auto-merged",
                  f"{tot['conflicts']} conflicts"]
         msg = "Preview: " + ", ".join(parts) + "."
+        msg += "  " + self._base_source_line(build)
         if tot["conflicts"]:
             msg += (" Choose a resolution per conflict (default shown); "
                     "those left on 'Skip' re-surface next sync.")
@@ -628,7 +747,55 @@ class ReconcileDialog(QDialog):
             msg += (" Layers not in master (use Append to create first): "
                     + ", ".join(missing) + ".")
         self.summary.setText(msg)
+        self._show_guard_banner(build, plans, missing_master)
         self._refresh_apply_enabled()
+
+    def _base_source_line(self, build):
+        """One human sentence saying which ancestor this preview compared to."""
+        src = build.get("base_source")
+        ck = build.get("checkout") or {}
+        if src == "embedded":
+            issued = (ck.get("issued_utc") or "")[:10]
+            who = ck.get("mapper") or "unknown mapper"
+            return f"Base: embedded (issued {issued or '?'} to {who})."
+        if src == "sidecar":
+            return "Base: legacy sidecar (re-issue this copy to embed it)."
+        return "Base: NONE — synthesized from the current master."
+
+    def _show_guard_banner(self, build, plans, missing_master):
+        """Dialog-level banner for the states a grey tree cell can't carry."""
+        if build.get("master_mismatch"):
+            self.base_banner.setStyleSheet(_BANNER_ERROR)
+            self.base_banner.setText(
+                "⛔ " + " ".join(e for e in build.get("errors", [])
+                                if "different master" in e))
+            self.base_banner.setVisible(True)
+            return
+        synthesized = [p.layer for p in plans if p.base_was_synthesized]
+        if synthesized:
+            self.base_banner.setStyleSheet(_BANNER_ERROR)
+            self.base_banner.setText(
+                "⚠ NO RECORDED BASE for: " + ", ".join(synthesized) + ". "
+                "This copy was never issued/registered, so deletes made on "
+                "either side CANNOT be detected and split/merge lineage is "
+                "off. Master features deleted in the field will survive, and "
+                "features cleaned off the master may be re-inserted. Safest "
+                "path: apply only clear adds, then re-issue the copy with "
+                "'Issue field copy'.")
+            self.base_banner.setVisible(True)
+            return
+        if missing_master:
+            n = sum(v.get("count", 0) for v in missing_master.values())
+            self.base_banner.setStyleSheet(_BANNER_WARN)
+            self.base_banner.setText(
+                f"⚠ {n} feature(s) exist in this copy's base but the master "
+                "never held them (red rows below). If this copy was "
+                "registered AFTER mapping started, those features are being "
+                "silently held back every sync — re-issue the copy or import "
+                "them with Import Mapping Data.")
+            self.base_banner.setVisible(True)
+            return
+        self.base_banner.setVisible(False)
 
     def _op_node(self, parent, label, uuids, collapsed=False, layer=None):
         node = QTreeWidgetItem([label, str(len(uuids)), ""])
@@ -701,7 +868,14 @@ class ReconcileDialog(QDialog):
         self._refresh_apply_enabled()
 
     def _refresh_apply_enabled(self):
-        plans = (self.build or {}).get("plans", [])
+        build = self.build or {}
+        if build.get("master_mismatch"):
+            self.apply_btn.setEnabled(False)
+            self.apply_btn.setToolTip(
+                "This working copy was issued from a different master.")
+            return
+        self.apply_btn.setToolTip("")
+        plans = build.get("plans", [])
         applicable = any(p.has_applicable_changes() for p in plans)
         self.apply_btn.setEnabled(applicable)
 
@@ -868,8 +1042,27 @@ class ReconcileDialog(QDialog):
                    f"Conflicts resolved (will apply): {resolved}\n"
                    f"Conflicts skipped (re-surface next sync): {unresolved}\n"
                    f"Splits accepted: {splits}   Merges accepted: {merges}")
-        if QMessageBox.question(self, "Apply reconcile", confirm,
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+
+        synthesized = [p.layer for p in plans
+                       if p.base_was_synthesized and p.has_applicable_changes()]
+        if synthesized:
+            # Escalate: applying without a recorded ancestor is the one state
+            # where the merge can silently undo work on either side.
+            confirm = (
+                "⚠ NO RECORDED BASE for: " + ", ".join(synthesized) + ".\n"
+                "Master-side deletes and edits since this copy was handed "
+                "out CANNOT be detected — features cleaned off the master "
+                "may come back, and field deletes will not propagate.\n\n"
+                + confirm)
+            answer = QMessageBox.warning(
+                self, "Apply reconcile (no base!)", confirm,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+        else:
+            answer = QMessageBox.question(
+                self, "Apply reconcile", confirm,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
             return
         self._run_apply(force_lock=False)
 
